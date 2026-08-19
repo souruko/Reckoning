@@ -11,6 +11,8 @@ Fixed: the analysis window's skill table failed to load (`attempt to call field 
 -- `Turbine.UI.ScrollView` isn't a real class. Switched to the real `Turbine.UI.ListBox` +
 `Turbine.UI.Lotro.ScrollBar` pattern.
 
-Fixed: no combat was ever recorded (`/reck dump` always said "no session data yet"). The chat
-listener read `args.Type` off the incoming chat event; the real field is `args.ChatType`, so
-every line was silently discarded before reaching the parser.
+Fixed: no combat was ever recorded (`/reck dump` always said "no session data yet"). Two bugs
+stacked on top of each other -- the chat listener read `args.Type` instead of the real
+`args.ChatType`, and separately `LocalPlayer.name` (used to tell "my own damage" from everyone
+else's) was never actually set to a real name, since it isn't a real Turbine property. Both
+fixed; combat should record correctly now.

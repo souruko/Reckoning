@@ -119,6 +119,32 @@ object (`args.*`) without a same-directory precedent already confirmed working (
 fine -- `args.X`/`args.Y`/`args.Button` are a direct copy from `VitalSelf/UI/Vital.lua`'s already-
 working drag code), that field name is a guess until grepped against real plugin source.
 
+**A second, worse bug of the same shape, found immediately after fixing the first one**: fixing
+`args.ChatType` still left every session empty. `LocalPlayer.name` (the bare property
+`Trigger.ParseCombatChat` reads at five call sites, and that `Events.lua`'s own `mine`/`onMe`
+check also reads) is **not a real Turbine property -- it is `nil`**. Confirmed by grepping every
+other plugin: nothing anywhere assigns `.name` on a `Turbine.Gameplay` instance, only `:GetName()`
+exists. Even Gibberish3's own `Variables.lua` (the source the parser was ported from) immediately
+calls `LocalPlayer:GetName()` and stashes the result in a *different* table (`LpData.name`)
+rather than trusting bare `.name` -- meaning the parser's own `LocalPlayer.name` reads were
+**always dead code, even in Gibberish3**, just never exercised because nothing there relies on
+those particular return branches. `CombatAnalysis` (a real working combat meter) hits this exact
+same gap in its own local-player object and fixes it identically: `player.name =
+player:GetName()`, a monkey-patched field assignment right after construction. `Main.lua` now
+does the same: `LocalPlayer.name = LocalPlayer:GetName()`, once, right after `LocalPlayer =
+_G.lp`. Since `nil ~= "AnyName"` is always true, this bug alone was sufficient to discard every
+event except `TempMoraleLoss` regardless of the `args.ChatType` fix -- both had to be found.
+
+**Both bugs share one root cause the offline harness structurally could not catch**: the harness
+never went through the real entry points. It called `Trigger.ParseCombatChat` and `Sessions.*`
+directly with a hand-reimplemented dispatch, and set `LocalPlayer = { name = "Whatever" }` as a
+plain Lua table with the field already correct -- bypassing both real Turbine objects entirely
+(`Turbine.Chat.Received`'s actual event shape, and `Turbine.Gameplay.LocalPlayer`'s actual
+instance shape). Anything that depends on the *real* shape of a Turbine-supplied object, as
+opposed to pure game logic, was invisible to it. If a third bug like this shows up, look there
+first: any place code reads a bare field off something Turbine handed in, rather than a value
+this codebase constructed itself.
+
 ## Load order
 
 `Reckoning.plugin` names `Reckoning.Main` as the package entry point. `Main.lua` imports drive
@@ -216,9 +242,13 @@ need this same fresh-copy treatment, not a bare reference.
 ### Key globals
 
 - `_G.lp` / `LocalPlayer` -- both point at the same `Turbine.Gameplay.LocalPlayer` instance.
-  `_G.lp` is the conventional handle (matches `VitalSelf`); the bare `LocalPlayer` global
-  exists **only** because `Trigger.ParseCombatChat` reads `LocalPlayer.name` directly as a
-  property, not a method call -- do not remove it even though it looks redundant with `_G.lp`.
+  `_G.lp` is the conventional handle (matches `VitalSelf`); the bare `LocalPlayer` global exists
+  **only** because `Trigger.ParseCombatChat` reads `LocalPlayer.name` directly as a property, not
+  a method call -- do not remove it even though it looks redundant with `_G.lp`. `.name` is
+  **not** a real Turbine property (see "Build status" for the bug this caused and how it was
+  found) -- `Main.lua` monkey-patches it on once, `LocalPlayer.name = LocalPlayer:GetName()`,
+  immediately after assignment. If `LocalPlayer` is ever reassigned or rebuilt, that line has to
+  run again or every event silently stops matching `mine`/`onMe` again.
 - `_G.settings` -- the persisted settings table, populated by `Settings.Load()`.
 - `Trigger` -- declared `{}` in `Main.lua` *before* `Parse/en.lua` is imported, because that
   file does `function Trigger.ParseCombatChat(...)` (attaches to an existing table) rather

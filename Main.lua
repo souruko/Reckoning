@@ -27,10 +27,15 @@ import "Reckoning.Settings"
 
 _G.lp = Turbine.Gameplay.LocalPlayer:GetInstance()
 
--- Trigger.ParseCombatChat reads the bare global `LocalPlayer.name` directly (a property
--- Turbine exposes on the game object itself, not a method call) -- so the plugin instance
--- has to be reachable under that exact bare name, same as Gibberish3's Variables.lua.
+-- Trigger.ParseCombatChat reads the bare global `LocalPlayer.name` directly. That is NOT a real
+-- Turbine property -- confirmed in-game (an empty session every fight) and by grepping every
+-- other plugin: nothing ever assigns `.name` on a Turbine.Gameplay instance, only `:GetName()`
+-- exists. Even Gibberish3's own Variables.lua immediately calls `:GetName()` and stashes it
+-- elsewhere (`LpData.name`) rather than trusting bare `.name` -- the parser's own `LocalPlayer.name`
+-- reads were always dead code there too, just never exercised. CombatAnalysis hits this exact
+-- same gap and fixes it the same way: monkey-patch a real `.name` field on once at load.
 LocalPlayer = _G.lp
+LocalPlayer.name = LocalPlayer:GetName()
 
 ---------------------------------------------------------------------
 --== Settings ===--
