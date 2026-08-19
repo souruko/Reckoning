@@ -367,11 +367,17 @@ function Analysis:RefreshPicker()
 	end
 	table.sort(names, function(a, b) return totals[a] > totals[b] end)
 
+	-- Built with direct indexing, not table.insert -- `values[1]` is a deliberate nil (the "All
+	-- X" chip's filter value), and table.insert(t, v) on a table whose length is ambiguous
+	-- because of a leading nil hole silently overwrites that slot instead of appending after
+	-- it (confirmed live: it shifted every chip's filter value one position off from its
+	-- label, so clicking a chip filtered by a *different* target than the one shown, and the
+	-- last real-target chip ended up pointing at nil/pooled instead of "All X" doing that).
 	local labels = { "All " .. meta.pickerLabel }
-	local values = { nil }
+	local values = {}
 	for i = 1, table.getn(names) do
-		table.insert(labels, names[i])
-		table.insert(values, names[i])
+		labels[i + 1] = names[i]
+		values[i + 1] = names[i]
 	end
 
 	local x = 0

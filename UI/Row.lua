@@ -16,8 +16,11 @@ Row = class(Turbine.UI.Control)
 function Row:Constructor(width, height, columns)
 	Turbine.UI.Control.Constructor(self)
 
+	-- Mouse-invisible: nothing in a Row is individually clickable, and rows sitting on top of a
+	-- window that wants its own hover detection (the death window's pause-on-hover) must not
+	-- intercept the mouse for that to work.
 	self:SetSize(width, height)
-	self:SetMouseVisible(true)
+	self:SetMouseVisible(false)
 
 	self.columns = columns
 	self.labels = {}

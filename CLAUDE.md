@@ -86,12 +86,42 @@ be wrong:
   near-zero use is a whole-window/whole-icon fade, never a tint over an opaque fill. The real,
   repeated pattern (7+ sites in `LootLogs` alone, its own helper called `MixColor`) is
   precomputing the blended RGB and using a plain solid `SetBackColor` -- now `Theme.Mix(fgHex,
-  bgHex, t)` and `Theme.AlphaColor(hex, bgHex)` in `Constants.lua`. `SetOpacity` remains legitimate
-  for exactly one thing here: `LiveMeter`'s whole-window post-combat dim (`self:SetOpacity(inCombat
-  and 1 or 0.55)`), which matches `VitalSelf/UI/Vital.lua`'s confirmed-working
-  incombat/outcombat-opacity pattern (moderate value, applied to the frame itself, not a tint
-  overlay). If a future change wants a translucent wash, use `Theme.Mix`/`Theme.AlphaColor` --
-  never `SetOpacity` on a Control that already has a solid `BackColor`.
+  bgHex, t)` and `Theme.AlphaColor(hex, bgHex)` in `Constants.lua`. `LiveMeter` originally kept one
+  `SetOpacity` use for its whole-window post-combat dim (matching `VitalSelf/UI/Vital.lua`'s
+  confirmed-working incombat/outcombat-opacity pattern), but that behaviour itself was removed
+  entirely per later feedback (see the `UI/LiveMeter.lua` row above) -- as of now **nothing in
+  this codebase calls `SetOpacity` at all**. If a future change wants a translucent wash, use
+  `Theme.Mix`/`Theme.AlphaColor`; if something wants a genuine whole-window fade again, that's the
+  one case `SetOpacity` is confirmed to actually work for -- just never on a Control that already
+  has a solid `BackColor`.
+- **Found and fixed by an actual in-game load, third occurrence**: the target/source picker's
+  filter was silently wrong -- clicking a chip could filter by a *different* target than the one
+  labelled on it, and the "All X" chip could end up filtering by a specific target instead of
+  clearing the filter (confirmed by a screenshot: a target chip appeared selected while the KPIs/
+  table/side-panel were still showing the full pooled sum). Root cause in
+  `Analysis:RefreshPicker`: `local values = { nil }` followed by `table.insert(values, ...)` in
+  a loop. A table whose first real content is a `nil` hole has an **undefined/zero length** in
+  Lua (`#{nil}` is `0`), so `table.insert` -- which appends at `#t + 1` -- silently overwrote that
+  first slot instead of appending after it, shifting every subsequent chip's `.value` (used for
+  filtering) one position off from its `.label` (what's actually shown/clicked). Fixed by building
+  `labels`/`values` with direct indexed assignment (`labels[i + 1] = ...`) instead of
+  `table.insert`, which never depends on `#t`. Verified standalone with plain Lua before and after
+  the fix (`{nil}` + `table.insert` really does misbehave exactly this way, independent of
+  anything Turbine-specific -- this one's a pure Lua footgun, not an engine quirk). **General
+  lesson**: never seed an array-style table with a leading `nil` and then `table.insert` into it;
+  either pre-size with explicit indices or start the table genuinely empty and insert the "nil"
+  placeholder's *label* separately from a value that defaults to nil via normal indexing.
+- **Found and fixed by an actual in-game load, fourth occurrence**: the graph looked completely
+  empty even with real combat data behind it. The design's own spec is "area fill at 13% opacity
+  **under a line**" -- the implementation had the 13%-opacity area but never drew the line, and a
+  13% tint of a mid-saturation purple against a similarly dark window fill is close enough to
+  invisible at a glance that it read as "not working" rather than "very subtle." Added a solid
+  (not tinted) 2px "cap" `Control` on top of each bucket's area column, in `UI/AnalysisGraph.lua`
+  -- same one-`Control`-per-bucket technique as everything else in `Graph`, just a second pooled
+  layer (`self.caps`, mirroring `self.columns`) instead of a real polyline (which axis-aligned
+  Controls can't draw cheaply anyway -- same reasoning as the morale dashed-line simplification
+  already noted above). Small values also now floor to a minimum 1px bar+cap instead of rounding
+  to 0 and vanishing next to a much larger bucket in the same view.
 - **Also found the same load**: the mockup's Unicode pin glyphs (`◆`/`◇`, U+25C6/U+25C7) rendered
   as `?` -- not in this client's fonts. Session rail pins are now a small solid `Turbine.UI.Control`
   square (filled = pinned, dim = not), not a text glyph -- consistent with `docs/DESIGN.md`'s own
@@ -232,9 +262,9 @@ global assigned there (`Trigger`, `L`, `EventCode`, `Theme`, `Font`, `Session`, 
 `Main.lua` via `UI.LiveMeter()` etc. (matching `vital = UI.Vital()` in `VitalSelf/Main.lua`),
 and can freely reference `Frame`/`Bar`/`Row` bare since they're siblings in the same directory.
 
-| `UI/LiveMeter.lua` | `LiveMeter` (extends `Frame`, `key = "liveMeter"`, `closable = false`) -- window 1. Bespoke header (accent tick + "IN COMBAT"/"LAST FIGHT"/"OUT OF COMBAT" + elapsed clock), 4 tabs, 4-line body. One `local` provider function per tab (`DoneLine`/`TakenLine`/`HealOutLine`/`HealInLine`) normalizes very different per-tab content (see `docs/DESIGN.md`'s table) into one `{headline,second,stat,max}` shape so the body-refresh code stays generic. Refreshed on a throttled `Update()` (~5Hz). **Permanently visible** whenever `settings.liveMeterEnabled` is true -- per direct user feedback, this overrides `docs/DESIGN.md`'s original "dims and holds the last fight 8s, then hides": it now shows the live fight, or the last finished one, or (if nothing has been fought yet this play session) a permanent zeroed `self.idleSession` placeholder -- a real empty `Session` instance, not a separate "no data" rendering path -- and just dims to 0.55 opacity out of combat rather than disappearing. `ActiveSession()` therefore never returns nil; every provider function can assume a real session. |
+| `UI/LiveMeter.lua` | `LiveMeter` (extends `Frame`, `key = "liveMeter"`, `closable = false`) -- window 1. Bespoke header (accent tick + "IN COMBAT"/"LAST FIGHT"/"OUT OF COMBAT" + elapsed clock), 4 tabs, 4-line body. One `local` provider function per tab (`DoneLine`/`TakenLine`/`HealOutLine`/`HealInLine`) normalizes very different per-tab content (see `docs/DESIGN.md`'s table) into one `{headline,second,stat,max}` shape so the body-refresh code stays generic. Refreshed on a throttled `Update()` (~5Hz). **Permanently visible** whenever `settings.liveMeterEnabled` is true -- per direct user feedback, this overrides `docs/DESIGN.md`'s original "dims and holds the last fight 8s, then hides": it now shows the live fight, or the last finished one, or (if nothing has been fought yet this play session) a permanent zeroed `self.idleSession` placeholder -- a real empty `Session` instance, not a separate "no data" rendering path. `ActiveSession()` therefore never returns nil; every provider function can assume a real session. **No opacity change at all now** (also per feedback -- the original 0.55 out-of-combat dim was removed too; full opacity always). |
 
-| `UI/DeathCause.lua` | `DeathCause` (extends `Frame`, `key = "deathCause"`, death-specific fill/border/header-rule colours) -- window 2. Fires from `Sessions.OnSelfDefeat`. "Last hit by" resolved by scanning `session.lastTaken` backward for the last `kind == "damage"` entry (temp-morale-loss rows don't carry an attacker). 5 pooled `Row` instances (never rebuilt), tinted per row: the killing-blow row's amount goes `DamageFatal`, temp-morale rows go `MutedText` end to end, everything else scales `DamageTaken`/`DamageSevere` off post-hit `moralePct`. Countdown is a `Bar` depleting via `Update()`, `_G.settings.deathAutoHide` seconds (default 15). |
+| `UI/DeathCause.lua` | `DeathCause` (extends `Frame`, `key = "deathCause"`, death-specific fill/border/header-rule colours) -- window 2. Fires from `Sessions.OnSelfDefeat`. "Last hit by" resolved by scanning `session.lastTaken` backward for the last `kind == "damage"` entry (temp-morale-loss rows don't carry an attacker). 5 pooled `Row` instances (never rebuilt), tinted per row: the killing-blow row's amount goes `DamageFatal`, temp-morale rows go `MutedText` end to end, everything else scales `DamageTaken`/`DamageSevere` off post-hit `moralePct`. Countdown is a `Bar`, `_G.settings.deathAutoHide` seconds (default 15) -- tracked as `self.remaining` (seconds left, decremented by real elapsed `dt` each `Update()` tick) rather than an absolute target timestamp, specifically so **pausing is just "skip subtracting this tick"**: `self.MouseEnter`/`self.MouseLeave` toggle `self.paused`, per direct feedback that hovering the window to read it shouldn't race the auto-hide closing it. Depends on `UI/Row.lua`'s rows being mouse-invisible (`SetMouseVisible(false)`, changed from `true` -- nothing in a `Row` was ever individually clickable) so a row sitting over the window doesn't swallow the hover before it reaches the window's own `MouseEnter`/`MouseLeave`. **Unverified**: whether `Turbine.UI.Window.MouseEnter`/`.MouseLeave` fire based on the window's own bounds regardless of mouse-invisible children on top (assumed, consistent with how mouse-invisible children behave for click-through elsewhere, but not confirmed for Enter/Leave specifically) -- if hover-pause doesn't trigger in-game, check this first. |
 
 | `UI/Analysis.lua` | `Analysis` (extends `Frame`, `key = "analysis"`, resizable) -- window 3. Session rail (pooled rows, pinned sort-to-top), 4 view tabs, picker chips (rebuilt on session/view change, not pooled -- a handful of controls, not a hot path), 5 KPI cards, skill table (`ScrollView` of pooled `Row`s with a per-row share-bar), two side panels. State: `self.viewTab`, `self.filter[view]`, `self.selectedSession`. `Analysis:Layout()` recomputes every block's position/size from the current window size and is called at construction and after a resize-drag ends (not continuously during the drag -- see the gripper's `MouseMove`/`MouseUp` comments). |
 | `UI/AnalysisGraph.lua` | `Graph` -- the time plot. Fixed 48 buckets (`docs/IMPLEMENTATION_PLAN.md`) spanning the session's actual duration, one pooled column of Controls per bucket per series slot (max 2 regular series), a **dotted approximation of the dashed morale overlay** (flagged as a deliberate simplification in the file's own header comment -- Turbine.UI Controls are axis-aligned rectangles, no cheap way to draw a literal dashed line). `Graph:Resize(width)` repositions the existing pool in place rather than rebuilding it. |

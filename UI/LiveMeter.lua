@@ -316,8 +316,6 @@ function LiveMeter:Refresh()
 		self.combatLabel:SetText("OUT OF COMBAT")
 	end
 	self.clockLabel:SetText(Format.Clock(session:Duration()))
-
-	self:SetOpacity(inCombat and 1 or 0.55)
 end
 
 function LiveMeter:Update()

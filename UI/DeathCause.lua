@@ -47,10 +47,19 @@ function DeathCause:Constructor()
 	self:BuildRows()
 	self:BuildCountdown()
 
-	self.hideAt = nil
+	self.remaining = nil
 	self.countdownTotal = 1
+	self.paused = false
 
 	local window = self
+
+	-- Pause (not close) the countdown while the mouse is over the window, per direct user
+	-- feedback -- reading the cause shouldn't race the auto-hide. Rows are mouse-invisible
+	-- (UI/Row.lua) specifically so they don't block this from firing when the cursor is over
+	-- the row list rather than the background.
+	self.MouseEnter = function() window.paused = true end
+	self.MouseLeave = function() window.paused = false end
+
 	Sessions.OnSelfDefeat(function(s) window:Show(s) end)
 
 	self:SetWantsUpdates(true)
@@ -216,32 +225,42 @@ function DeathCause:Show(session)
 	end
 
 	self.countdownTotal = _G.settings.deathAutoHide or 15
-	self.hideAt = Turbine.Engine.GetGameTime() + self.countdownTotal
+	self.remaining = self.countdownTotal
+	self.paused = false
+	self.lastTick = Turbine.Engine.GetGameTime()
 	self.countdownBar:SetPercent(1)
 
 	self:SetVisible(true)
 	self:Activate()
 end
 
+-- Delta-time based (not an absolute target timestamp) specifically so pausing is just "skip
+-- subtracting this tick" -- an absolute hideAt would need shifting forward by however long the
+-- pause lasted, which is more bookkeeping for the same result.
 function DeathCause:Update()
-	if self.hideAt == nil then
+	if self.remaining == nil then
 		return
 	end
 
 	local now = Turbine.Engine.GetGameTime()
-	local remaining = self.hideAt - now
+	local dt = now - self.lastTick
+	self.lastTick = now
 
-	if remaining <= 0 then
-		self.hideAt = nil
+	if not self.paused then
+		self.remaining = self.remaining - dt
+	end
+
+	if self.remaining <= 0 then
+		self.remaining = nil
 		self:SetVisible(false)
 		return
 	end
 
-	self.countdownBar:SetPercent(remaining / self.countdownTotal)
-	self.countdownLabel:SetText(string.format("%ds", math.ceil(remaining)))
+	self.countdownBar:SetPercent(self.remaining / self.countdownTotal)
+	self.countdownLabel:SetText(string.format("%ds", math.ceil(self.remaining)))
 end
 
 function DeathCause:Close()
-	self.hideAt = nil
+	self.remaining = nil
 	Frame.Close(self)
 end

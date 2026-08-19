@@ -16,6 +16,7 @@ local BUCKET_COUNT = 48
 local PLOT_HEIGHT = 150
 local AXIS_HEIGHT = 22
 local AREA_OPACITY = 0.13
+local CAP_HEIGHT = 2 -- the "line" on top of each bucket's area fill, see BuildColumns
 local MAX_REGULAR_SERIES = 2 -- the busiest view (taken+healIn) never needs more than this
 
 function Graph:Constructor(width)
@@ -52,11 +53,18 @@ end
 
 -- Up to MAX_REGULAR_SERIES translucent columns per bucket, pooled once and reused for whichever
 -- series the active view actually has (docs/IMPLEMENTATION_PLAN.md "Performance notes": never
--- rebuild per refresh).
+-- rebuild per refresh). Each column also gets a "cap" -- a solid-colour 2px sliver at the top,
+-- since a 13%-opacity area fill *alone* reads as "nothing" against a similarly dark background
+-- (confirmed in-game: real damage data produced a graph that looked empty). The mockup's own
+-- spec is "area fill... under a line" -- the cap is that line, just drawn as one short segment
+-- per bucket rather than a single continuous stroke (same one-Control-per-bucket technique as
+-- everything else here; a real polyline isn't cheap to draw with axis-aligned Controls).
 function Graph:BuildColumns()
 	self.columns = {}
+	self.caps = {}
 	for slot = 1, MAX_REGULAR_SERIES do
 		self.columns[slot] = {}
+		self.caps[slot] = {}
 		for i = 1, BUCKET_COUNT do
 			local col = Turbine.UI.Control()
 			col:SetParent(self)
@@ -65,6 +73,13 @@ function Graph:BuildColumns()
 			col:SetVisible(false)
 			col:SetMouseVisible(false)
 			self.columns[slot][i] = col
+
+			local cap = Turbine.UI.Control()
+			cap:SetParent(self)
+			cap:SetSize(math.max(1, math.floor(self.bucketWidth) - 1), CAP_HEIGHT)
+			cap:SetVisible(false)
+			cap:SetMouseVisible(false)
+			self.caps[slot][i] = cap
 		end
 	end
 end
@@ -118,8 +133,13 @@ function Graph:Resize(width)
 		for i = 1, BUCKET_COUNT do
 			local col = self.columns[slot][i]
 			local _, h = col:GetSize()
+			local colWidth = math.max(1, math.floor(self.bucketWidth) - 1)
 			col:SetPosition(math.floor((i - 1) * self.bucketWidth), PLOT_HEIGHT - h)
-			col:SetSize(math.max(1, math.floor(self.bucketWidth) - 1), h)
+			col:SetSize(colWidth, h)
+
+			local cap = self.caps[slot][i]
+			cap:SetPosition(math.floor((i - 1) * self.bucketWidth), PLOT_HEIGHT - h)
+			cap:SetSize(colWidth, CAP_HEIGHT)
 		end
 	end
 
@@ -245,15 +265,29 @@ function Graph:Redraw()
 		local series = self.seriesList[slot]
 		for i = 1, BUCKET_COUNT do
 			local col = self.columns[slot][i]
+			local cap = self.caps[slot][i]
 			if series == nil or self.hidden[series.key] then
 				col:SetVisible(false)
+				cap:SetVisible(false)
 			else
 				local value = self.slices[i][series.key] or 0
-				local h = (maxValue > 0) and math.floor(value / maxValue * PLOT_HEIGHT) or 0
+				local h = 0
+				if value > 0 and maxValue > 0 then
+					-- at least 1px so a small bucket next to a huge one still shows *something*,
+					-- same rounding philosophy as UI/Bar.lua's SetPercent
+					h = math.max(1, math.floor(value / maxValue * PLOT_HEIGHT))
+				end
+
+				local colWidth = math.max(1, math.floor(self.bucketWidth) - 1)
 				col:SetBackColor(Theme.Mix(series.colorHex, Theme.Hex.WindowFill, AREA_OPACITY))
 				col:SetPosition(math.floor((i - 1) * self.bucketWidth), PLOT_HEIGHT - h)
-				col:SetSize(math.max(1, math.floor(self.bucketWidth) - 1), h)
+				col:SetSize(colWidth, h)
 				col:SetVisible(h > 0)
+
+				cap:SetBackColor(Theme.Color(series.colorHex))
+				cap:SetPosition(math.floor((i - 1) * self.bucketWidth), PLOT_HEIGHT - h)
+				cap:SetSize(colWidth, CAP_HEIGHT)
+				cap:SetVisible(h > 0)
 			end
 		end
 	end

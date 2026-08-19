@@ -36,3 +36,21 @@ proved the window itself worked. Defeat/incapacitate lines ("The X incapacitated
 succumb to your wounds.") arrive on their own chat channel, separate from the one regular
 damage/healing lines use -- they were being filtered out before ever reaching the parser. Found
 by testing the real parser and dispatch code against a combat log the user captured and shared.
+
+Changed: the live meter no longer dims when out of combat -- always full opacity now, per
+feedback.
+
+Changed: the death window now pauses its auto-hide countdown while the mouse is over it, instead
+of counting down regardless -- reading the cause no longer races the popup closing.
+
+Fixed: the analysis window's target/source picker -- clicking a chip could filter by the wrong
+target entirely (a different one than the chip's own label), and the "All targets" chip could
+end up pointing at a specific target instead of clearing the filter. A `{nil}` table used as the
+start of an array, followed by `table.insert`, is broken in Lua: a table with a leading nil has
+an undefined/zero length, so the insert silently overwrote that slot instead of appending after
+it, shifting every chip's filter value one position off from its label.
+
+Fixed: the analysis window's graph looked completely empty even with real combat data. The
+13%-opacity area fill alone is too faint to read against the panel background -- added a solid
+"cap" line on top of each bar, closer to what the design's "area fill under a line" actually
+specifies.
