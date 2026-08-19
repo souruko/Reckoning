@@ -37,10 +37,22 @@ developers.
 
 ## Build status
 
-Phase 0 (skeleton) only, per `docs/IMPLEMENTATION_PLAN.md`: the plugin loads, settings
-save/reload, `/reck help` responds. Phases 1-6 (event pipeline, window chrome, live meter,
+Phases 0-1 done, per `docs/IMPLEMENTATION_PLAN.md`. Phases 2-6 (window chrome, live meter,
 death cause, analysis window, options/polish) are not started. Follow the implementation plan
 in order -- each phase is written to end somewhere loadable and testable in-game.
+
+Phase 1 (event pipeline) was verified **offline**, not in-game: `Utils/Class.lua`,
+`Utils/Type.lua`, `Constants.lua`, `Parse/en.lua`, `Session.lua` and `Sessions.lua` were
+`dofile`'d under a plain Lua 5.4 interpreter (this dev box has no Lua 5.1 and no real Turbine
+runtime) against a hand-built `Turbine`/`_G.lp` stub, with `getfenv`/`setfenv`/`table.getn`
+shimmed back in (all three are gone in 5.2+; the game's actual Lua 5.1 has them natively). Both
+`reference/*.txt` fixtures were fed through the real dispatch logic this way and produced
+correct aggregates (verified by hand against the raw lines) -- including the "Reflect" skill,
+avoidance folding, the temp-morale ring row, and the "You have been incapacitated by
+misadventure" self-death line correctly flipping `session.died`. That harness was scratch-only
+and was not committed. **None of this exercised real Turbine.UI, `Turbine.Chat.Received`
+registration order against other loaded plugins, or `Turbine.PluginData` -- those still need an
+in-game load to confirm.**
 
 ## Load order
 
@@ -67,11 +79,13 @@ inheritance + mixins). Treat them as vendored, not Reckoning-specific.
 | `Constants.lua` | `L` (localisation), `EventCode` / `AvoidType` / `CritType` / `DamageType` enums mirroring the parser's return codes, `Font` table (only the faces/sizes the design actually uses), `Theme` palette + `Theme.Color(hex)`. |
 | `Settings.lua` | `Settings.Load()` / `Settings.Save()` / `Settings.FixColors()` via `Turbine.PluginData`, `DEFAULTS` as single source of truth, `COLOR_KEYS` for colour rebuild. |
 | `Parse/en.lua` | `Trigger.ParseCombatChat` -- ported **verbatim** from `souruko/Gibberish3` (`UTILS/COMBATCHATPARSE/en.lua`). Do not rewrite it; `de.lua` / `fr.lua` are later drop-ins with the same signature. |
+| `Session.lua` | The `Session` class -- one fight's aggregate (`agg.done/taken/healOut/healIn`, `buckets`, `lastTaken` ring). One `Add*`/`On*` method per event kind: `AddDone`, `AddTaken`, `AddHealOut`, `AddHealIn`, `AddTempMoraleLoss`, `OnDefeat`, `OnRevive`. |
+| `Sessions.lua` | The manager singleton (not a class): `Sessions.current` / `Sessions.list` (ring of 10, pinned exempt) / `Sessions.selected`; opens a `Session` lazily on the first own event, closes it after 5s of silence via `Sessions.Tick()`, discards anything under 3s. `Sessions.OnClosed` / `Sessions.OnSelfDefeat` are the callback lists Phase 3/4 UI hooks into. |
+| `Events.lua` | Wraps `Turbine.Chat.Received` (chaining to whatever was already registered), strips `<rgb=#......>` tags and trims before calling `Trigger.ParseCombatChat`, dispatches into `Sessions.*`. Also hosts the heartbeat (`Events.heartbeat`, a bare `Turbine.UI.Window` with `SetWantsUpdates(true)`) that drives `Sessions.Tick()`, since session-close-on-silence has to run even when chat is quiet. `Events.Shutdown()` restores the previous `Turbine.Chat.Received` and stops the heartbeat -- called from `plugin.Unload`. |
 | `Utils/Class.lua`, `Utils/Type.lua` | Vendored OOP shim, see above. |
 
-Not yet created (see `docs/IMPLEMENTATION_PLAN.md` for what each owns): `Events.lua`
-(Phase 1), `Session.lua` (Phase 1), `UI/Frame.lua` / `UI/Bar.lua` / `UI/Row.lua` (Phase 2),
-and the three window modules (Phases 3-5).
+Not yet created (see `docs/IMPLEMENTATION_PLAN.md` for what each owns): `UI/Frame.lua` /
+`UI/Bar.lua` / `UI/Row.lua` (Phase 2), and the three window modules (Phases 3-5).
 
 ### Key globals
 
@@ -88,15 +102,15 @@ and the three window modules (Phases 3-5).
   Gibberish3 install: dead in the source `Parse/en.lua` was ported from) -- Reckoning defines
   it directly in `Constants.lua` instead of leaving `skillName` nil.
 
-## The parser and its wiring (Phase 1 -- not yet implemented)
+## The parser and its wiring
 
 `Trigger.ParseCombatChat(line)` returns `eventCode, ...` (signature varies by code) or `nil`
 for anything unparseable. Full details, including the `avoidType` / `critType` / `dmgType`
-tables and which event codes to consume, are in `docs/DESIGN.md` "The parser" -- read that
-before writing `Events.lua`.
+tables and which event codes to consume, are in `docs/DESIGN.md` "The parser".
 
 Two things learned from reading the **live** Gibberish3 install (`TRIGGER/CHAT/Functions.lua`)
-that are not written down in the design bundle and are easy to miss:
+that are not written down in the design bundle and are easy to miss, both applied in
+`Events.lua`:
 
 1. **Strip colour tags and trim before parsing.** Gibberish3 feeds the parser
    `string.gsub(string.gsub(message, "<rgb=#......>(.*)</rgb>", "%1"), "^%s*(.-)%s*$", "%1")`,
@@ -144,7 +158,8 @@ Follow the `VitalSelf` pattern: `Turbine.PluginData.Save(Turbine.DataScope.Chara
 
 ## Testing
 
-There is no test runner in the repo. `docs/IMPLEMENTATION_PLAN.md` Phase 1 calls for
-`/reck dump` (not yet implemented) to print session totals to chat, checked by hand against
-`reference/Combat_20260819_1.txt` and `reference/Enemy_20260819_1.txt` fed through the parser
-line by line.
+There is no test runner in the repo. `/reck dump` (in `Main.lua`) prints the current or most
+recent session's totals to chat -- the in-game way to re-check the event pipeline against
+`reference/Combat_20260819_1.txt` / `reference/Enemy_20260819_1.txt` (read the two logs by eye
+and compare). See "Build status" above for how Phase 1 was checked offline before any in-game
+load existed to run `/reck dump` against.

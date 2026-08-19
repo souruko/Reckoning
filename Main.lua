@@ -39,8 +39,60 @@ LocalPlayer = _G.lp
 Settings.Load()
 
 ---------------------------------------------------------------------
+--== Event pipeline ===--
+---------------------------------------------------------------------
+-- Session (the class) before Sessions (the manager, which instantiates it) before Events
+-- (which dispatches into the manager and needs Sessions/LocalPlayer/Trigger already defined).
+
+import "Reckoning.Session"
+import "Reckoning.Sessions"
+import "Reckoning.Events"
+
+---------------------------------------------------------------------
 --== Shell command ===--
 ---------------------------------------------------------------------
+
+-- Prints one aggregate category's rows to chat, most-total-first. Verification tool for
+-- Phase 1: feed reference/*.txt through Trigger.ParseCombatChat by hand and compare against
+-- this output. Not meant to survive into the analysis window UI (Phase 5 reads Session.agg
+-- directly instead of formatting chat text).
+local function DumpCategory(label, agg)
+	local rows = {}
+	for _, row in pairs(agg) do
+		table.insert(rows, row)
+	end
+	table.sort(rows, function(a, b) return a.total > b.total end)
+
+	if table.getn(rows) == 0 then
+		return
+	end
+
+	Turbine.Shell.WriteLine("-- " .. label .. " --")
+	for i = 1, table.getn(rows) do
+		local row = rows[i]
+		local who = row.who or "?"
+		local crit = (row.crits or 0) .. "c/" .. (row.devs or 0) .. "d"
+		Turbine.Shell.WriteLine(
+			string.format("  %s -> %s: %d hits, %s, max %d, total %d",
+				row.skill, who, row.hits or 0, crit, row.max or 0, row.total or 0))
+	end
+end
+
+local function DumpSession(s)
+	if s == nil then
+		Turbine.Shell.WriteLine("Reckoning: no session data yet.")
+		return
+	end
+
+	Turbine.Shell.WriteLine(string.format(
+		"Reckoning session: %s, %.0fs (%ds active)%s",
+		s.startClock, s:Duration(), s:ActiveSeconds(), s.died and ", died" or ""))
+
+	DumpCategory("Damage done", s.agg.done)
+	DumpCategory("Damage taken", s.agg.taken)
+	DumpCategory("Healing done", s.agg.healOut)
+	DumpCategory("Healing taken", s.agg.healIn)
+end
 
 command = Turbine.ShellCommand()
 
@@ -48,8 +100,10 @@ function command:Execute(_, str)
 	local cmd = str and string.match(string.lower(str), "^%s*(%S*)") or ""
 
 	if cmd == "" or cmd == "help" then
-		Turbine.Shell.WriteLine("Reckoning v" .. Reckoning.Version .. ": /reck help")
-		-- Phase 1 adds: dump. Phase 5/6 add: show, hide, move, reset.
+		Turbine.Shell.WriteLine("Reckoning v" .. Reckoning.Version .. ": /reck help | dump")
+		-- Phase 5/6 add: show, hide, move, reset.
+	elseif cmd == "dump" then
+		DumpSession(Sessions.current or Sessions.list[1])
 	else
 		Turbine.Shell.WriteLine("Reckoning: unknown command '" .. cmd .. "'. Try /reck help.")
 	end
@@ -64,4 +118,5 @@ Turbine.Shell.AddCommand("reck", command)
 plugin.Unload = function(self)
 	Settings.Save()
 	Turbine.Shell.RemoveCommand(command)
+	Events.Shutdown()
 end

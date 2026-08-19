@@ -2,5 +2,6 @@
 
 ## 0.1.0 - unreleased
 
-Project scaffolding: plugin loads, settings save and reload, `/reck help` works.
-No combat tracking or UI yet -- see `docs/IMPLEMENTATION_PLAN.md` for the build order.
+Project scaffolding plus the combat data pipeline: the plugin now reads your own damage,
+healing, and deaths from the combat log and keeps a running per-fight tally
+(`/reck dump` prints it to chat). No windows yet -- everything is still chat-only.

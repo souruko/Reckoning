@@ -7,8 +7,9 @@ the local player only -- nothing is read off targets or the group.
 
 ## Status
 
-Scaffolding only (Phase 0 of `docs/IMPLEMENTATION_PLAN.md`). The plugin loads, settings
-persist, and `/reck help` responds. No combat tracking or UI yet.
+Phases 0-1 of `docs/IMPLEMENTATION_PLAN.md`. The plugin loads, settings persist, and it reads
+your own combat from chat into a per-fight session (`/reck dump` prints the current tally).
+No windows yet.
 
 ## Design source
 

@@ -47,6 +47,23 @@ AvoidType.PartialParry = 9
 AvoidType.PartialEvade = 10
 AvoidType.Deflected    = 11
 
+-- Full avoids (amount 0, dmgType 13) vs. partials (8-10, on a real hit). Deflected (11) is a
+-- full avoid despite sorting numerically after the partials -- do not derive this with a
+-- numeric range check.
+AvoidType.FullSet = {
+	[AvoidType.Missed]   = true,
+	[AvoidType.Immune]   = true,
+	[AvoidType.Resisted] = true,
+	[AvoidType.Blocked]  = true,
+	[AvoidType.Parried]  = true,
+	[AvoidType.Evaded]   = true,
+	[AvoidType.Deflected]= true,
+}
+
+function AvoidType.IsFull(avoidType)
+	return AvoidType.FullSet[avoidType] == true
+end
+
 ---------------------------------------------------------------------------------------------------
 -- critType -- present on both damage and heal lines. Keep 2 and 3 in separate counters; never sum.
 ---------------------------------------------------------------------------------------------------
