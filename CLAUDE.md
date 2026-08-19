@@ -37,9 +37,14 @@ developers.
 
 ## Build status
 
-Phases 0-2 done, per `docs/IMPLEMENTATION_PLAN.md`. Phases 3-6 (live meter, death cause,
-analysis window, options/polish) are not started. Follow the implementation plan in order --
-each phase is written to end somewhere loadable and testable in-game.
+Phases 0-3 done, per `docs/IMPLEMENTATION_PLAN.md`. Phases 4-6 (death cause, analysis window,
+options/polish) are not started. Follow the implementation plan in order -- each phase is
+written to end somewhere loadable and testable in-game.
+
+Two Design-token values `docs/DESIGN.md` names but never gives hex for (`--color-accent-200`,
+`-300`, `-500`, `-700`) were pulled directly from the mockup's own CSS custom properties and
+added as `Theme.Hex.Accent200/300/500/700` in `Constants.lua` -- see that file's comment. If a
+future design revision changes the mockup's accent scale, re-check those four values there.
 
 Phase 2 (window chrome) has **not** been exercised even offline -- it is pure `Turbine.UI`
 (`Turbine.UI.Window`/`Control`/`Label`), which the offline harness described below cannot stub
@@ -106,9 +111,10 @@ global assigned there (`Trigger`, `L`, `EventCode`, `Theme`, `Font`, `Session`, 
 `Main.lua` via `UI.LiveMeter()` etc. (matching `vital = UI.Vital()` in `VitalSelf/Main.lua`),
 and can freely reference `Frame`/`Bar`/`Row` bare since they're siblings in the same directory.
 
-Not yet created (see `docs/IMPLEMENTATION_PLAN.md` for what each owns): the three window
-modules themselves (Phases 3-5) -- `UI/LiveMeter.lua`, `UI/DeathCause.lua`, `UI/Analysis.lua`
-(or similar, an `UI/Analysis/` subtree given its size).
+| `UI/LiveMeter.lua` | `LiveMeter` (extends `Frame`, `key = "liveMeter"`, `closable = false`) -- window 1. Bespoke header (accent tick + "IN COMBAT"/"LAST FIGHT" + elapsed clock), 4 tabs, 4-line body. One `local` provider function per tab (`DoneLine`/`TakenLine`/`HealOutLine`/`HealInLine`) normalizes very different per-tab content (see `docs/DESIGN.md`'s table) into one `{headline,second,stat,max}` shape so the body-refresh code stays generic. Refreshed on a throttled `Update()` (~5Hz); shows/hides itself based on `Sessions.current` plus an 8s post-combat hold (`Sessions.OnClosed`). |
+
+Not yet created (see `docs/IMPLEMENTATION_PLAN.md` for what each owns): `UI/DeathCause.lua`
+(Phase 4), `UI/Analysis.lua` (Phase 5, or an `UI/Analysis/` subtree given its size).
 
 ### Key globals
 

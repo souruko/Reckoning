@@ -76,15 +76,21 @@ function Frame:BuildHeader(title, width, ruleColor)
 	self.header:SetSize(width, self.headerHeight)
 	self.header:SetZOrder(3)
 
-	self.titleLabel = Turbine.UI.Label()
-	self.titleLabel:SetParent(self.header)
-	self.titleLabel:SetFont(Font.TrajanPro13)
-	self.titleLabel:SetText(title or "")
-	self.titleLabel:SetForeColor(Theme.Color(Theme.Hex.Text))
-	self.titleLabel:SetPosition(10, 0)
-	self.titleLabel:SetSize(width - (self.closable and 30 or 16), self.headerHeight)
-	self.titleLabel:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
-	self.titleLabel:SetMouseVisible(false)
+	-- Only the analysis window (Phase 5) uses a plain title + close bar. The live meter and
+	-- death cause headers are bespoke content (accent tick + clock; "You were defeated" +
+	-- countdown) -- passing no title skips this label and leaves self.header empty for the
+	-- subclass to fill after Constructor runs.
+	if title ~= nil then
+		self.titleLabel = Turbine.UI.Label()
+		self.titleLabel:SetParent(self.header)
+		self.titleLabel:SetFont(Font.TrajanPro13)
+		self.titleLabel:SetText(title)
+		self.titleLabel:SetForeColor(Theme.Color(Theme.Hex.Text))
+		self.titleLabel:SetPosition(10, 0)
+		self.titleLabel:SetSize(width - (self.closable and 30 or 16), self.headerHeight)
+		self.titleLabel:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
+		self.titleLabel:SetMouseVisible(false)
+	end
 
 	if self.closable then
 		self.closeLabel = Turbine.UI.Label()

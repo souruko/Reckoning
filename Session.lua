@@ -258,3 +258,25 @@ function Session:Rate(category, who)
 	end
 	return self:Total(category, who) / active
 end
+
+-- Sums hits/crits/devs/avoided across every row in a category (optionally restricted to one
+-- counterpart name), and tracks the single largest hit plus which skill produced it. Backs the
+-- live meter's crit/dev/avoided percentages and "largest hit" line, and the analysis window's
+-- KPI row -- one pass over the same rows Total()/Rate() already use, never a raw-event rescan.
+function Session:HitStats(category, who)
+	local stats = { hits = 0, crits = 0, devs = 0, avoided = 0, max = 0, maxSkill = nil, maxWho = nil }
+	for _, row in pairs(self.agg[category]) do
+		if who == nil or row.who == who then
+			stats.hits = stats.hits + row.hits
+			stats.crits = stats.crits + row.crits
+			stats.devs = stats.devs + row.devs
+			stats.avoided = stats.avoided + (row.avoided or 0)
+			if row.max > stats.max then
+				stats.max = row.max
+				stats.maxSkill = row.skill
+				stats.maxWho = row.who
+			end
+		end
+	end
+	return stats
+end

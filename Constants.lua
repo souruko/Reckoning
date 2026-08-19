@@ -124,6 +124,14 @@ Theme.Hex = {
 	DimText      = "#8b8d9b",
 	Accent       = "#9184d9",
 	AccentLight  = "#b5abfc",
+	-- Accent tint scale -- pulled from the mockup's own CSS custom properties
+	-- (--color-accent-NNN), since docs/DESIGN.md names these without giving hex. 200 is
+	-- selected-tab/chip text, 300 is the "text-safe" rate/clock tint, 500 is the death-window
+	-- countdown fill, 700 is the pinned/selected border.
+	Accent200    = "#e7e5fe",
+	Accent300    = "#d2cefd",
+	Accent500    = "#968ae0",
+	Accent700    = "#5d5294",
 	DamageDone   = "#9184d9",
 	DamageTaken  = "#c98fa8",
 	DamageSevere = "#e3a3ba",
@@ -140,7 +148,52 @@ Theme.Hex = {
 	TypeFire     = "#e3a3ba",
 	TypeLight    = "#a7a1db",
 	TypeShadow   = "#c98fa8",
+	-- shared interaction/role tokens named directly in docs/DESIGN.md prose
+	Hover        = "#2b2e3e", -- "Hover on any clickable row/chip/tab" (docs/DESIGN.md "Interactions")
+	MeterDivider = "#33364a", -- live meter's own divider, distinct from the generic Border token
 }
+
+---------------------------------------------------------------------------------------------------
+-- Formatting -- shared across every window that prints a number to a Label.
+---------------------------------------------------------------------------------------------------
+Format = {}
+
+-- "4812" -> "4,812". Mirrors VitalSelf/Main.lua's format_number: never call this from a
+-- per-frame Update() with anything heavier than the throttled refreshes these windows use.
+function Format.Number(value)
+	if value == nil then
+		return "0"
+	end
+	local text = string.format("%.0f", value)
+	local sign, int = string.match(text, "^(%-?)(%d+)$")
+	if int == nil then
+		return text
+	end
+	local count = 1
+	while count > 0 do
+		int, count = string.gsub(int, "^(%d+)(%d%d%d)", "%1,%2")
+	end
+	return sign .. int
+end
+
+function Format.Percent(fraction)
+	if fraction == nil then
+		return "0%"
+	end
+	return string.format("%.0f%%", fraction * 100)
+end
+
+function Format.Rate(perSecond)
+	return Format.Number(perSecond) .. "/s"
+end
+
+-- Elapsed seconds -> "MM:SS", for the live meter's header clock and session durations.
+function Format.Clock(seconds)
+	seconds = math.floor(seconds or 0)
+	local m = math.floor(seconds / 60)
+	local s = seconds % 60
+	return string.format("%02d:%02d", m, s)
+end
 
 -- "#RRGGBB..." -> Turbine.UI.Color. Reads only the first 6 hex digits; the mockup's 8-digit
 -- values carry a CSS alpha that has no Color equivalent here and is applied separately
