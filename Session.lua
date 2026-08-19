@@ -280,3 +280,27 @@ function Session:HitStats(category, who)
 	end
 	return stats
 end
+
+-- The counterpart with the highest summed `total` in a category -- used to name a fight after
+-- whoever you did the most damage to (or, failing that, whoever hit you hardest).
+function Session:TopCounterpart(category)
+	local totals = {}
+	for _, row in pairs(self.agg[category]) do
+		totals[row.who] = (totals[row.who] or 0) + row.total
+	end
+
+	local bestWho, bestTotal = nil, 0
+	for who, total in pairs(totals) do
+		if total > bestTotal then
+			bestWho, bestTotal = who, total
+		end
+	end
+	return bestWho
+end
+
+-- Session rail label (docs/DESIGN.md has no explicit "session name" field -- this is a
+-- reasonable derivation, not a documented one). Named after the target that took the most of
+-- your damage; if you died without landing a hit, named after whoever hit you hardest instead.
+function Session:DisplayName()
+	return self:TopCounterpart("done") or self:TopCounterpart("taken") or "Solo"
+end

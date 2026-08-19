@@ -2,6 +2,7 @@
 
 ## 0.1.0 - unreleased
 
-Project scaffolding plus the combat data pipeline: the plugin now reads your own damage,
-healing, and deaths from the combat log and keeps a running per-fight tally
-(`/reck dump` prints it to chat). No windows yet -- everything is still chat-only.
+The plugin now has all three windows: a live combat meter, a death cause window that explains
+what killed you, and a full post-combat analysis window with a session history, graphs, and a
+skill breakdown table. Not yet tested in-game -- treat this as a first build to load and shake
+out.

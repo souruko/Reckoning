@@ -7,9 +7,10 @@ the local player only -- nothing is read off targets or the group.
 
 ## Status
 
-Phases 0-1 of `docs/IMPLEMENTATION_PLAN.md`. The plugin loads, settings persist, and it reads
-your own combat from chat into a per-fight session (`/reck dump` prints the current tally).
-No windows yet.
+Phases 0-5 of `docs/IMPLEMENTATION_PLAN.md`: the full data pipeline and all three windows
+(live meter, death cause, post-combat analysis) are built. Phase 6 (options panel, `/reck`
+subcommands beyond `dump`, polish) is not started. None of the UI has been loaded in-game yet --
+see `CLAUDE.md`'s "Analysis window: what's genuinely unverified" before trusting it blind.
 
 ## Design source
 

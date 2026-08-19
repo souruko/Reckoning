@@ -58,6 +58,7 @@ import "Reckoning.UI"
 
 liveMeter = UI.LiveMeter()
 deathCause = UI.DeathCause()
+analysis = UI.Analysis()
 
 ---------------------------------------------------------------------
 --== Shell command ===--

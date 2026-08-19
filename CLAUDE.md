@@ -37,8 +37,33 @@ developers.
 
 ## Build status
 
-Phases 0-4 done, per `docs/IMPLEMENTATION_PLAN.md`. Phases 5-6 (analysis window,
-options/polish) are not started. Follow the implementation plan in order -- each phase is
+Phases 0-5 done, per `docs/IMPLEMENTATION_PLAN.md`. Phase 6 (options panel, `/reck`
+subcommands, polish) is not started. The analysis window (Phase 5) is by far the largest and
+least-verifiable piece built so far -- see the "Analysis window" note below before trusting it
+blind.
+
+### Analysis window: what's genuinely unverified
+
+Phases 1-2's offline harness could exercise real logic outside the game; Phase 5 cannot -- it is
+almost entirely `Turbine.UI.ScrollView`/`Control`/`Label` construction and layout arithmetic,
+checked only with `luac -p` (syntax) and by hand-tracing the pixel math in review. Specific
+things that need an actual in-game load to confirm, roughly in order of how likely they are to
+be wrong:
+
+- `Turbine.UI.ScrollView()` is used bare (`SetParent` + child positioning only) for the skill
+  table. If it needs an explicit `SetAutoScroll`/similar call to actually scroll once pooled rows
+  exceed its viewport, that call is missing.
+- The picker chip width estimate (`ChipWidth` in `UI/Analysis.lua`, `16 + len(text)*7`) is a
+  guess -- there's no text-measurement API used anywhere else in this codebase to check against.
+  Long names will likely need retuning.
+- At the window's minimum size (1080x600), the "Damage taken" view's table columns sum to a few
+  px more than the table's allotted width once the Skill column hits its 150px floor (8 fixed
+  columns leave less room than the other three 7-column views) -- minor overflow, only in that
+  one view, only at minimum width, self-corrects once the window is widened.
+- `SetOpacity` is used very heavily (every "tinted fill" -- tabs, chips, session rail selection,
+  KPI cards' implied fill, panel/graph area fills) as the way to approximate the mockup's
+  8-digit-hex alpha values. It's a confirmed-real method (`VitalSelf/UI/Vital.lua` uses it), but
+  the actual visual result of stacking several `SetOpacity`'d Controls hasn't been seen rendered. Follow the implementation plan in order -- each phase is
 written to end somewhere loadable and testable in-game.
 
 Two Design-token values `docs/DESIGN.md` names but never gives hex for (`--color-accent-200`,
@@ -115,8 +140,31 @@ and can freely reference `Frame`/`Bar`/`Row` bare since they're siblings in the 
 
 | `UI/DeathCause.lua` | `DeathCause` (extends `Frame`, `key = "deathCause"`, death-specific fill/border/header-rule colours) -- window 2. Fires from `Sessions.OnSelfDefeat`. "Last hit by" resolved by scanning `session.lastTaken` backward for the last `kind == "damage"` entry (temp-morale-loss rows don't carry an attacker). 5 pooled `Row` instances (never rebuilt), tinted per row: the killing-blow row's amount goes `DamageFatal`, temp-morale rows go `MutedText` end to end, everything else scales `DamageTaken`/`DamageSevere` off post-hit `moralePct`. Countdown is a `Bar` depleting via `Update()`, `_G.settings.deathAutoHide` seconds (default 15). |
 
-Not yet created (see `docs/IMPLEMENTATION_PLAN.md` for what each owns): `UI/Analysis.lua`
-(Phase 5, or an `UI/Analysis/` subtree given its size).
+| `UI/Analysis.lua` | `Analysis` (extends `Frame`, `key = "analysis"`, resizable) -- window 3. Session rail (pooled rows, pinned sort-to-top), 4 view tabs, picker chips (rebuilt on session/view change, not pooled -- a handful of controls, not a hot path), 5 KPI cards, skill table (`ScrollView` of pooled `Row`s with a per-row share-bar), two side panels. State: `self.viewTab`, `self.filter[view]`, `self.selectedSession`. `Analysis:Layout()` recomputes every block's position/size from the current window size and is called at construction and after a resize-drag ends (not continuously during the drag -- see the gripper's `MouseMove`/`MouseUp` comments). |
+| `UI/AnalysisGraph.lua` | `Graph` -- the time plot. Fixed 48 buckets (`docs/IMPLEMENTATION_PLAN.md`) spanning the session's actual duration, one pooled column of Controls per bucket per series slot (max 2 regular series), a **dotted approximation of the dashed morale overlay** (flagged as a deliberate simplification in the file's own header comment -- Turbine.UI Controls are axis-aligned rectangles, no cheap way to draw a literal dashed line). `Graph:Resize(width)` repositions the existing pool in place rather than rebuilding it. |
+
+**Two documented deviations from the mockup's literal pixel values**, both explained in
+`UI/Analysis.lua`'s header comment: the graph and skill table stretch to fill the available
+content width instead of the mockup's fixed 640px graph (a fixed-width graph would get zero
+benefit from the resize gripper, which is the whole reason this window resizes and the other two
+don't); and the 5 KPIs are one uniform shape across all four views (total+rate, hits/heals+count,
+crit/dev%, largest+skill, active time) rather than bespoke content per view, since `docs/DESIGN.md`
+specifies "five KPIs" per view without dictating what they show.
+
+**A pattern worth knowing before touching either file**: nothing in `UI/Analysis.lua` or
+`UI/AnalysisGraph.lua` ever calls `:SetParent(nil)` to detach/destroy a child Control, even
+though an earlier draft did (to swap a `Row`'s column spec on view change, and to rebuild `Graph`
+on resize). There's no confirmed-safe "detach a child" call anywhere in this codebase's existing
+plugins (`VitalSelf`/`Gibberish3`), and view-switching is a hot-ish path -- if that call actually
+throws in the real client, every view click would break plugin. Instead: `Row:Reconfigure(width,
+columns)` (`UI/Row.lua`) re-points an existing pooled Row at a new column spec, reusing Label
+children and only creating new ones if the column count grows; `Graph:Resize(width)`
+repositions/resizes the existing pooled columns/dots/gridlines in place. If a future change needs
+to genuinely remove a child Control, verify `SetParent(nil)` (or whatever the real teardown call
+turns out to be) in-game first, on a low-stakes control, before relying on it anywhere hot.
+
+Not yet created (see `docs/IMPLEMENTATION_PLAN.md` for what each owns): the options panel and
+`/reck show|hide|move|reset` (Phase 6).
 
 ### Key globals
 

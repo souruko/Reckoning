@@ -38,10 +38,45 @@ function Row:Constructor(width, height, columns)
 	end
 end
 
+-- Re-points this same Row at a different column spec (different view, different width) without
+-- ever reparenting or destroying a Label -- Turbine.UI has no confirmed-safe "detach a child"
+-- call anywhere else in this codebase, so existing Label children are reused/repositioned and
+-- only a genuine column-count increase creates new ones. Surplus labels from a narrower spec are
+-- hidden rather than removed, ready to be reused again by a later Reconfigure.
+function Row:Reconfigure(width, columns)
+	self:SetSize(width, select(2, self:GetSize()))
+	self.columns = columns
+
+	local height = select(2, self:GetSize())
+
+	for i = 1, table.getn(columns) do
+		local col = columns[i]
+		local label = self.labels[i]
+
+		if label == nil then
+			label = Turbine.UI.Label()
+			label:SetParent(self)
+			label:SetMouseVisible(false)
+			self.labels[i] = label
+		end
+
+		label:SetFont(col.font or Font.Verdana12)
+		label:SetPosition(col.x, 0)
+		label:SetSize(col.width, height)
+		label:SetTextAlignment(col.align or Turbine.UI.ContentAlignment.MiddleLeft)
+		label:SetForeColor(Theme.Color(col.colorHex or Theme.Hex.Text))
+		label:SetVisible(true)
+	end
+
+	for i = table.getn(columns) + 1, table.getn(self.labels) do
+		self.labels[i]:SetVisible(false)
+	end
+end
+
 -- values: one string per column, same order as the `columns` spec passed to the constructor.
 -- Missing trailing values clear that column's text rather than leaving stale text on screen.
 function Row:SetValues(values)
-	for i = 1, table.getn(self.labels) do
+	for i = 1, table.getn(self.columns) do
 		self.labels[i]:SetText(values[i] or "")
 	end
 end

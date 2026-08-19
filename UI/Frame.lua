@@ -67,10 +67,39 @@ function Frame:BuildBorder(width, height, color)
 		return edge
 	end
 
-	Edge(0, 0, width, 1)              -- top
-	Edge(0, height - 1, width, 1)     -- bottom
-	Edge(0, 0, 1, height)             -- left
-	Edge(width - 1, 0, 1, height)     -- right
+	-- Kept for Resize() -- only the analysis window (Phase 5) resizes after construction.
+	self.borderEdges = {
+		top = Edge(0, 0, width, 1),
+		bottom = Edge(0, height - 1, width, 1),
+		left = Edge(0, 0, 1, height),
+		right = Edge(width - 1, 0, 1, height),
+	}
+end
+
+-- Resizes the chrome (background, 4 border edges, header width, client) to a new size.
+-- Fixed-size windows (live meter, death cause) never call this; only a resizable subclass
+-- (the analysis window) does, after the user drags its resize gripper.
+function Frame:Resize(width, height)
+	self:SetSize(width, height)
+	self.background:SetSize(width, height)
+
+	self.borderEdges.top:SetSize(width, 1)
+	self.borderEdges.bottom:SetPosition(0, height - 1)
+	self.borderEdges.bottom:SetSize(width, 1)
+	self.borderEdges.left:SetSize(1, height)
+	self.borderEdges.right:SetPosition(width - 1, 0)
+	self.borderEdges.right:SetSize(1, height)
+
+	self.header:SetSize(width, self.headerHeight)
+	self.headerRule:SetSize(width, 1)
+	if self.titleLabel ~= nil then
+		self.titleLabel:SetSize(width - (self.closable and 30 or 16), self.headerHeight)
+	end
+	if self.closeLabel ~= nil then
+		self.closeLabel:SetPosition(width - 22, 0)
+	end
+
+	self.client:SetSize(width, height - self.headerHeight)
 end
 
 function Frame:BuildHeader(title, width, ruleColor)
@@ -112,13 +141,13 @@ function Frame:BuildHeader(title, width, ruleColor)
 		end
 	end
 
-	local rule = Turbine.UI.Control()
-	rule:SetParent(self)
-	rule:SetPosition(0, self.headerHeight - 1)
-	rule:SetSize(width, 1)
-	rule:SetBackColor(ruleColor)
-	rule:SetMouseVisible(false)
-	rule:SetZOrder(3)
+	self.headerRule = Turbine.UI.Control()
+	self.headerRule:SetParent(self)
+	self.headerRule:SetPosition(0, self.headerHeight - 1)
+	self.headerRule:SetSize(width, 1)
+	self.headerRule:SetBackColor(ruleColor)
+	self.headerRule:SetMouseVisible(false)
+	self.headerRule:SetZOrder(3)
 
 	self:WireDrag()
 end
