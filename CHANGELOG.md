@@ -60,3 +60,16 @@ cap fix. Both fixed now.
 Changed: the live meter's header now doubles as a small button bar -- the "LAST FIGHT" text is
 gone, replaced with a button that opens the analysis window. The combat-state indicator is now
 just "IN COMBAT"/"IDLE", conveyed by the accent tick's colour as well as the text.
+
+Changed: the live meter now refreshes 10 times a second instead of 5.
+
+Fixed: the live meter's "largest hit" line could overflow badly and overlap the label next to it
+when the skill name was long -- now truncated to a bounded total width.
+
+Changed: the death window's time column showed unreadable/overflowing values -- switched from a
+one-decimal format to whole seconds and widened the column. Morale is now shown as a small bar
+per row (matching the analysis window's own bars) instead of a raw percentage number.
+
+Changed: the analysis window's graph now has a timeline (elapsed-time labels) under the plot,
+and the morale trace gets its own reserved lane at the top of the plot instead of sharing space
+with the damage/heal bars -- it was reportedly confusing when the dots and bars overlapped.

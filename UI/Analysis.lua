@@ -24,7 +24,10 @@ local TAB_STRIP_HEIGHT = 30
 local GAP = 11
 local PAD = 12
 local KPI_ROW_HEIGHT = 50
-local GRAPH_HEIGHT = 150 + 22
+-- 150px plot + a taller bottom strip than the mockup's 22px (14px timeline + 18px legend + 4px
+-- gap) -- UI/AnalysisGraph.lua's AXIS_HEIGHT, kept in sync here since Layout() needs it before
+-- a Graph instance necessarily exists yet.
+local GRAPH_HEIGHT = 150 + 36
 local ROW_HEIGHT = 22
 local RAIL_ROW_HEIGHT = 34
 local SCROLLBAR_WIDTH = 10

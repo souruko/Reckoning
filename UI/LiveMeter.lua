@@ -5,7 +5,7 @@
 -- Permanently visible whenever settings.liveMeterEnabled is true, per direct user feedback
 -- overriding docs/DESIGN.md's original "dims and holds the last fight 8s, then hides": it now
 -- just holds the last fight (or a zeroed idle state if nothing has been fought yet this play
--- session) indefinitely, dimming out of combat rather than disappearing.
+-- session) indefinitely -- no out-of-combat opacity change either (also removed per feedback).
 --=================================================================================================
 
 LiveMeter = class(Frame)
@@ -13,7 +13,8 @@ LiveMeter = class(Frame)
 local TABS = { "done", "taken", "healOut", "healIn" }
 local TAB_LABELS = { done = "Done", taken = "Taken", healOut = "Heal out", healIn = "Heal in" }
 
-local REFRESH_INTERVAL = 0.2 -- ~5Hz, per docs/IMPLEMENTATION_PLAN.md Phase 3
+-- docs/IMPLEMENTATION_PLAN.md suggested ~5Hz (0.2s); bumped to 0.1s (10Hz) per direct feedback.
+local REFRESH_INTERVAL = 0.1
 
 ---------------------------------------------------------------------------------------------------
 -- Per-tab data providers -- one function per tab, all returning the same
@@ -30,11 +31,32 @@ local function CurrentTargetName()
 	return nil
 end
 
+-- The value column is ~120px of LucidaConsole12 -- "value  SkillName" with a long skill name
+-- (e.g. "29,557  Strike Towards the Sky") overflowed badly, reportedly overlapping the label
+-- column to its left. Budgets a fixed total character count instead of a fixed skill-name
+-- length, since a bigger number leaves less room -- keeps the combined string bounded
+-- regardless of how large the hit was. ".." (plain ASCII) marks a cut, not "…" -- the mockup's
+-- Unicode glyphs elsewhere (session rail pins) didn't render in this client's font, so a second
+-- non-Latin-1 character here isn't worth the same risk for something this minor.
+local MAX_LINE_BUDGET = 15
+
 local function MaxLine(stats)
 	if stats.max <= 0 then
 		return "--"
 	end
-	return Format.Number(stats.max) .. "  " .. (stats.maxSkill or "")
+
+	local numStr = Format.Number(stats.max)
+	local skill = stats.maxSkill or ""
+	local budget = MAX_LINE_BUDGET - string.len(numStr) - 1
+	if budget < 3 then
+		budget = 3
+	end
+
+	if string.len(skill) > budget then
+		skill = string.sub(skill, 1, math.max(1, budget - 2)) .. ".."
+	end
+
+	return numStr .. " " .. skill
 end
 
 local function DoneLine(session)

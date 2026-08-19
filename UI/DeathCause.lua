@@ -10,10 +10,15 @@ local ROW_HEIGHT = 24
 local CAUSE_BLOCK_HEIGHT = 50
 local RULE_HEIGHT = 2
 
--- "38px 1fr 62px 46px" grid from docs/DESIGN.md, resolved against the 360px content width
--- (380 window - 10px padding each side). 1fr = 360 - 38 - 62 - 46 = 214.
-local COL_TIME = { x = 10, width = 38 }
-local COL_SKILL = { x = 48, width = 214 }
+-- Adapted from docs/DESIGN.md's "38px 1fr 62px 46px" grid (360px content width, 380 window -
+-- 10px padding each side): TIME widened from 38 to 46px -- "-3.7s" at LucidaConsole12 was
+-- reportedly overflowing/unreadable in the original 38px, confirmed by switching to whole
+-- seconds too (below) rather than one decimal, which needs less width to begin with. SKILL
+-- gives up the same 8px. MORALE keeps its 46px but now holds a Bar (see BuildMoraleBars), not
+-- a percentage Label -- direct feedback: match the analysis window's own bar style instead of
+-- printing a number.
+local COL_TIME = { x = 10, width = 46 }
+local COL_SKILL = { x = 56, width = 206 }
 local COL_AMOUNT = { x = 262, width = 62 }
 local COL_MORALE = { x = 324, width = 46 }
 
@@ -139,20 +144,28 @@ function DeathCause:BuildCauseBlock()
 end
 
 function DeathCause:BuildRows()
+	-- Only 3 text columns -- the morale column is a Bar (below), not a Label.
 	local columns = {
 		{ x = COL_TIME.x, width = COL_TIME.width, font = Font.LucidaConsole12, colorHex = Theme.Hex.DimText },
 		{ x = COL_SKILL.x, width = COL_SKILL.width, font = Font.Verdana12, colorHex = Theme.Hex.Text },
 		{ x = COL_AMOUNT.x, width = COL_AMOUNT.width, font = Font.LucidaConsole12, colorHex = Theme.Hex.DamageTaken, align = Turbine.UI.ContentAlignment.MiddleRight },
-		{ x = COL_MORALE.x, width = COL_MORALE.width, font = Font.LucidaConsole12, colorHex = Theme.Hex.Morale, align = Turbine.UI.ContentAlignment.MiddleRight },
 	}
 
 	self.rows = {}
+	self.moraleBars = {}
 	for i = 1, ROW_COUNT do
 		local row = Row(380, ROW_HEIGHT, columns)
 		row:SetParent(self.client)
 		row:SetPosition(0, CAUSE_BLOCK_HEIGHT + (i - 1) * ROW_HEIGHT)
 		row:SetVisible(false)
 		self.rows[i] = row
+
+		-- Current morale pool as a bar, matching the analysis window's skill/side-panel bars,
+		-- per direct feedback -- not a raw percentage number.
+		local bar = Bar(COL_MORALE.width - 8, 6, Theme.Hex.Morale, Theme.Hex.RowBorder)
+		bar:SetParent(row)
+		bar:SetPosition(COL_MORALE.x, math.floor((ROW_HEIGHT - 6) / 2))
+		self.moraleBars[i] = bar
 	end
 end
 
@@ -190,18 +203,25 @@ function DeathCause:Show(session)
 
 	for i = 1, ROW_COUNT do
 		local row = self.rows[i]
+		local bar = self.moraleBars[i]
 		local entry = session.lastTaken[i]
 
 		if entry == nil then
 			row:SetVisible(false)
+			bar:SetVisible(false)
 		else
 			row:SetVisible(true)
+			bar:SetVisible(true)
+			bar:SetPercent(entry.moralePct or 0)
 
-			local relTime = string.format("%+.1fs", entry.time - self.deathTime)
+			-- Whole seconds, not one decimal -- "-3.7s" was reportedly unreadable/overflowing
+			-- at this column's width; "-4s" is shorter regardless of how wide the column ends
+			-- up being, and sub-second precision doesn't add anything readers need here.
+			local relTime = string.format("%+ds", math.floor(entry.time - self.deathTime + 0.5))
 
 			if entry.kind == "tempMorale" then
 				-- Its own row so a popped temp-morale bubble never reads as mitigated damage.
-				row:SetValues({ relTime, "Temporary morale", "-" .. Format.Number(entry.amount), Format.Percent(entry.moralePct) })
+				row:SetValues({ relTime, "Temporary morale", "-" .. Format.Number(entry.amount) })
 				row:SetColumnColor(2, Theme.Hex.MutedText)
 				row:SetColumnColor(3, Theme.Hex.MutedText)
 			else
@@ -209,7 +229,6 @@ function DeathCause:Show(session)
 					relTime,
 					entry.skill .. " · " .. DamageTypeName(entry.dmgType),
 					Format.Number(entry.amount),
-					Format.Percent(entry.moralePct),
 				})
 				row:SetColumnColor(2, Theme.Hex.Text)
 

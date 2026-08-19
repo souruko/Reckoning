@@ -1,23 +1,32 @@
 --=================================================================================================
--- Graph -- the analysis window's time plot. 640x150 plot + 22px axis strip, per
--- docs/DESIGN.md. One column of Controls per bucket (docs/IMPLEMENTATION_PLAN.md: "cheap to
--- redraw, no bitmap needed") -- 48 buckets spanning the session's actual duration, rebuilt only
--- on session or view change, never per frame. No animation: values are set directly.
+-- Graph -- the analysis window's time plot. 640x150 plot, per docs/DESIGN.md, plus a taller
+-- bottom strip than the mockup's 22px (see AXIS_HEIGHT) to fit a timeline row in addition to the
+-- legend, added per direct feedback. One column of Controls per bucket
+-- (docs/IMPLEMENTATION_PLAN.md: "cheap to redraw, no bitmap needed") -- 48 buckets spanning the
+-- session's actual duration, rebuilt only on session or view change, never per frame. No
+-- animation: values are set directly.
 --
 -- Simplification from the mockup, flagged here rather than silently: a literal dashed line
 -- needs sub-pixel line drawing Turbine.UI's axis-aligned Controls can't do cheaply. The morale
--- overlay is rendered as small dot markers instead of a dashed stroke -- visually a scatter
--- trace rather than a continuous dashed line. Revisit in-game if it reads worse than expected.
+-- overlay is rendered as dot markers instead of a dashed stroke. It also gets its own reserved
+-- lane at the top of the plot (MORALE_LANE_HEIGHT) rather than sharing space with the
+-- damage/heal bars -- per direct feedback that overlaying dots directly on the bars read as
+-- confusing (unclear which marks belonged to which series/axis). Bars are scaled to leave that
+-- lane clear rather than being allowed to draw into it.
 --=================================================================================================
 
 Graph = class(Turbine.UI.Control)
 
 local BUCKET_COUNT = 48
 local PLOT_HEIGHT = 150
-local AXIS_HEIGHT = 22
+local MORALE_LANE_HEIGHT = 22 -- reserved strip at the TOP of the plot, dots only, bars never enter it
+local TIMELINE_HEIGHT = 14
+local LEGEND_HEIGHT = 18
+local AXIS_HEIGHT = TIMELINE_HEIGHT + LEGEND_HEIGHT + 4
 local AREA_OPACITY = 0.13
 local CAP_HEIGHT = 2 -- the "line" on top of each bucket's area fill, see BuildColumns
 local MAX_REGULAR_SERIES = 2 -- the busiest view (taken+healIn) never needs more than this
+local TIMELINE_MARKS = 5 -- labels at 0%, 25%, 50%, 75%, 100% of the session's duration
 
 function Graph:Constructor(width)
 	Turbine.UI.Control.Constructor(self)
@@ -30,7 +39,8 @@ function Graph:Constructor(width)
 
 	self:BuildGridlines()
 	self:BuildColumns()
-	self:BuildMoraleDots()
+	self:BuildMoraleLane()
+	self:BuildTimeline()
 	self:BuildAxis()
 
 	self.seriesList = {}
@@ -84,16 +94,65 @@ function Graph:BuildColumns()
 	end
 end
 
-function Graph:BuildMoraleDots()
+-- The morale trace's own reserved strip at the top of the plot, plus a divider line marking
+-- where it ends and the damage/heal bars begin (only shown when a view actually carries morale).
+function Graph:BuildMoraleLane()
+	self.moraleLaneLine = Turbine.UI.Control()
+	self.moraleLaneLine:SetParent(self)
+	self.moraleLaneLine:SetPosition(0, MORALE_LANE_HEIGHT)
+	self.moraleLaneLine:SetSize(self.plotWidth, 1)
+	self.moraleLaneLine:SetBackColor(Theme.Mix("#ffffff", Theme.Hex.WindowFill, 0.1))
+	self.moraleLaneLine:SetVisible(false)
+	self.moraleLaneLine:SetMouseVisible(false)
+
 	self.moraleDots = {}
 	for i = 1, BUCKET_COUNT do
 		local dot = Turbine.UI.Control()
 		dot:SetParent(self)
-		dot:SetSize(2, 2)
+		dot:SetSize(3, 3)
 		dot:SetBackColor(Theme.Color(Theme.Hex.Morale))
 		dot:SetVisible(false)
 		dot:SetMouseVisible(false)
 		self.moraleDots[i] = dot
+	end
+end
+
+-- 5 evenly-spaced elapsed-time labels under the plot, refreshed in SetData against the actual
+-- session duration (a fixed bucket count spanning a variable-length fight, so "how many seconds
+-- per bucket" only makes sense once a session is known).
+function Graph:BuildTimeline()
+	self.timelineLabels = {}
+	for i = 1, TIMELINE_MARKS do
+		local label = Turbine.UI.Label()
+		label:SetParent(self)
+		label:SetFont(Font.Verdana10)
+		label:SetForeColor(Theme.Color(Theme.Hex.DimText))
+		label:SetPosition(0, PLOT_HEIGHT + 2)
+		label:SetSize(40, TIMELINE_HEIGHT)
+		label:SetMouseVisible(false)
+		self.timelineLabels[i] = label
+	end
+	self:LayoutTimeline()
+end
+
+function Graph:LayoutTimeline()
+	for i = 1, TIMELINE_MARKS do
+		local label = self.timelineLabels[i]
+		local fraction = (i - 1) / (TIMELINE_MARKS - 1)
+		local x = math.floor(fraction * self.plotWidth)
+
+		-- First mark left-anchored, last mark right-anchored (so it doesn't run off the plot),
+		-- everything in between centred on its position.
+		if i == 1 then
+			label:SetPosition(x, PLOT_HEIGHT + 2)
+			label:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
+		elseif i == TIMELINE_MARKS then
+			label:SetPosition(x - 40, PLOT_HEIGHT + 2)
+			label:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleRight)
+		else
+			label:SetPosition(x - 20, PLOT_HEIGHT + 2)
+			label:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleCenter)
+		end
 	end
 end
 
@@ -110,14 +169,14 @@ function Graph:BuildAxis()
 
 	self.legendRow = Turbine.UI.Control()
 	self.legendRow:SetParent(self)
-	self.legendRow:SetPosition(0, PLOT_HEIGHT + 4)
-	self.legendRow:SetSize(self.plotWidth, AXIS_HEIGHT - 4)
+	self.legendRow:SetPosition(0, PLOT_HEIGHT + TIMELINE_HEIGHT + 4)
+	self.legendRow:SetSize(self.plotWidth, LEGEND_HEIGHT)
 	self.legendRow:SetMouseVisible(false)
 end
 
--- Re-widths the plot in place (gridlines, the 48-bucket column grid, morale dots, legend row)
--- without ever reparenting or destroying a Control -- see UI/Row.lua's Reconfigure for why.
--- Bucket count stays fixed at BUCKET_COUNT; only bucketWidth and every x-position scale.
+-- Re-widths the plot in place (gridlines, the 48-bucket column grid, morale dots, timeline,
+-- legend row) without ever reparenting or destroying a Control -- see UI/Row.lua's Reconfigure
+-- for why. Bucket count stays fixed at BUCKET_COUNT; only bucketWidth and every x-position scale.
 -- Column heights/positions are left alone here -- Redraw() (called by the caller right after,
 -- via SetData/Redraw) re-derives those from the current data anyway.
 function Graph:Resize(width)
@@ -143,14 +202,16 @@ function Graph:Resize(width)
 		end
 	end
 
+	self.moraleLaneLine:SetSize(width, 1)
 	for i = 1, BUCKET_COUNT do
 		local dot = self.moraleDots[i]
-		local x, y = dot:GetPosition()
+		local _, y = dot:GetPosition()
 		dot:SetPosition(math.floor((i - 1) * self.bucketWidth + self.bucketWidth / 2), y)
 	end
 
+	self:LayoutTimeline()
 	self.moraleAxisLabel:SetPosition(width - 70, 2)
-	self.legendRow:SetSize(width, AXIS_HEIGHT - 4)
+	self.legendRow:SetSize(width, LEGEND_HEIGHT)
 end
 
 -- seriesList: { {key=, label=, colorHex=}, ... }, at most MAX_REGULAR_SERIES entries. Rebuilds
@@ -179,14 +240,14 @@ function Graph:SetSeries(seriesList)
 			local label = Turbine.UI.Label()
 			label:SetParent(self.legendRow)
 			label:SetFont(Font.Verdana10)
-			label:SetSize(110, AXIS_HEIGHT - 4)
+			label:SetSize(110, LEGEND_HEIGHT)
 			label:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
 
 			widgets = { swatch = swatch, label = label }
 			self.legendWidgets[i] = widgets
 		end
 
-		widgets.swatch:SetPosition(x, (AXIS_HEIGHT - 4 - 8) / 2)
+		widgets.swatch:SetPosition(x, (LEGEND_HEIGHT - 8) / 2)
 		widgets.swatch:SetBackColor(Theme.Color(series.colorHex))
 		widgets.swatch:SetVisible(true)
 
@@ -220,6 +281,11 @@ function Graph:SetData(session, showMorale)
 		duration = 1
 	end
 	self.duration = duration
+
+	for i = 1, TIMELINE_MARKS do
+		local seconds = math.floor((i - 1) / (TIMELINE_MARKS - 1) * duration + 0.5)
+		self.timelineLabels[i]:SetText(seconds .. "s")
+	end
 
 	self.slices = {}
 	for i = 1, BUCKET_COUNT do
@@ -261,6 +327,11 @@ function Graph:Redraw()
 		end
 	end
 
+	-- Bars are scaled against the space below the morale lane, never drawn into it, so the two
+	-- traces can never visually collide -- the lane only exists (and only reserves height) on
+	-- views that actually carry a morale series.
+	local barAreaHeight = self.showMorale and (PLOT_HEIGHT - MORALE_LANE_HEIGHT) or PLOT_HEIGHT
+
 	for slot = 1, MAX_REGULAR_SERIES do
 		local series = self.seriesList[slot]
 		for i = 1, BUCKET_COUNT do
@@ -275,7 +346,7 @@ function Graph:Redraw()
 				if value > 0 and maxValue > 0 then
 					-- at least 1px so a small bucket next to a huge one still shows *something*,
 					-- same rounding philosophy as UI/Bar.lua's SetPercent
-					h = math.max(1, math.floor(value / maxValue * PLOT_HEIGHT))
+					h = math.max(1, math.floor(value / maxValue * barAreaHeight))
 				end
 
 				local colWidth = math.max(1, math.floor(self.bucketWidth) - 1)
@@ -293,6 +364,7 @@ function Graph:Redraw()
 	end
 
 	self.moraleAxisLabel:SetVisible(self.showMorale)
+	self.moraleLaneLine:SetVisible(self.showMorale)
 	if self.showMorale then
 		self.moraleAxisLabel:SetText("MORALE")
 	end
@@ -301,7 +373,10 @@ function Graph:Redraw()
 		local dot = self.moraleDots[i]
 		local pct = self.moraleBySlice[i]
 		if self.showMorale and pct ~= nil then
-			dot:SetPosition(math.floor((i - 1) * self.bucketWidth + self.bucketWidth / 2), PLOT_HEIGHT - math.floor(pct * PLOT_HEIGHT))
+			if pct < 0 then pct = 0 elseif pct > 1 then pct = 1 end
+			dot:SetPosition(
+				math.floor((i - 1) * self.bucketWidth + self.bucketWidth / 2),
+				math.floor((1 - pct) * MORALE_LANE_HEIGHT))
 			dot:SetVisible(true)
 		else
 			dot:SetVisible(false)
