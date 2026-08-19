@@ -31,32 +31,16 @@ local function CurrentTargetName()
 	return nil
 end
 
--- The value column is ~120px of LucidaConsole12 -- "value  SkillName" with a long skill name
--- (e.g. "29,557  Strike Towards the Sky") overflowed badly, reportedly overlapping the label
--- column to its left. Budgets a fixed total character count instead of a fixed skill-name
--- length, since a bigger number leaves less room -- keeps the combined string bounded
--- regardless of how large the hit was. ".." (plain ASCII) marks a cut, not "…" -- the mockup's
--- Unicode glyphs elsewhere (session rail pins) didn't render in this client's font, so a second
--- non-Latin-1 character here isn't worth the same risk for something this minor.
-local MAX_LINE_BUDGET = 15
-
+-- The "max" line is the one line with a second piece of text (the skill name) alongside its
+-- number. Cramming both into one LucidaConsole12 value column overflowed badly on long skill
+-- names, so it's a real two-line cell instead: the number on top (LucidaConsole12, same as
+-- every other value), the skill name in a smaller Verdana10 line below it (BuildBody/Refresh),
+-- not appended to the same string. MaxLine() only ever returns the number now.
 local function MaxLine(stats)
 	if stats.max <= 0 then
 		return "--"
 	end
-
-	local numStr = Format.Number(stats.max)
-	local skill = stats.maxSkill or ""
-	local budget = MAX_LINE_BUDGET - string.len(numStr) - 1
-	if budget < 3 then
-		budget = 3
-	end
-
-	if string.len(skill) > budget then
-		skill = string.sub(skill, 1, math.max(1, budget - 2)) .. ".."
-	end
-
-	return numStr .. " " .. skill
+	return Format.Number(stats.max)
 end
 
 local function DoneLine(session)
@@ -72,7 +56,7 @@ local function DoneLine(session)
 			value = targetName and (Format.Number(session:Total("done", targetName)) .. "  " .. Format.Rate(session:Rate("done", targetName))) or "--",
 		},
 		stat = { label = "CRIT / DEV", value = Format.Percent(critPct) .. " / " .. Format.Percent(devPct) },
-		max = { label = "LARGEST HIT", value = MaxLine(stats) },
+		max = { label = "LARGEST HIT", value = MaxLine(stats), sub = stats.maxSkill or "" },
 	}
 end
 
@@ -87,7 +71,7 @@ local function TakenLine(session)
 		headline = { caption = "DAMAGE TAKEN", value = Format.Number(session:Total("taken")), rate = Format.Rate(session:Rate("taken")) },
 		second = { label = "INCOMING CRIT / DEV", value = Format.Percent(critPct) .. " / " .. Format.Percent(devPct) },
 		stat = { label = "AVOIDED", value = Format.Percent(avoidedPct) },
-		max = { label = "LARGEST HIT TAKEN", value = MaxLine(stats) },
+		max = { label = "LARGEST HIT TAKEN", value = MaxLine(stats), sub = stats.maxSkill or "" },
 	}
 end
 
@@ -103,7 +87,7 @@ local function HealOutLine(session)
 		headline = { caption = "HEALING DONE", value = Format.Number(total), rate = Format.Rate(session:Rate("healOut")) },
 		second = { label = "SELF / OTHERS", value = Format.Number(toSelf) .. " / " .. Format.Number(total - toSelf) },
 		stat = { label = "CRIT / DEV", value = Format.Percent(critPct) .. " / " .. Format.Percent(devPct) },
-		max = { label = "LARGEST HEAL", value = MaxLine(stats) },
+		max = { label = "LARGEST HEAL", value = MaxLine(stats), sub = stats.maxSkill or "" },
 	}
 end
 
@@ -118,7 +102,7 @@ local function HealInLine(session)
 		headline = { caption = "HEALING TAKEN", value = Format.Number(healIn), rate = Format.Rate(session:Rate("healIn")) },
 		second = { label = "COVER OF DAMAGE", value = Format.Percent(coverPct) },
 		stat = { label = "CRIT HEALS", value = Format.Percent(critHealPct) },
-		max = { label = "LARGEST HEAL IN", value = MaxLine(stats) },
+		max = { label = "LARGEST HEAL IN", value = MaxLine(stats), sub = stats.maxSkill or "" },
 	}
 end
 
@@ -261,12 +245,21 @@ function LiveMeter:BuildBody()
 	divider:SetMouseVisible(false)
 
 	self.lineLabels = {}
-	local ys = { 50, 81, 112 }
-	for i = 1, 3 do
+	local ys = { 50, 81 }
+	for i = 1, 2 do
 		local labelL = self:BodyLabel(x, ys[i], 120, 24, Font.Verdana10, Theme.Hex.DimText, Turbine.UI.ContentAlignment.MiddleLeft)
 		local valueL = self:BodyLabel(x + 120, ys[i], 120, 24, Font.LucidaConsole12, Theme.Hex.Text, Turbine.UI.ContentAlignment.MiddleRight)
 		self.lineLabels[i] = { label = labelL, value = valueL }
 	end
+
+	-- The 3rd line ("max") is a real two-line value cell instead of one cramped line: the
+	-- number on top (same LucidaConsole12 as every other value), the skill name smaller and
+	-- dimmer directly below it -- per feedback, not squeezed onto the number's own line.
+	local maxY = 112
+	local maxLabel = self:BodyLabel(x, maxY, 120, 24, Font.Verdana10, Theme.Hex.DimText, Turbine.UI.ContentAlignment.MiddleLeft)
+	local maxValue = self:BodyLabel(x + 120, maxY, 120, 13, Font.LucidaConsole12, Theme.Hex.Text, Turbine.UI.ContentAlignment.BottomRight)
+	local maxSub = self:BodyLabel(x + 120, maxY + 13, 120, 11, Font.Verdana10, Theme.Hex.DimText, Turbine.UI.ContentAlignment.TopRight)
+	self.lineLabels[3] = { label = maxLabel, value = maxValue, sub = maxSub }
 end
 
 function LiveMeter:BodyLabel(x, y, w, h, font, colorHex, align)
@@ -353,6 +346,7 @@ function LiveMeter:Refresh()
 		self.lineLabels[i].label:SetText(rows[i].label)
 		self.lineLabels[i].value:SetText(rows[i].value)
 	end
+	self.lineLabels[3].sub:SetText(lines.max.sub or "")
 
 	-- Just two states, not three -- per feedback, "LAST FIGHT" is gone; the header space it used
 	-- is the analysis-window button instead (BuildAnalysisButton). The tick still distinguishes

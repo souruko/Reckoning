@@ -13,6 +13,10 @@
 -- damage/heal bars -- per direct feedback that overlaying dots directly on the bars read as
 -- confusing (unclear which marks belonged to which series/axis). Bars are scaled to leave that
 -- lane clear rather than being allowed to draw into it.
+--
+-- Respects the analysis window's target/source picker: SetData takes an optional filterWho,
+-- read against each bucket's per-counterpart breakdown (Session.lua's *ByWho tables) instead of
+-- the pooled scalar when set.
 --=================================================================================================
 
 Graph = class(Turbine.UI.Control)
@@ -27,6 +31,8 @@ local AREA_OPACITY = 0.13
 local CAP_HEIGHT = 2 -- the "line" on top of each bucket's area fill, see BuildColumns
 local MAX_REGULAR_SERIES = 2 -- the busiest view (taken+healIn) never needs more than this
 local TIMELINE_MARKS = 5 -- labels at 0%, 25%, 50%, 75%, 100% of the session's duration
+local TOOLTIP_WIDTH = 150
+local TOOLTIP_LINES = 4 -- time + up to 2 series + morale
 
 function Graph:Constructor(width)
 	Turbine.UI.Control.Constructor(self)
@@ -42,6 +48,8 @@ function Graph:Constructor(width)
 	self:BuildMoraleLane()
 	self:BuildTimeline()
 	self:BuildAxis()
+	self:BuildHoverZones()
+	self:BuildTooltip()
 
 	self.seriesList = {}
 	self.hidden = {}
@@ -161,8 +169,8 @@ function Graph:BuildAxis()
 	self.moraleAxisLabel:SetParent(self)
 	self.moraleAxisLabel:SetFont(Font.Verdana10)
 	self.moraleAxisLabel:SetForeColor(Theme.Color(Theme.Hex.Morale))
-	self.moraleAxisLabel:SetPosition(self.plotWidth - 70, 2)
-	self.moraleAxisLabel:SetSize(70, 12)
+	self.moraleAxisLabel:SetPosition(self.plotWidth - 90, 2)
+	self.moraleAxisLabel:SetSize(90, 12)
 	self.moraleAxisLabel:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleRight)
 	self.moraleAxisLabel:SetMouseVisible(false)
 	self.moraleAxisLabel:SetVisible(false)
@@ -174,11 +182,111 @@ function Graph:BuildAxis()
 	self.legendRow:SetMouseVisible(false)
 end
 
+-- One invisible, mouse-visible Control per bucket, spanning the bar area's full height
+-- (regardless of that bucket's own bar height, so hovering anywhere in the column shows the
+-- tooltip, not just the thin sliver a small bar actually draws). Per direct feedback: "hovering
+-- over columns in the graph should show the details."
+function Graph:BuildHoverZones()
+	self.hoverZones = {}
+	for i = 1, BUCKET_COUNT do
+		-- No SetBackColor -- a Control with no fill ever set renders invisible (confirmed
+		-- elsewhere in this codebase: contentArea/graphHolder/tableHolder/etc. are all plain
+		-- unfilled Controls and never obscure their children). SetOpacity is deliberately not
+		-- used here either -- it does not blend in this engine (see Constants.lua's Theme.Mix
+		-- comment) and isn't needed anyway since there's no fill to hide in the first place.
+		local zone = Turbine.UI.Control()
+		zone:SetParent(self)
+		zone:SetPosition(math.floor((i - 1) * self.bucketWidth), 0)
+		zone:SetSize(math.max(1, math.floor(self.bucketWidth)), PLOT_HEIGHT)
+		zone:SetMouseVisible(true)
+
+		local bucket = i
+		zone.MouseEnter = function() self:ShowTooltip(bucket) end
+		zone.MouseLeave = function() self:HideTooltip() end
+
+		self.hoverZones[i] = zone
+	end
+end
+
+function Graph:BuildTooltip()
+	local box = Turbine.UI.Control()
+	box:SetParent(self)
+	box:SetSize(TOOLTIP_WIDTH, TOOLTIP_LINES * 14 + 8)
+	box:SetBackColor(Theme.Color(Theme.Hex.RailFill))
+	box:SetVisible(false)
+	box:SetMouseVisible(false)
+	box:SetZOrder(20)
+
+	local border = Turbine.UI.Control()
+	border:SetParent(box)
+	border:SetPosition(0, 0)
+	border:SetSize(TOOLTIP_WIDTH, 1)
+	border:SetBackColor(Theme.Color(Theme.Hex.Border))
+	border:SetMouseVisible(false)
+
+	local lines = {}
+	for i = 1, TOOLTIP_LINES do
+		local label = Turbine.UI.Label()
+		label:SetParent(box)
+		label:SetFont(Font.Verdana10)
+		label:SetPosition(6, 4 + (i - 1) * 14)
+		label:SetSize(TOOLTIP_WIDTH - 12, 14)
+		label:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
+		label:SetMouseVisible(false)
+		lines[i] = label
+	end
+
+	self.tooltip = { box = box, lines = lines }
+end
+
+function Graph:ShowTooltip(bucketIndex)
+	if self.session == nil then
+		return
+	end
+
+	local lines = self.tooltip.lines
+	local row = 1
+
+	local elapsed = (bucketIndex - 1) / BUCKET_COUNT * self.duration
+	lines[row]:SetText(string.format("~%.1fs", elapsed))
+	lines[row]:SetForeColor(Theme.Color(Theme.Hex.DimText))
+	row = row + 1
+
+	for slot = 1, table.getn(self.seriesList) do
+		local series = self.seriesList[slot]
+		local value = self.slices[bucketIndex][series.key] or 0
+		lines[row]:SetText(series.label .. ": " .. Format.Number(value))
+		lines[row]:SetForeColor(Theme.Color(series.colorHex))
+		row = row + 1
+	end
+
+	if self.showMorale then
+		local pct = self.moraleBySlice[bucketIndex]
+		lines[row]:SetText(pct and ("Morale: " .. Format.Percent(pct)) or "Morale: --")
+		lines[row]:SetForeColor(Theme.Color(Theme.Hex.Morale))
+		row = row + 1
+	end
+
+	for i = row, TOOLTIP_LINES do
+		lines[i]:SetText("")
+	end
+
+	local x = math.floor((bucketIndex - 1) * self.bucketWidth)
+	x = math.min(x, self.plotWidth - TOOLTIP_WIDTH)
+	x = math.max(0, x)
+	self.tooltip.box:SetPosition(x, MORALE_LANE_HEIGHT + 4)
+	self.tooltip.box:SetVisible(true)
+end
+
+function Graph:HideTooltip()
+	self.tooltip.box:SetVisible(false)
+end
+
 -- Re-widths the plot in place (gridlines, the 48-bucket column grid, morale dots, timeline,
--- legend row) without ever reparenting or destroying a Control -- see UI/Row.lua's Reconfigure
--- for why. Bucket count stays fixed at BUCKET_COUNT; only bucketWidth and every x-position scale.
--- Column heights/positions are left alone here -- Redraw() (called by the caller right after,
--- via SetData/Redraw) re-derives those from the current data anyway.
+-- legend row, hover zones) without ever reparenting or destroying a Control -- see
+-- UI/Row.lua's Reconfigure for why. Bucket count stays fixed at BUCKET_COUNT; only bucketWidth
+-- and every x-position scale. Column heights/positions are left alone here -- Redraw() (called
+-- by the caller right after, via SetData/Redraw) re-derives those from the current data anyway.
 function Graph:Resize(width)
 	self.plotWidth = width
 	self.bucketWidth = width / BUCKET_COUNT
@@ -207,10 +315,14 @@ function Graph:Resize(width)
 		local dot = self.moraleDots[i]
 		local _, y = dot:GetPosition()
 		dot:SetPosition(math.floor((i - 1) * self.bucketWidth + self.bucketWidth / 2), y)
+
+		local zone = self.hoverZones[i]
+		zone:SetPosition(math.floor((i - 1) * self.bucketWidth), 0)
+		zone:SetSize(math.max(1, math.floor(self.bucketWidth)), PLOT_HEIGHT)
 	end
 
 	self:LayoutTimeline()
-	self.moraleAxisLabel:SetPosition(width - 70, 2)
+	self.moraleAxisLabel:SetPosition(width - 90, 2)
 	self.legendRow:SetSize(width, LEGEND_HEIGHT)
 end
 
@@ -270,11 +382,16 @@ function Graph:ToggleSeries(key)
 end
 
 -- session: the Session to plot. showMorale: whether this view carries the morale overlay.
--- Buckets are per-second (Session.buckets); this maps that onto BUCKET_COUNT slices spanning
--- the session's actual duration, summing values that land in the same slice.
-function Graph:SetData(session, showMorale)
+-- filterWho: optional counterpart name -- when set, reads each bucket's per-counterpart
+-- breakdown (bucket.<key>ByWho[filterWho], see Session.lua) instead of the pooled scalar, so
+-- the graph respects the analysis window's target/source picker the same way the KPIs/table/
+-- side panels already do. Buckets are per-second (Session.buckets); this maps that onto
+-- BUCKET_COUNT slices spanning the session's actual duration, summing values that land in the
+-- same slice.
+function Graph:SetData(session, showMorale, filterWho)
 	self.session = session
 	self.showMorale = showMorale
+	self.filterWho = filterWho
 
 	local duration = session and session:Duration() or 0
 	if duration <= 0 then
@@ -301,9 +418,18 @@ function Graph:SetData(session, showMorale)
 
 			for i = 1, table.getn(self.seriesList) do
 				local key = self.seriesList[i].key
-				self.slices[slice][key] = (self.slices[slice][key] or 0) + (bucket[key] or 0)
+				local value
+				if filterWho ~= nil then
+					local byWho = bucket[key .. "ByWho"]
+					value = (byWho and byWho[filterWho]) or 0
+				else
+					value = bucket[key] or 0
+				end
+				self.slices[slice][key] = (self.slices[slice][key] or 0) + value
 			end
 
+			-- Morale is the local player's own vitals, not per-counterpart -- unaffected by
+			-- the picker filter.
 			if bucket.moralePct ~= nil then
 				self.moraleBySlice[slice] = bucket.moralePct
 			end
@@ -363,10 +489,19 @@ function Graph:Redraw()
 		end
 	end
 
-	self.moraleAxisLabel:SetVisible(self.showMorale)
 	self.moraleLaneLine:SetVisible(self.showMorale)
+	self.moraleAxisLabel:SetVisible(self.showMorale)
 	if self.showMorale then
-		self.moraleAxisLabel:SetText("MORALE")
+		local peak = 0
+		for i = 1, BUCKET_COUNT do
+			local pct = self.moraleBySlice[i]
+			if pct ~= nil and pct > peak then
+				peak = pct
+			end
+		end
+		-- A number, not just the word "MORALE" -- per direct feedback ("at least have a number
+		-- for the highest morale value in the graph").
+		self.moraleAxisLabel:SetText(string.format("MORALE (peak %d%%)", math.floor(peak * 100 + 0.5)))
 	end
 
 	for i = 1, BUCKET_COUNT do

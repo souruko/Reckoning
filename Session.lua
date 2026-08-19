@@ -21,8 +21,11 @@ function Session:Constructor(startTime, startClock)
 	self.died       = false
 	self.pinned     = false
 
-	-- [second offset from startTime] = { done, taken, healOut, healIn, moralePct }
-	-- moralePct is a snapshot (last sample in that second), not a sum.
+	-- [second offset from startTime] = { done, taken, healOut, healIn, moralePct,
+	--   doneByWho={[name]=amount}, takenByWho=..., healOutByWho=..., healInByWho=... }
+	-- moralePct is a snapshot (last sample in that second), not a sum. The ByWho tables back
+	-- the analysis window's graph when it's filtered to one target/source/recipient/caster --
+	-- the pooled scalar (done/taken/...) is just the sum of its own ByWho table's values.
 	self.buckets = {}
 
 	-- One row per (skill, type-or-counterpart, counterpart) combination -- see Row() below.
@@ -55,10 +58,21 @@ function Session:Bucket(t)
 	local idx = math.floor(t - self.startTime)
 	local b = self.buckets[idx]
 	if b == nil then
-		b = { done = 0, taken = 0, healOut = 0, healIn = 0, moralePct = nil }
+		b = {
+			done = 0, taken = 0, healOut = 0, healIn = 0, moralePct = nil,
+			doneByWho = {}, takenByWho = {}, healOutByWho = {}, healInByWho = {},
+		}
 		self.buckets[idx] = b
 	end
 	return b
+end
+
+-- Adds `amount` to bucket.<field> and bucket.<field>ByWho[who] together, in one place, so the
+-- pooled scalar and its per-counterpart breakdown can never drift apart.
+local function AddToBucket(bucket, field, who, amount)
+	bucket[field] = bucket[field] + amount
+	local byWho = bucket[field .. "ByWho"]
+	byWho[who] = (byWho[who] or 0) + amount
 end
 
 -- Damage-shaped row (done/taken): keyed on skill + damage type + counterpart name.
@@ -131,7 +145,7 @@ function Session:AddDone(skill, dmgType, target, amount, avoidType, critType, t)
 		end
 	end
 
-	self:Bucket(t).done = self:Bucket(t).done + amount
+	AddToBucket(self:Bucket(t), "done", target, amount)
 end
 
 function Session:AddTaken(skill, dmgType, initiator, amount, avoidType, critType, t)
@@ -163,7 +177,7 @@ function Session:AddTaken(skill, dmgType, initiator, amount, avoidType, critType
 	end
 
 	local b = self:Bucket(t)
-	b.taken = b.taken + amount
+	AddToBucket(b, "taken", initiator, amount)
 	b.moralePct = moralePct
 end
 
@@ -183,7 +197,7 @@ function Session:AddHealOut(skill, target, amount, critType, t)
 		row.devs = row.devs + 1
 	end
 
-	self:Bucket(t).healOut = self:Bucket(t).healOut + amount
+	AddToBucket(self:Bucket(t), "healOut", target, amount)
 end
 
 function Session:AddHealIn(skill, initiator, amount, critType, t)
@@ -202,7 +216,7 @@ function Session:AddHealIn(skill, initiator, amount, critType, t)
 		row.devs = row.devs + 1
 	end
 
-	self:Bucket(t).healIn = self:Bucket(t).healIn + amount
+	AddToBucket(self:Bucket(t), "healIn", initiator, amount)
 end
 
 function Session:AddTempMoraleLoss(amount, t)

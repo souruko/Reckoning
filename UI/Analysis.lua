@@ -978,7 +978,9 @@ function Analysis:RefreshContent()
 
 	if self.graph ~= nil then
 		local showMorale = (view == "healIn" or view == "taken")
-		self.graph:SetData(session, showMorale)
+		-- Respects the target/source picker, same as the KPIs/table/side panels -- per direct
+		-- feedback ("the graph should also be updated with the target/source selection").
+		self.graph:SetData(session, showMorale, filterWho)
 	end
 
 	self:RefreshTable(session)

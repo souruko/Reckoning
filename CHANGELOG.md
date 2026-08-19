@@ -73,3 +73,16 @@ per row (matching the analysis window's own bars) instead of a raw percentage nu
 Changed: the analysis window's graph now has a timeline (elapsed-time labels) under the plot,
 and the morale trace gets its own reserved lane at the top of the plot instead of sharing space
 with the damage/heal bars -- it was reportedly confusing when the dots and bars overlapped.
+
+Changed: the live meter's "largest hit" skill name is a smaller line below the number now,
+instead of squeezed onto the same line -- per feedback that the earlier truncated-single-line
+version wasn't wanted.
+
+Added: hovering a column in the analysis window's graph shows a tooltip with the elapsed time
+and each series' value at that point, plus morale if the view carries it.
+
+Added: the morale trace now shows the peak morale % reached, not just the word "MORALE".
+
+Fixed: the analysis window's graph ignored the target/source picker -- it always showed the
+pooled (all-targets) data even when filtered to one target. Now respects the filter, the same
+way the KPIs/table/side panels already did.
