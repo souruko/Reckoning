@@ -1097,6 +1097,7 @@ function Analysis:Layout()
 
 	local graphY = kpiY + KPI_ROW_HEIGHT + GAP
 	self.graphHolder:SetPosition(innerX, graphY)
+	self.graphHolder:SetSize(innerWidth, GRAPH_HEIGHT)
 	self:LayoutGraph(innerWidth)
 
 	local tableY = graphY + GRAPH_HEIGHT + GAP

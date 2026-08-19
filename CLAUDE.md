@@ -122,6 +122,29 @@ be wrong:
   Controls can't draw cheaply anyway -- same reasoning as the morale dashed-line simplification
   already noted above). Small values also now floor to a minimum 1px bar+cap instead of rounding
   to 0 and vanishing next to a much larger bucket in the same view.
+- **The cap fix above was not the whole story -- the graph was still completely blank on the next
+  in-game load.** Built a much more faithful offline harness this time: instead of hand-copying
+  the bucket-slicing math into a throwaway script (which is what caught nothing the first time),
+  wrote a `class(Turbine.UI.Control)`-compatible native-type stub (asserts on non-number
+  `SetSize` args, tracks position/size/visibility per instance) and ran the **real** `Graph`
+  class -- `Constructor` → `SetSeries` → `SetData` → `Redraw` -- against a real `Session` built
+  from real `AddTaken` calls. It came back clean: 10 of 48 buckets visible, correct x/y/w/h,
+  every value sane, nothing thrown. That meant the bug wasn't in `Graph`'s own logic at all, so
+  the search moved outward to how `Graph` gets parented in `UI/Analysis.lua`, and found it:
+  `self.graphHolder` (the plain `Control` the `Graph` is parented into) never once had `SetSize`
+  called on it -- only `SetPosition`. Every *other* content container in `Analysis.lua`
+  (`kpiRow`, `pickerRow`, `tableHolder`, `panelsHolder`, `rail`, ...) gets both in `Layout()`;
+  `graphHolder` was the one silent omission. A zero-sized parent apparently doesn't render its
+  children even though nothing in this codebase's own controls needs explicit clipping to be
+  hidden by their parent's bounds otherwise (`SetClipMode` is opt-in and unused here) -- **not
+  independently confirmed against another plugin**, inferred from elimination (data layer proven
+  right, full render-call chain proven right, only the parent's own missing size was left).
+  Fixed with one line: `self.graphHolder:SetSize(innerWidth, GRAPH_HEIGHT)` alongside the
+  existing `SetPosition` call. **If any future container in this codebase looks structurally
+  right (correctly parented, correctly positioned, children logically correct) but simply doesn't
+  render, check whether *it itself* ever got a `SetSize` call before looking anywhere else** --
+  a `SetParent` + `SetPosition` pair with no `SetSize` is easy to miss by eye since nothing about
+  it looks wrong in isolation.
 - **Also found the same load**: the mockup's Unicode pin glyphs (`◆`/`◇`, U+25C6/U+25C7) rendered
   as `?` -- not in this client's fonts. Session rail pins are now a small solid `Turbine.UI.Control`
   square (filled = pinned, dim = not), not a text glyph -- consistent with `docs/DESIGN.md`'s own
@@ -262,7 +285,7 @@ global assigned there (`Trigger`, `L`, `EventCode`, `Theme`, `Font`, `Session`, 
 `Main.lua` via `UI.LiveMeter()` etc. (matching `vital = UI.Vital()` in `VitalSelf/Main.lua`),
 and can freely reference `Frame`/`Bar`/`Row` bare since they're siblings in the same directory.
 
-| `UI/LiveMeter.lua` | `LiveMeter` (extends `Frame`, `key = "liveMeter"`, `closable = false`) -- window 1. Bespoke header (accent tick + "IN COMBAT"/"LAST FIGHT"/"OUT OF COMBAT" + elapsed clock), 4 tabs, 4-line body. One `local` provider function per tab (`DoneLine`/`TakenLine`/`HealOutLine`/`HealInLine`) normalizes very different per-tab content (see `docs/DESIGN.md`'s table) into one `{headline,second,stat,max}` shape so the body-refresh code stays generic. Refreshed on a throttled `Update()` (~5Hz). **Permanently visible** whenever `settings.liveMeterEnabled` is true -- per direct user feedback, this overrides `docs/DESIGN.md`'s original "dims and holds the last fight 8s, then hides": it now shows the live fight, or the last finished one, or (if nothing has been fought yet this play session) a permanent zeroed `self.idleSession` placeholder -- a real empty `Session` instance, not a separate "no data" rendering path. `ActiveSession()` therefore never returns nil; every provider function can assume a real session. **No opacity change at all now** (also per feedback -- the original 0.55 out-of-combat dim was removed too; full opacity always). |
+| `UI/LiveMeter.lua` | `LiveMeter` (extends `Frame`, `key = "liveMeter"`, `closable = false`) -- window 1. Bespoke header: accent tick (colour toggles `Accent`/`Border` for in-combat/idle) + "IN COMBAT"/"IDLE" label + an "open the analysis window" button (`BuildAnalysisButton`, reads the root-level `analysis` global at click time, not captured at construction) + elapsed clock. The header doubles as a small button bar per direct feedback -- what used to be a static "LAST FIGHT" text state is that button instead; more buttons can go in the same header the same way. 4 tabs, 4-line body. One `local` provider function per tab (`DoneLine`/`TakenLine`/`HealOutLine`/`HealInLine`) normalizes very different per-tab content (see `docs/DESIGN.md`'s table) into one `{headline,second,stat,max}` shape so the body-refresh code stays generic. Refreshed on a throttled `Update()` (~5Hz). **Permanently visible** whenever `settings.liveMeterEnabled` is true -- per direct user feedback, this overrides `docs/DESIGN.md`'s original "dims and holds the last fight 8s, then hides": it now shows the live fight, or the last finished one, or (if nothing has been fought yet this play session) a permanent zeroed `self.idleSession` placeholder -- a real empty `Session` instance, not a separate "no data" rendering path. `ActiveSession()` therefore never returns nil; every provider function can assume a real session. **No opacity change at all now** (also per feedback -- the original 0.55 out-of-combat dim was removed too; full opacity always). |
 
 | `UI/DeathCause.lua` | `DeathCause` (extends `Frame`, `key = "deathCause"`, death-specific fill/border/header-rule colours) -- window 2. Fires from `Sessions.OnSelfDefeat`. "Last hit by" resolved by scanning `session.lastTaken` backward for the last `kind == "damage"` entry (temp-morale-loss rows don't carry an attacker). 5 pooled `Row` instances (never rebuilt), tinted per row: the killing-blow row's amount goes `DamageFatal`, temp-morale rows go `MutedText` end to end, everything else scales `DamageTaken`/`DamageSevere` off post-hit `moralePct`. Countdown is a `Bar`, `_G.settings.deathAutoHide` seconds (default 15) -- tracked as `self.remaining` (seconds left, decremented by real elapsed `dt` each `Update()` tick) rather than an absolute target timestamp, specifically so **pausing is just "skip subtracting this tick"**: `self.MouseEnter`/`self.MouseLeave` toggle `self.paused`, per direct feedback that hovering the window to read it shouldn't race the auto-hide closing it. Depends on `UI/Row.lua`'s rows being mouse-invisible (`SetMouseVisible(false)`, changed from `true` -- nothing in a `Row` was ever individually clickable) so a row sitting over the window doesn't swallow the hover before it reaches the window's own `MouseEnter`/`MouseLeave`. **Unverified**: whether `Turbine.UI.Window.MouseEnter`/`.MouseLeave` fire based on the window's own bounds regardless of mouse-invisible children on top (assumed, consistent with how mouse-invisible children behave for click-through elsewhere, but not confirmed for Enter/Leave specifically) -- if hover-pause doesn't trigger in-game, check this first. |
 

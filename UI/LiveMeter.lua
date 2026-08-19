@@ -146,11 +146,36 @@ function LiveMeter:BuildCombatHeader()
 	tick:SetMouseVisible(false)
 	self.combatTick = tick
 
-	self.combatLabel = self:HeaderLabel(20, 120, Font.Verdana10, Theme.Hex.DimText, Turbine.UI.ContentAlignment.MiddleLeft)
+	self.combatLabel = self:HeaderLabel(20, 70, Font.Verdana10, Theme.Hex.DimText, Turbine.UI.ContentAlignment.MiddleLeft)
 	self.combatLabel:SetText("IN COMBAT")
+
+	-- The header doubles as a small button bar -- per direct feedback, the space that used to
+	-- show a static "LAST FIGHT" label is more useful as a button (starting with "open the
+	-- analysis window"; more could go here later the same way).
+	self:BuildAnalysisButton()
 
 	self.clockLabel = self:HeaderLabel(160, 90, Font.LucidaConsole12, Theme.Hex.Accent300, Turbine.UI.ContentAlignment.MiddleRight)
 	self.clockLabel:SetText("00:00")
+end
+
+function LiveMeter:BuildAnalysisButton()
+	local button = Turbine.UI.Label()
+	button:SetParent(self.header)
+	button:SetFont(Font.Verdana10)
+	button:SetText("Details")
+	button:SetForeColor(Theme.Color(Theme.Hex.DimText))
+	button:SetPosition(95, 0)
+	button:SetSize(55, 26)
+	button:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleCenter)
+
+	-- `analysis` is a root-level global (Main.lua) constructed after LiveMeter -- read at click
+	-- time, not captured here, so construction order between the two windows doesn't matter.
+	button.MouseClick = function()
+		analysis:SetVisible(true)
+		analysis:Activate()
+	end
+	button.MouseEnter = function() button:SetForeColor(Theme.Color(Theme.Hex.Accent200)) end
+	button.MouseLeave = function() button:SetForeColor(Theme.Color(Theme.Hex.DimText)) end
 end
 
 function LiveMeter:HeaderLabel(x, w, font, colorHex, align)
@@ -307,14 +332,12 @@ function LiveMeter:Refresh()
 		self.lineLabels[i].value:SetText(rows[i].value)
 	end
 
+	-- Just two states, not three -- per feedback, "LAST FIGHT" is gone; the header space it used
+	-- is the analysis-window button instead (BuildAnalysisButton). The tick still distinguishes
+	-- "actively fighting" from "showing the last fight/idle" by colour.
 	local inCombat = (Sessions.current ~= nil)
-	if inCombat then
-		self.combatLabel:SetText("IN COMBAT")
-	elseif Sessions.list[1] ~= nil then
-		self.combatLabel:SetText("LAST FIGHT")
-	else
-		self.combatLabel:SetText("OUT OF COMBAT")
-	end
+	self.combatLabel:SetText(inCombat and "IN COMBAT" or "IDLE")
+	self.combatTick:SetBackColor(Theme.Color(inCombat and Theme.Hex.Accent or Theme.Hex.Border))
 	self.clockLabel:SetText(Format.Clock(session:Duration()))
 end
 

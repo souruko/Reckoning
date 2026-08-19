@@ -53,4 +53,10 @@ it, shifting every chip's filter value one position off from its label.
 Fixed: the analysis window's graph looked completely empty even with real combat data. The
 13%-opacity area fill alone is too faint to read against the panel background -- added a solid
 "cap" line on top of each bar, closer to what the design's "area fill under a line" actually
-specifies.
+specifies. That alone wasn't the whole bug, though -- the graph's container never actually had a
+size set on it (only a position), so it never rendered its contents at all regardless of the
+cap fix. Both fixed now.
+
+Changed: the live meter's header now doubles as a small button bar -- the "LAST FIGHT" text is
+gone, replaced with a button that opens the analysis window. The combat-state indicator is now
+just "IN COMBAT"/"IDLE", conveyed by the accent tick's colour as well as the text.
