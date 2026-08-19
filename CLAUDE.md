@@ -51,14 +51,23 @@ way `Constants.lua` does it in Gibberish3).
 ### Analysis window: what's genuinely unverified
 
 Phases 1-2's offline harness could exercise real logic outside the game; Phase 5 cannot -- it is
-almost entirely `Turbine.UI.ScrollView`/`Control`/`Label` construction and layout arithmetic,
+almost entirely `Turbine.UI.Control`/`Label`/`ListBox` construction and layout arithmetic,
 checked only with `luac -p` (syntax) and by hand-tracing the pixel math in review. Specific
 things that need an actual in-game load to confirm, roughly in order of how likely they are to
 be wrong:
 
-- `Turbine.UI.ScrollView()` is used bare (`SetParent` + child positioning only) for the skill
-  table. If it needs an explicit `SetAutoScroll`/similar call to actually scroll once pooled rows
-  exceed its viewport, that call is missing.
+- **Found and fixed by an actual in-game load**: `Turbine.UI.ScrollView` does not exist --
+  `UI/Analysis.lua` originally guessed at that name for the skill table's scroll host and errored
+  on plugin load (`attempt to call field 'ScrollView' (a nil value)`). Confirmed via a working
+  reference (`LootLogs/UI/Window/LootBrowser.lua`): the real pattern is `Turbine.UI.ListBox` as
+  the scroll host plus a separate `Turbine.UI.Lotro.ScrollBar` wired in via
+  `listBox:SetVerticalScrollBar(scrollBar)`. Items are added with `:AddItem(control)`, not
+  manually positioned -- `Analysis:RefreshTable` now calls `self.scrollView:ClearItems()` then
+  re-`AddItem`s the same pooled row containers every refresh (the ListBox's *membership list*
+  gets rebuilt each time; the row Controls themselves are still the same reused pool, never
+  destroyed). **This is a live example of the exact residual risk this whole section warns
+  about** -- treat every other guessed-at-but-unverified Turbine.UI call below the same way:
+  plausible, pattern-matched against real plugin code, but not proof until it's actually loaded.
 - The picker chip width estimate (`ChipWidth` in `UI/Analysis.lua`, `16 + len(text)*7`) is a
   guess -- there's no text-measurement API used anywhere else in this codebase to check against.
   Long names will likely need retuning.

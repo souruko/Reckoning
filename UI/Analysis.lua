@@ -27,6 +27,7 @@ local KPI_ROW_HEIGHT = 50
 local GRAPH_HEIGHT = 150 + 22
 local ROW_HEIGHT = 22
 local RAIL_ROW_HEIGHT = 34
+local SCROLLBAR_WIDTH = 10
 local RAIL_POOL = 20 -- generous: ring cap is 10 but pinned sessions are exempt from it
 
 local VIEWS = { "done", "healOut", "healIn", "taken" }
@@ -550,9 +551,19 @@ function Analysis:BuildTable()
 		self.tableHeaderLabels[i] = label
 	end
 
-	self.scrollView = Turbine.UI.ScrollView()
+	-- Turbine.UI has no ScrollView -- the real pattern (confirmed against LootLogs, a real
+	-- distributed plugin) is a ListBox as the scrolling host plus a separate Lotro.ScrollBar
+	-- wired to it. Items are Controls added via AddItem, not manually positioned/parented.
+	self.scrollView = Turbine.UI.ListBox()
 	self.scrollView:SetParent(self.tableHolder)
 	self.scrollView:SetPosition(0, ROW_HEIGHT)
+	self.scrollView:SetBackColor(Theme.Color(Theme.Hex.WindowFill))
+
+	self.tableScrollBar = Turbine.UI.Lotro.ScrollBar()
+	self.tableScrollBar:SetParent(self.tableHolder)
+	self.tableScrollBar:SetOrientation(Turbine.UI.Orientation.Vertical)
+	self.tableScrollBar:SetWidth(SCROLLBAR_WIDTH)
+	self.scrollView:SetVerticalScrollBar(self.tableScrollBar)
 
 	self.tableRowPool = {}
 	for i = 1, 30 do
@@ -560,11 +571,11 @@ function Analysis:BuildTable()
 	end
 end
 
+-- Not parented here -- AddItem (called from RefreshTable, every data refresh) does that. A row
+-- never sits in the ListBox until it actually has data for the current view/filter.
 function Analysis:BuildTableRowSlot()
 	local container = Turbine.UI.Control()
-	container:SetParent(self.scrollView)
 	container:SetSize(1, ROW_HEIGHT)
-	container:SetVisible(false)
 
 	local divider = Turbine.UI.Control()
 	divider:SetParent(container)
@@ -711,19 +722,26 @@ function Analysis:RefreshTable(session)
 		end
 	end
 
-	for i = 1, table.getn(self.tableRowPool) do
+	-- ListBox is item-list based, not freeform positioning: clear and re-add each refresh, but
+	-- reuse the same pooled container/Row/shareBar objects every time -- only the ListBox's
+	-- membership list is rebuilt, never the Controls themselves.
+	self.scrollView:ClearItems()
+
+	local n = table.getn(rows)
+	local poolSize = table.getn(self.tableRowPool)
+	if n > poolSize then
+		n = poolSize
+	end
+
+	for i = 1, n do
 		local slot = self.tableRowPool[i]
 		local row = rows[i]
 
-		if row == nil then
-			slot.container:SetVisible(false)
-		else
-			slot.container:SetPosition(0, (i - 1) * ROW_HEIGHT)
-			slot.container:SetVisible(true)
-			slot.row:SetValues(self:RowValues(view, row))
-			local share = (maxTotal > 0) and (row.total / maxTotal) or 0
-			slot.shareBar:SetSize(math.floor(self.tableWidth * share), ROW_HEIGHT - 1)
-		end
+		slot.row:SetValues(self:RowValues(view, row))
+		local share = (maxTotal > 0) and (row.total / maxTotal) or 0
+		slot.shareBar:SetSize(math.floor(self.tableWidth * share), ROW_HEIGHT - 1)
+
+		self.scrollView:AddItem(slot.container)
 	end
 end
 
@@ -1084,10 +1102,15 @@ function Analysis:Layout()
 	local tableWidth = math.floor((innerWidth - GAP) * 2.6 / 3.6)
 	local panelsWidth = innerWidth - GAP - tableWidth
 
+	local listWidth = tableWidth - SCROLLBAR_WIDTH
+
 	self.tableHolder:SetPosition(innerX, tableY)
 	self.tableHolder:SetSize(tableWidth, tableAreaHeight)
-	self.scrollView:SetSize(tableWidth, tableAreaHeight - ROW_HEIGHT)
-	self:RefreshTableColumns(tableWidth)
+	self.scrollView:SetPosition(0, ROW_HEIGHT)
+	self.scrollView:SetSize(listWidth, tableAreaHeight - ROW_HEIGHT)
+	self.tableScrollBar:SetPosition(listWidth, ROW_HEIGHT)
+	self.tableScrollBar:SetHeight(tableAreaHeight - ROW_HEIGHT)
+	self:RefreshTableColumns(listWidth)
 
 	self.panelsHolder:SetPosition(innerX + tableWidth + GAP, tableY)
 	self.panelsHolder:SetSize(panelsWidth, tableAreaHeight)
