@@ -1,6 +1,11 @@
 --=================================================================================================
 -- LiveMeter -- window 1, 260x186. The always-on number you watch mid-fight.
 -- See docs/DESIGN.md "1. Live meter".
+--
+-- Permanently visible whenever settings.liveMeterEnabled is true, per direct user feedback
+-- overriding docs/DESIGN.md's original "dims and holds the last fight 8s, then hides": it now
+-- just holds the last fight (or a zeroed idle state if nothing has been fought yet this play
+-- session) indefinitely, dimming out of combat rather than disappearing.
 --=================================================================================================
 
 LiveMeter = class(Frame)
@@ -8,7 +13,6 @@ LiveMeter = class(Frame)
 local TABS = { "done", "taken", "healOut", "healIn" }
 local TAB_LABELS = { done = "Done", taken = "Taken", healOut = "Heal out", healIn = "Heal in" }
 
-local HOLD_SECONDS = 8
 local REFRESH_INTERVAL = 0.2 -- ~5Hz, per docs/IMPLEMENTATION_PLAN.md Phase 3
 
 ---------------------------------------------------------------------------------------------------
@@ -115,18 +119,22 @@ function LiveMeter:Constructor()
 	self.body:SetSize(260, 136)
 	self.body:SetMouseVisible(false)
 
-	self:BuildCombatHeader()
-	self:BuildTabs()
-	self:BuildBody()
-
-	self.holdUntil = nil
 	self.lastRefresh = 0
 
-	local meter = self
-	Sessions.OnClosed(function(s) meter:OnSessionClosed(s) end)
+	-- Permanent placeholder for "enabled but nothing fought yet this play session" -- a real
+	-- Session whose aggregates just stay empty, so every provider function (which all call real
+	-- Session methods like :Total()/:HitStats()) already renders a clean zeroed state for free,
+	-- with no separate "no data" branch to keep in sync with the real one. Built before anything
+	-- that can trigger a Refresh() (BuildTabs ends by calling SelectTab, which refreshes
+	-- immediately) -- ActiveSession() falls back to this and Refresh() no longer has a
+	-- nil-session guard, so it has to exist first, same as captionLabel/etc. from BuildBody.
+	self.idleSession = Session(Turbine.Engine.GetGameTime(), "--:--")
+
+	self:BuildCombatHeader()
+	self:BuildBody()
+	self:BuildTabs()
 
 	self:SetWantsUpdates(true)
-	self:SetVisible(false)
 end
 
 function LiveMeter:BuildCombatHeader()
@@ -264,14 +272,18 @@ end
 -- Refresh / lifecycle
 ---------------------------------------------------------------------------------------------------
 
+-- The fight currently being shown: the live one if a fight is on, else the most recent
+-- finished one (docs/DESIGN.md's "holds the last fight"), else the permanent idle placeholder
+-- if nothing has been fought yet this play session. Always returns a real Session -- callers
+-- never need a nil-session branch.
 function LiveMeter:ActiveSession()
 	if Sessions.current ~= nil then
 		return Sessions.current
 	end
-	if self.holdUntil ~= nil then
+	if Sessions.list[1] ~= nil then
 		return Sessions.list[1]
 	end
-	return nil
+	return self.idleSession
 end
 
 function LiveMeter:Refresh()
@@ -280,18 +292,9 @@ function LiveMeter:Refresh()
 		return
 	end
 
-	if Sessions.current ~= nil then
-		self.holdUntil = nil
-	end
-
-	local session = self:ActiveSession()
-	if session == nil then
-		self:SetVisible(false)
-		return
-	end
-
 	self:SetVisible(true)
 
+	local session = self:ActiveSession()
 	local lines = PROVIDERS[self.activeTab](session)
 
 	self.captionLabel:SetText(lines.headline.caption)
@@ -305,14 +308,16 @@ function LiveMeter:Refresh()
 	end
 
 	local inCombat = (Sessions.current ~= nil)
-	self.combatLabel:SetText(inCombat and "IN COMBAT" or "LAST FIGHT")
+	if inCombat then
+		self.combatLabel:SetText("IN COMBAT")
+	elseif Sessions.list[1] ~= nil then
+		self.combatLabel:SetText("LAST FIGHT")
+	else
+		self.combatLabel:SetText("OUT OF COMBAT")
+	end
 	self.clockLabel:SetText(Format.Clock(session:Duration()))
 
 	self:SetOpacity(inCombat and 1 or 0.55)
-end
-
-function LiveMeter:OnSessionClosed(session)
-	self.holdUntil = Turbine.Engine.GetGameTime() + HOLD_SECONDS
 end
 
 function LiveMeter:Update()
@@ -321,12 +326,6 @@ function LiveMeter:Update()
 		return
 	end
 	self.lastRefresh = now
-
-	if self.holdUntil ~= nil and Sessions.current == nil and now >= self.holdUntil then
-		self.holdUntil = nil
-		self:SetVisible(false)
-		return
-	end
 
 	self:Refresh()
 end

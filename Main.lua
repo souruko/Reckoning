@@ -175,6 +175,34 @@ local function MoveWindow(name)
 	window:SetVisible(true)
 end
 
+-- Debug helper: pops the death window directly, bypassing Sessions.OnSelfDefeat entirely --
+-- lets you tell "the window itself is broken" apart from "a real death was never actually
+-- detected" (e.g. because nothing you've fought so far can actually kill you) without needing to
+-- die for real. Synthesizes two lastTaken rows if the session has none to show.
+local function TestDeath()
+	local session = Sessions.current or Sessions.list[1]
+	if session == nil then
+		session = Session(Turbine.Engine.GetGameTime(), "test")
+	end
+
+	if table.getn(session.lastTaken) == 0 then
+		local now = Turbine.Engine.GetGameTime()
+		session:PushLastTaken({
+			time = now - 2, kind = "damage", skill = "Test Strike", dmgType = DamageType.Shadow,
+			amount = 12345, initiator = "Test Dummy", moralePct = 0.4,
+		})
+		session:PushLastTaken({
+			time = now, kind = "damage", skill = "Test Strike", dmgType = DamageType.Shadow,
+			amount = 54321, initiator = "Test Dummy", moralePct = 0,
+		})
+	end
+	session.died = true
+	session.endTime = Turbine.Engine.GetGameTime()
+
+	deathCause:Show(session)
+	Turbine.Shell.WriteLine("Reckoning: triggered a test death popup.")
+end
+
 local function ResetAll()
 	Settings.ResetToDefaults()
 
@@ -198,9 +226,11 @@ function command:Execute(_, str)
 	arg = arg or ""
 
 	if cmd == "" or cmd == "help" then
-		Turbine.Shell.WriteLine("Reckoning v" .. Reckoning.Version .. ": /reck help | dump | show [live|death|analysis] | hide [live|death|analysis] | move <live|death|analysis> | reset")
+		Turbine.Shell.WriteLine("Reckoning v" .. Reckoning.Version .. ": /reck help | dump | testdeath | show [live|death|analysis] | hide [live|death|analysis] | move <live|death|analysis> | reset")
 	elseif cmd == "dump" then
 		DumpSession(Sessions.current or Sessions.list[1])
+	elseif cmd == "testdeath" then
+		TestDeath()
 	elseif cmd == "show" then
 		ShowWindow(arg)
 	elseif cmd == "hide" then

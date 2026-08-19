@@ -23,3 +23,10 @@ rendering as full solid colour instead of a subtle wash -- the engine doesn't bl
 way that code assumed. Switched to precomputed blended colours throughout. Also: session-rail pin
 markers showed as "?" (the diamond characters the design uses aren't in this client's font) --
 now a small filled square instead.
+
+Changed: the live meter now stays on screen permanently whenever enabled, instead of hiding 8
+seconds after a fight ends. It shows the live fight, the last finished one, or a zeroed idle
+state if nothing's been fought yet, dimming when out of combat rather than disappearing.
+
+Added `/reck testdeath` -- pops the death window with synthesized data, for checking the window
+itself works independently of whether a real death has actually been detected.

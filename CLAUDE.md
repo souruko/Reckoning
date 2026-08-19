@@ -210,7 +210,7 @@ global assigned there (`Trigger`, `L`, `EventCode`, `Theme`, `Font`, `Session`, 
 `Main.lua` via `UI.LiveMeter()` etc. (matching `vital = UI.Vital()` in `VitalSelf/Main.lua`),
 and can freely reference `Frame`/`Bar`/`Row` bare since they're siblings in the same directory.
 
-| `UI/LiveMeter.lua` | `LiveMeter` (extends `Frame`, `key = "liveMeter"`, `closable = false`) -- window 1. Bespoke header (accent tick + "IN COMBAT"/"LAST FIGHT" + elapsed clock), 4 tabs, 4-line body. One `local` provider function per tab (`DoneLine`/`TakenLine`/`HealOutLine`/`HealInLine`) normalizes very different per-tab content (see `docs/DESIGN.md`'s table) into one `{headline,second,stat,max}` shape so the body-refresh code stays generic. Refreshed on a throttled `Update()` (~5Hz); shows/hides itself based on `Sessions.current` plus an 8s post-combat hold (`Sessions.OnClosed`). |
+| `UI/LiveMeter.lua` | `LiveMeter` (extends `Frame`, `key = "liveMeter"`, `closable = false`) -- window 1. Bespoke header (accent tick + "IN COMBAT"/"LAST FIGHT"/"OUT OF COMBAT" + elapsed clock), 4 tabs, 4-line body. One `local` provider function per tab (`DoneLine`/`TakenLine`/`HealOutLine`/`HealInLine`) normalizes very different per-tab content (see `docs/DESIGN.md`'s table) into one `{headline,second,stat,max}` shape so the body-refresh code stays generic. Refreshed on a throttled `Update()` (~5Hz). **Permanently visible** whenever `settings.liveMeterEnabled` is true -- per direct user feedback, this overrides `docs/DESIGN.md`'s original "dims and holds the last fight 8s, then hides": it now shows the live fight, or the last finished one, or (if nothing has been fought yet this play session) a permanent zeroed `self.idleSession` placeholder -- a real empty `Session` instance, not a separate "no data" rendering path -- and just dims to 0.55 opacity out of combat rather than disappearing. `ActiveSession()` therefore never returns nil; every provider function can assume a real session. |
 
 | `UI/DeathCause.lua` | `DeathCause` (extends `Frame`, `key = "deathCause"`, death-specific fill/border/header-rule colours) -- window 2. Fires from `Sessions.OnSelfDefeat`. "Last hit by" resolved by scanning `session.lastTaken` backward for the last `kind == "damage"` entry (temp-morale-loss rows don't carry an attacker). 5 pooled `Row` instances (never rebuilt), tinted per row: the killing-blow row's amount goes `DamageFatal`, temp-morale rows go `MutedText` end to end, everything else scales `DamageTaken`/`DamageSevere` off post-hit `moralePct`. Countdown is a `Bar` depleting via `Update()`, `_G.settings.deathAutoHide` seconds (default 15). |
 
@@ -239,14 +239,20 @@ turns out to be) in-game first, on a low-stakes control, before relying on it an
 
 | `UI/Options.lua` | `Options` (extends `Turbine.UI.ListBox`) -- returned via `plugin.GetOptionsPanel`. Scoped to what `docs/DESIGN.md` actually calls settable: `deathAutoHide` (validated numeric row) and the two enable checkboxes. No colour rows and no "window scale" row -- neither is a real setting in this design (see `Settings.lua`'s `COLOR_KEYS` comment); `docs/IMPLEMENTATION_PLAN.md`'s Phase 6 line mirrors `VitalSelf`'s options shape generically and oversells what applies here. |
 
-`/reck show|hide [live\|death\|analysis]`, `/reck move <live\|death\|analysis>`, `/reck reset`
-are in `Main.lua`. `show`/`hide` for `live`/`death` only flip their enable flag (same effect as
-the options panel checkboxes) rather than forcing `SetVisible` -- both windows are entirely
-event-driven (`Sessions.current`, `Sessions.OnSelfDefeat`) and would re-hide themselves on the
-next throttled `Update()` if forced visible with no active data. `analysis` is the one window a
-forced show/hide makes sense for. `move` is a recovery command (reset to (200, 200) and show) for
-a window dragged off-screen. `reset` calls `Settings.ResetToDefaults()` then repositions all
-three windows and refreshes the options panel in place.
+`/reck show|hide [live\|death\|analysis]`, `/reck move <live\|death\|analysis>`,
+`/reck testdeath`, `/reck reset` are in `Main.lua`. `show`/`hide` for `live`/`death` only flip
+their enable flag (same effect as the options panel checkboxes) rather than forcing
+`SetVisible` -- `death` is still entirely event-driven (`Sessions.OnSelfDefeat`) and popping it
+open with no real death would be misleading; `live` is now permanently visible whenever enabled
+(see `UI/LiveMeter.lua`'s note above) so its enable flag *is* the real show/hide. `analysis` is
+the one window a forced show/hide makes sense for directly. `move` is a recovery command (reset
+to (200, 200) and show) for a window dragged off-screen. `testdeath` pops the death window
+directly with synthesized data, bypassing `Sessions.OnSelfDefeat` entirely -- added specifically
+to tell "the window itself doesn't work" apart from "a real death was never detected" (e.g.
+nothing fought so far can actually kill the player) without waiting to die for real; if this
+command doesn't show the window either, the bug is in `DeathCause`/`Frame`, not in event
+detection. `reset` calls `Settings.ResetToDefaults()` then repositions all three windows and
+refreshes the options panel in place.
 
 **A real bug caught while building this**: `Settings.Load()`'s DEFAULTS-merge loop used to alias
 `_G.settings.windows` directly to `DEFAULTS.windows` (the same table object, since `windows = {}`
