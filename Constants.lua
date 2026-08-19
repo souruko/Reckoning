@@ -212,12 +212,49 @@ function Format.Clock(seconds)
 	return string.format("%02d:%02d", m, s)
 end
 
--- "#RRGGBB..." -> Turbine.UI.Color. Reads only the first 6 hex digits; the mockup's 8-digit
--- values carry a CSS alpha that has no Color equivalent here and is applied separately
--- (SetOpacity or a dedicated fill) wherever a token with alpha is actually used.
-function Theme.Color(hex)
+-- "#RRGGBB..." -> r, g, b floats in [0,1]. Reads only the first 6 hex digits -- alpha (an 8th
+-- and 9th digit on the mockup's CSS tokens) is handled separately by Theme.Mix, never by Color.
+function Theme.RGB(hex)
 	local r = tonumber(string.sub(hex, 2, 3), 16)
 	local g = tonumber(string.sub(hex, 4, 5), 16)
 	local b = tonumber(string.sub(hex, 6, 7), 16)
-	return Turbine.UI.Color(r / 255, g / 255, b / 255)
+	return r / 255, g / 255, b / 255
+end
+
+function Theme.Color(hex)
+	local r, g, b = Theme.RGB(hex)
+	return Turbine.UI.Color(r, g, b)
+end
+
+-- Blends fgHex over bgHex at ratio t (0 = all bg, 1 = all fg) and returns a solid
+-- Turbine.UI.Color. This is how the mockup's alpha-hex tint tokens (e.g. "#9184d91c", a
+-- selected-row wash) get approximated -- NOT SetOpacity. Confirmed in-game:
+-- Turbine.UI.Control:SetOpacity() on a Control with its own solid BackColor does not blend --
+-- it renders the BackColor at full strength regardless of the opacity value. Real plugins never
+-- use SetOpacity that way either (grepped across VitalSelf/Gibberish3/CombatAnalysis/LootLogs);
+-- the working, repeated pattern is exactly this precomputed-blend approach (LootLogs calls its
+-- version MixColor). SetOpacity stays legitimate for whole-window fades (VitalSelf's
+-- incombat/outcombat opacity on a Window) -- just never for a tint over a solid fill.
+function Theme.Mix(fgHex, bgHex, t)
+	local fr, fg, fb = Theme.RGB(fgHex)
+	local br, bg, bb = Theme.RGB(bgHex)
+	return Turbine.UI.Color(
+		fr * t + br * (1 - t),
+		fg * t + bg * (1 - t),
+		fb * t + bb * (1 - t))
+end
+
+-- Accepts either a plain "#RRGGBB" token or an 8-digit "#RRGGBBAA" alpha token (as the mockup's
+-- CSS uses) and always returns a solid Turbine.UI.Color -- alpha tokens are blended against
+-- bgHex (default WindowFill) via Theme.Mix. Use this instead of Theme.Color wherever an
+-- arbitrary hex string flows through as a parameter (e.g. Bar's trackHex) and might be either
+-- kind -- a bare Theme.Color would silently truncate an alpha token to its RGB, which reads as
+-- solid white for anything built on "#ffffffXX" (this is exactly how the KPI card background
+-- bug happened -- see git history).
+function Theme.AlphaColor(hex, bgHex)
+	if string.len(hex) > 7 then
+		local a = tonumber(string.sub(hex, 8, 9), 16) / 255
+		return Theme.Mix(string.sub(hex, 1, 7), bgHex or Theme.Hex.WindowFill, a)
+	end
+	return Theme.Color(hex)
 end

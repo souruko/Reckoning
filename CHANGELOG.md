@@ -16,3 +16,10 @@ stacked on top of each other -- the chat listener read `args.Type` instead of th
 `args.ChatType`, and separately `LocalPlayer.name` (used to tell "my own damage" from everyone
 else's) was never actually set to a real name, since it isn't a real Turbine property. Both
 fixed; combat should record correctly now.
+
+Fixed: every "selected"/tint effect (selected tabs, selected session, selected picker chip,
+skill-table share bars, the graph's gridlines and data columns, KPI card backgrounds) was
+rendering as full solid colour instead of a subtle wash -- the engine doesn't blend opacity the
+way that code assumed. Switched to precomputed blended colours throughout. Also: session-rail pin
+markers showed as "?" (the diamond characters the design uses aren't in this client's font) --
+now a small filled square instead.

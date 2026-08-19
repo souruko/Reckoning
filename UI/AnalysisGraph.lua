@@ -44,8 +44,7 @@ function Graph:BuildGridlines()
 		line:SetParent(self)
 		line:SetPosition(0, math.floor(PLOT_HEIGHT * i / 5))
 		line:SetSize(self.plotWidth, 1)
-		line:SetBackColor(Turbine.UI.Color(1, 1, 1))
-		line:SetOpacity(0.05)
+		line:SetBackColor(Theme.Mix("#ffffff", Theme.Hex.WindowFill, 0.05))
 		line:SetMouseVisible(false)
 		self.gridlines[i] = line
 	end
@@ -63,7 +62,6 @@ function Graph:BuildColumns()
 			col:SetParent(self)
 			col:SetPosition(math.floor((i - 1) * self.bucketWidth), PLOT_HEIGHT)
 			col:SetSize(math.max(1, math.floor(self.bucketWidth) - 1), 0)
-			col:SetOpacity(AREA_OPACITY)
 			col:SetVisible(false)
 			col:SetMouseVisible(false)
 			self.columns[slot][i] = col
@@ -252,7 +250,7 @@ function Graph:Redraw()
 			else
 				local value = self.slices[i][series.key] or 0
 				local h = (maxValue > 0) and math.floor(value / maxValue * PLOT_HEIGHT) or 0
-				col:SetBackColor(Theme.Color(series.colorHex))
+				col:SetBackColor(Theme.Mix(series.colorHex, Theme.Hex.WindowFill, AREA_OPACITY))
 				col:SetPosition(math.floor((i - 1) * self.bucketWidth), PLOT_HEIGHT - h)
 				col:SetSize(math.max(1, math.floor(self.bucketWidth) - 1), h)
 				col:SetVisible(h > 0)

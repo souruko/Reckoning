@@ -14,7 +14,7 @@ function Bar:Constructor(width, height, fillHex, trackHex)
 	Turbine.UI.Control.Constructor(self)
 
 	self:SetSize(width, height)
-	self:SetBackColor(Theme.Color(trackHex or Theme.Hex.Border))
+	self:SetBackColor(Theme.AlphaColor(trackHex or Theme.Hex.Border))
 	self:SetMouseVisible(false)
 
 	self.maxWidth = width

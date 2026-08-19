@@ -135,6 +135,7 @@ function Analysis:BuildSessionRow()
 	local row = Turbine.UI.Control()
 	row:SetParent(self.rail)
 	row:SetSize(RAIL_WIDTH, RAIL_ROW_HEIGHT)
+	row:SetBackColor(Theme.Color(Theme.Hex.RailFill))
 	row:SetVisible(false)
 
 	local leftBorder = Turbine.UI.Control()
@@ -143,20 +144,14 @@ function Analysis:BuildSessionRow()
 	leftBorder:SetSize(0, RAIL_ROW_HEIGHT)
 	leftBorder:SetMouseVisible(false)
 
-	local fill = Turbine.UI.Control()
-	fill:SetParent(row)
-	fill:SetPosition(0, 0)
-	fill:SetSize(RAIL_WIDTH, RAIL_ROW_HEIGHT)
-	fill:SetBackColor(Theme.Color(Theme.Hex.Accent))
-	fill:SetOpacity(0)
-	fill:SetMouseVisible(false)
-
-	local pin = Turbine.UI.Label()
+	-- Pin glyph: a small filled square, not a text glyph -- the Unicode diamonds (U+25C6/25C7)
+	-- the mockup uses aren't in this client's fonts and render as "?". A filled rectangle is
+	-- also literally what docs/DESIGN.md says every mark in this design is, absent an icon.
+	local pin = Turbine.UI.Control()
 	pin:SetParent(row)
-	pin:SetFont(Font.Verdana12)
-	pin:SetPosition(8, 2)
-	pin:SetSize(14, 16)
-	pin:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleCenter)
+	pin:SetPosition(9, 12)
+	pin:SetSize(8, 8)
+	pin:SetMouseVisible(true)
 
 	local name = Turbine.UI.Label()
 	name:SetParent(row)
@@ -176,11 +171,15 @@ function Analysis:BuildSessionRow()
 	meta:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
 	meta:SetMouseVisible(false)
 
-	local widgets = { control = row, leftBorder = leftBorder, fill = fill, pin = pin, name = name, meta = meta, session = nil }
+	local widgets = { control = row, leftBorder = leftBorder, pin = pin, name = name, meta = meta, session = nil }
 
 	local window = self
 	row.MouseClick = function() window:SelectSession(widgets.session) end
-	row.MouseEnter = function() if widgets.session ~= window.selectedSession then fill:SetOpacity(0.05) end end
+	row.MouseEnter = function()
+		if widgets.session ~= window.selectedSession then
+			row:SetBackColor(Theme.Mix(Theme.Hex.Accent, Theme.Hex.RailFill, 0.05))
+		end
+	end
 	row.MouseLeave = function() window:RefreshRailRow(widgets) end
 	pin.MouseClick = function()
 		if widgets.session ~= nil then
@@ -223,8 +222,7 @@ function Analysis:RefreshRail()
 			widgets.control:SetPosition(0, (i - 1) * RAIL_ROW_HEIGHT)
 			widgets.name:SetText(s:DisplayName() .. (s.died and " · died" or ""))
 			widgets.meta:SetText(s.startClock .. " · " .. Format.Clock(s:Duration()) .. " · " .. Format.Rate(s:Rate("done")))
-			widgets.pin:SetText(s.pinned and "◆" or "◇")
-			widgets.pin:SetForeColor(Theme.Color(s.pinned and Theme.Hex.Accent or "#5c5f70"))
+			widgets.pin:SetBackColor(Theme.Color(s.pinned and Theme.Hex.Accent or "#5c5f70"))
 			self:RefreshRailRow(widgets)
 		end
 	end
@@ -237,7 +235,7 @@ function Analysis:RefreshRailRow(widgets)
 	end
 	local selected = (s == self.selectedSession)
 
-	widgets.fill:SetOpacity(selected and 0.11 or 0)
+	widgets.control:SetBackColor(selected and Theme.Mix(Theme.Hex.Accent, Theme.Hex.RailFill, 0.11) or Theme.Color(Theme.Hex.RailFill))
 	if selected then
 		widgets.leftBorder:SetBackColor(Theme.Color(Theme.Hex.Accent))
 		widgets.leftBorder:SetSize(2, RAIL_ROW_HEIGHT)
@@ -290,14 +288,7 @@ function Analysis:BuildTabStrip()
 		tab:SetParent(self.contentArea)
 		tab:SetPosition(x, 0)
 		tab:SetSize(tabWidth, TAB_STRIP_HEIGHT)
-
-		local fill = Turbine.UI.Control()
-		fill:SetParent(tab)
-		fill:SetPosition(0, 0)
-		fill:SetSize(tabWidth, TAB_STRIP_HEIGHT)
-		fill:SetBackColor(Theme.Color(Theme.Hex.Accent))
-		fill:SetOpacity(0)
-		fill:SetMouseVisible(false)
+		tab:SetBackColor(Theme.Color(Theme.Hex.WindowFill))
 
 		local label = Turbine.UI.Label()
 		label:SetParent(tab)
@@ -316,10 +307,18 @@ function Analysis:BuildTabStrip()
 		underline:SetMouseVisible(false)
 
 		tab.MouseClick = function() window:SelectView(key) end
-		tab.MouseEnter = function() if window.viewTab ~= key then fill:SetOpacity(0.05) end end
-		tab.MouseLeave = function() if window.viewTab ~= key then fill:SetOpacity(0) end end
+		tab.MouseEnter = function()
+			if window.viewTab ~= key then
+				tab:SetBackColor(Theme.Mix(Theme.Hex.Accent, Theme.Hex.WindowFill, 0.05))
+			end
+		end
+		tab.MouseLeave = function()
+			if window.viewTab ~= key then
+				tab:SetBackColor(Theme.Color(Theme.Hex.WindowFill))
+			end
+		end
 
-		self.viewTabs[key] = { control = tab, label = label, underline = underline, fill = fill }
+		self.viewTabs[key] = { control = tab, label = label, underline = underline }
 		x = x + tabWidth
 	end
 end
@@ -388,7 +387,6 @@ function Analysis:RefreshPicker()
 		local w = ChipWidth(text)
 		chip.control:SetPosition(x, 0)
 		chip.control:SetSize(w, 22)
-		chip.fill:SetSize(w, 22)
 		chip.border:SetSize(w, 22)
 		chip.label:SetSize(w, 22)
 		chip.label:SetText(text)
@@ -405,19 +403,14 @@ function Analysis:BuildPickerChip()
 	local control = Turbine.UI.Control()
 	control:SetParent(self.pickerRow)
 
-	local fill = Turbine.UI.Control()
-	fill:SetParent(control)
-	fill:SetPosition(0, 0)
-	fill:SetBackColor(Theme.Color(Theme.Hex.Accent))
-	fill:SetOpacity(0)
-	fill:SetMouseVisible(false)
-
 	local border = Turbine.UI.Control()
 	border:SetParent(control)
 	border:SetPosition(0, 0)
 	border:SetBackColor(Theme.Color(Theme.Hex.Border))
 	border:SetMouseVisible(false)
 
+	-- Fills the 1px-inset interior; also doubles as the selected/hover tint target (a
+	-- precomputed blend, not SetOpacity -- see Theme.Mix).
 	local inset = Turbine.UI.Control()
 	inset:SetParent(control)
 	inset:SetPosition(1, 1)
@@ -432,11 +425,15 @@ function Analysis:BuildPickerChip()
 	label:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleCenter)
 	label:SetMouseVisible(false)
 
-	local chip = { control = control, fill = fill, border = border, inset = inset, label = label, value = nil }
+	local chip = { control = control, border = border, inset = inset, label = label, value = nil }
 
 	local window = self
 	control.MouseClick = function() window:SelectFilter(chip.value) end
-	control.MouseEnter = function() if window.filter[window.viewTab] ~= chip.value then fill:SetOpacity(0.05) end end
+	control.MouseEnter = function()
+		if window.filter[window.viewTab] ~= chip.value then
+			inset:SetBackColor(Theme.Mix(Theme.Hex.Accent, Theme.Hex.WindowFill, 0.05))
+		end
+	end
 	control.MouseLeave = function() window:RefreshPickerSelection() end
 
 	return chip
@@ -448,7 +445,7 @@ function Analysis:RefreshPickerSelection()
 		local chip = self.pickerChips[i]
 		if chip.control:IsVisible() then
 			local isSelected = (chip.value == selected)
-			chip.fill:SetOpacity(isSelected and 0.11 or 0)
+			chip.inset:SetBackColor(isSelected and Theme.Mix(Theme.Hex.Accent, Theme.Hex.WindowFill, 0.11) or Theme.Color(Theme.Hex.WindowFill))
 			chip.border:SetBackColor(Theme.Color(isSelected and Theme.Hex.Accent700 or Theme.Hex.Border))
 			chip.label:SetForeColor(Theme.Color(isSelected and Theme.Hex.Accent200 or Theme.Hex.DimText))
 
@@ -478,7 +475,10 @@ end
 function Analysis:BuildKpiCard()
 	local card = Turbine.UI.Control()
 	card:SetParent(self.kpiRow)
-	card:SetBackColor(Theme.Color(Theme.Hex.PanelFill))
+	-- PanelFill ("#ffffff05") is an alpha-bearing token -- Theme.Color would truncate it to
+	-- solid white (only the first 6 hex digits are RGB). Theme.Mix approximates the real 5/255
+	-- wash against the window fill instead.
+	card:SetBackColor(Theme.Mix("#ffffff", Theme.Hex.WindowFill, 5 / 255))
 	card:SetMouseVisible(false)
 
 	local border = Turbine.UI.Control()
@@ -584,11 +584,12 @@ function Analysis:BuildTableRowSlot()
 	divider:SetBackColor(Theme.Color(Theme.Hex.RowBorder))
 	divider:SetMouseVisible(false)
 
+	-- Colour is set per-view in RefreshTableColumns (Theme.Mix'd to an 8% tint there, since
+	-- SetOpacity does not blend -- see Theme.Mix's comment); only width changes per refresh.
 	local shareBar = Turbine.UI.Control()
 	shareBar:SetParent(container)
 	shareBar:SetPosition(0, 0)
 	shareBar:SetSize(0, ROW_HEIGHT - 1)
-	shareBar:SetOpacity(0.08)
 	shareBar:SetMouseVisible(false)
 
 	local row = nil -- built lazily once column geometry is known, see RefreshTableColumns
@@ -649,7 +650,7 @@ function Analysis:RefreshTableColumns(tableWidth)
 	for i = 1, table.getn(self.tableRowPool) do
 		local slot = self.tableRowPool[i]
 		slot.container:SetSize(x, ROW_HEIGHT)
-		slot.shareBar:SetBackColor(Theme.Color(meta.color))
+		slot.shareBar:SetBackColor(Theme.Mix(meta.color, Theme.Hex.WindowFill, 0.08))
 
 		if slot.row == nil then
 			slot.row = Row(x, ROW_HEIGHT, columns)
@@ -912,7 +913,7 @@ function Analysis:SelectView(key, skipReset)
 		local selected = (k == key)
 		t.label:SetForeColor(Theme.Color(selected and Theme.Hex.Accent200 or Theme.Hex.DimText))
 		t.underline:SetBackColor(Theme.Color(selected and Theme.Hex.Accent or Theme.Hex.WindowFill))
-		t.fill:SetOpacity(selected and 0.11 or 0)
+		t.control:SetBackColor(selected and Theme.Mix(Theme.Hex.Accent, Theme.Hex.WindowFill, 0.11) or Theme.Color(Theme.Hex.WindowFill))
 	end
 
 	if self.graph ~= nil then
@@ -1017,8 +1018,7 @@ function Analysis:BuildResizeGripper()
 	local gripper = Turbine.UI.Control()
 	gripper:SetParent(self)
 	gripper:SetSize(12, 12)
-	gripper:SetBackColor(Theme.Color(Theme.Hex.Border))
-	gripper:SetOpacity(0.6)
+	gripper:SetBackColor(Theme.Mix(Theme.Hex.Border, Theme.Hex.WindowFill, 0.6))
 	gripper:SetZOrder(5)
 
 	local window = self

@@ -75,11 +75,30 @@ be wrong:
   px more than the table's allotted width once the Skill column hits its 150px floor (8 fixed
   columns leave less room than the other three 7-column views) -- minor overflow, only in that
   one view, only at minimum width, self-corrects once the window is widened.
-- `SetOpacity` is used very heavily (every "tinted fill" -- tabs, chips, session rail selection,
-  KPI cards' implied fill, panel/graph area fills) as the way to approximate the mockup's
-  8-digit-hex alpha values. It's a confirmed-real method (`VitalSelf/UI/Vital.lua` uses it), but
-  the actual visual result of stacking several `SetOpacity`'d Controls hasn't been seen rendered. Follow the implementation plan in order -- each phase is
-written to end somewhere loadable and testable in-game.
+- **Found and fixed by an actual in-game load, second occurrence**: `SetOpacity` was used
+  everywhere (tabs, picker chips, session rail selection, KPI card fill, skill-table share bars,
+  the graph's gridlines and data columns) to approximate the mockup's 8-digit-hex alpha tint
+  tokens. In-game, every one of these rendered as full solid colour -- `SetOpacity` on a plain
+  `Turbine.UI.Control` with its own solid `BackColor` does not blend in this engine; it draws the
+  `BackColor` at full strength regardless of the opacity value. Re-grepped `VitalSelf`,
+  `Gibberish3`, `CombatAnalysis`, and `LootLogs` afterward: there is no working precedent anywhere
+  in ~450KB of real plugin code for `SetOpacity` used this way -- every real low-value or
+  near-zero use is a whole-window/whole-icon fade, never a tint over an opaque fill. The real,
+  repeated pattern (7+ sites in `LootLogs` alone, its own helper called `MixColor`) is
+  precomputing the blended RGB and using a plain solid `SetBackColor` -- now `Theme.Mix(fgHex,
+  bgHex, t)` and `Theme.AlphaColor(hex, bgHex)` in `Constants.lua`. `SetOpacity` remains legitimate
+  for exactly one thing here: `LiveMeter`'s whole-window post-combat dim (`self:SetOpacity(inCombat
+  and 1 or 0.55)`), which matches `VitalSelf/UI/Vital.lua`'s confirmed-working
+  incombat/outcombat-opacity pattern (moderate value, applied to the frame itself, not a tint
+  overlay). If a future change wants a translucent wash, use `Theme.Mix`/`Theme.AlphaColor` --
+  never `SetOpacity` on a Control that already has a solid `BackColor`.
+- **Also found the same load**: the mockup's Unicode pin glyphs (`◆`/`◇`, U+25C6/U+25C7) rendered
+  as `?` -- not in this client's fonts. Session rail pins are now a small solid `Turbine.UI.Control`
+  square (filled = pinned, dim = not), not a text glyph -- consistent with `docs/DESIGN.md`'s own
+  fallback rule ("every mark in this design is a filled rectangle or a text glyph"). The `·`
+  (middle dot, U+00B7) used elsewhere as a separator has not been reported broken and is a much
+  more commonly-embedded character (Latin-1 vs. Geometric Shapes) -- left as is, but if it turns
+  out broken too, the fix is the same: swap for an ASCII-safe separator.
 
 Two Design-token values `docs/DESIGN.md` names but never gives hex for (`--color-accent-200`,
 `-300`, `-500`, `-700`) were pulled directly from the mockup's own CSS custom properties and

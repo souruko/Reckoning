@@ -171,14 +171,6 @@ function LiveMeter:BuildTabs()
 		tab:SetSize(tabWidth, 24)
 		tab:SetBackColor(Theme.Color(Theme.Hex.WindowFill))
 
-		local fill = Turbine.UI.Control()
-		fill:SetParent(tab)
-		fill:SetPosition(0, 0)
-		fill:SetSize(tabWidth, 24)
-		fill:SetBackColor(Theme.Color(Theme.Hex.Accent))
-		fill:SetOpacity(0)
-		fill:SetMouseVisible(false)
-
 		local label = Turbine.UI.Label()
 		label:SetParent(tab)
 		label:SetFont(Font.Verdana10)
@@ -193,7 +185,7 @@ function LiveMeter:BuildTabs()
 		tab.MouseEnter = function() meter:TabHover(key, true) end
 		tab.MouseLeave = function() meter:TabHover(key, false) end
 
-		self.tabControls[key] = { control = tab, fill = fill, label = label }
+		self.tabControls[key] = { control = tab, label = label }
 	end
 
 	self:SelectTab(TABS[_G.settings.liveTab] or "done", true)
@@ -245,9 +237,8 @@ function LiveMeter:SelectTab(key, skipSave)
 		local k = TABS[i]
 		local t = self.tabControls[k]
 		local selected = (k == key)
-		t.fill:SetOpacity(selected and 0.13 or 0)
 		t.label:SetForeColor(Theme.Color(selected and Theme.Hex.Accent200 or Theme.Hex.DimText))
-		t.control:SetBackColor(Theme.Color(Theme.Hex.WindowFill))
+		t.control:SetBackColor(selected and Theme.Mix(Theme.Hex.Accent, Theme.Hex.WindowFill, 0.13) or Theme.Color(Theme.Hex.WindowFill))
 	end
 
 	if not skipSave then
