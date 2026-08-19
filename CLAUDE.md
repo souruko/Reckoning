@@ -37,10 +37,16 @@ developers.
 
 ## Build status
 
-Phases 0-5 done, per `docs/IMPLEMENTATION_PLAN.md`. Phase 6 (options panel, `/reck`
-subcommands, polish) is not started. The analysis window (Phase 5) is by far the largest and
-least-verifiable piece built so far -- see the "Analysis window" note below before trusting it
-blind.
+All six implementation-plan phases are done. **None of it has been loaded in-game yet** --
+every file is syntax-checked (`luac -p`) and, for Phases 1-2, verified offline against real
+combat logs (see below); everything from Phase 2 on (all the `Turbine.UI` code) is unverified
+beyond careful reading. Load it in-game and work through `docs/IMPLEMENTATION_PLAN.md`'s "Done
+when" line for each phase before trusting any of it. The analysis window (Phase 5) is by far the
+largest and least-verifiable piece -- see the "Analysis window" note below first.
+
+German/French parser drop-ins (`docs/IMPLEMENTATION_PLAN.md` Phase 6) were not done -- English
+only. `Parse/en.lua`'s own header already documents how to add them (same signature, selected the
+way `Constants.lua` does it in Gibberish3).
 
 ### Analysis window: what's genuinely unverified
 
@@ -163,8 +169,26 @@ repositions/resizes the existing pooled columns/dots/gridlines in place. If a fu
 to genuinely remove a child Control, verify `SetParent(nil)` (or whatever the real teardown call
 turns out to be) in-game first, on a low-stakes control, before relying on it anywhere hot.
 
-Not yet created (see `docs/IMPLEMENTATION_PLAN.md` for what each owns): the options panel and
-`/reck show|hide|move|reset` (Phase 6).
+| `UI/Options.lua` | `Options` (extends `Turbine.UI.ListBox`) -- returned via `plugin.GetOptionsPanel`. Scoped to what `docs/DESIGN.md` actually calls settable: `deathAutoHide` (validated numeric row) and the two enable checkboxes. No colour rows and no "window scale" row -- neither is a real setting in this design (see `Settings.lua`'s `COLOR_KEYS` comment); `docs/IMPLEMENTATION_PLAN.md`'s Phase 6 line mirrors `VitalSelf`'s options shape generically and oversells what applies here. |
+
+`/reck show|hide [live\|death\|analysis]`, `/reck move <live\|death\|analysis>`, `/reck reset`
+are in `Main.lua`. `show`/`hide` for `live`/`death` only flip their enable flag (same effect as
+the options panel checkboxes) rather than forcing `SetVisible` -- both windows are entirely
+event-driven (`Sessions.current`, `Sessions.OnSelfDefeat`) and would re-hide themselves on the
+next throttled `Update()` if forced visible with no active data. `analysis` is the one window a
+forced show/hide makes sense for. `move` is a recovery command (reset to (200, 200) and show) for
+a window dragged off-screen. `reset` calls `Settings.ResetToDefaults()` then repositions all
+three windows and refreshes the options panel in place.
+
+**A real bug caught while building this**: `Settings.Load()`'s DEFAULTS-merge loop used to alias
+`_G.settings.windows` directly to `DEFAULTS.windows` (the same table object, since `windows = {}`
+in `DEFAULTS` is itself just a table value like any other and the merge did `_G.settings[key] =
+value`). Every window drag or resize was therefore also silently mutating `DEFAULTS.windows`,
+which `Settings.ResetToDefaults()` (added for `/reck reset`) would then have copied right back
+out -- reset would have restored whatever the *current* window positions already were, not the
+real defaults. Fixed by giving any table-valued default a fresh `{}` on merge instead of the
+`DEFAULTS` table itself. Worth remembering if a future setting is table-shaped: table defaults
+need this same fresh-copy treatment, not a bare reference.
 
 ### Key globals
 

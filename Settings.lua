@@ -6,11 +6,15 @@ Settings = {}
 
 -- Single source of truth for every setting key and its default. Anything added here is merged
 -- into an existing save on load, so upgrading a character never leaves a key nil.
+-- Pins are NOT here: docs/DESIGN.md decided pins are play-session-only (sessions themselves are
+-- never persisted), so pin state lives directly on the in-memory Session object
+-- (Sessions.TogglePin, in Sessions.lua) and never touches _G.settings at all.
 DEFAULTS = {
-	liveTab       = 1,   -- 1 Done / 2 Taken / 3 Heal out / 4 Heal in (docs/DESIGN.md "State")
-	deathAutoHide = 15,  -- seconds, 5-30
-	windows       = {},  -- [windowKey] = { left, top } -- persisted window positions
-	pinned        = {},  -- [sessionKey] = true -- for-the-play-session pin flags
+	liveTab           = 1,     -- 1 Done / 2 Taken / 3 Heal out / 4 Heal in (docs/DESIGN.md "State")
+	deathAutoHide     = 15,    -- seconds, 5-30
+	liveMeterEnabled  = true,  -- Phase 6 options panel
+	deathCauseEnabled = true,  -- Phase 6 options panel
+	windows           = {},    -- [windowKey] = { left, top, width?, height? } -- persisted window geometry
 }
 
 -- Every colour setting must be listed here. Turbine.UI.Color objects do not survive
@@ -52,11 +56,16 @@ function Settings.Load()
 		_G.settings = {}
 	end
 
-	-- Read unknown keys defensively: merge in anything the save predates.
+	-- Read unknown keys defensively: merge in anything the save predates. Table-valued defaults
+	-- (currently just `windows`) get a *fresh* empty table, never DEFAULTS' own table object --
+	-- aliasing it would mean every mutation of _G.settings.windows (every drag, every resize)
+	-- silently corrupts DEFAULTS.windows too, which Options.ResetToDefaults() then reads.
 	for key, value in pairs(DEFAULTS) do
 		if _G.settings[key] == nil then
 			if IsColorKey(key) then
 				_G.settings[key] = { R = value["R"], G = value["G"], B = value["B"] }
+			elseif type(value) == "table" then
+				_G.settings[key] = {}
 			else
 				_G.settings[key] = value
 			end
@@ -64,6 +73,21 @@ function Settings.Load()
 	end
 
 	Settings.FixColors()
+end
+
+-- Resets every setting to DEFAULTS (see the table-copy note above -- table-valued defaults get
+-- a fresh table, not DEFAULTS' own). Used by /reck reset.
+function Settings.ResetToDefaults()
+	_G.settings = {}
+	for key, value in pairs(DEFAULTS) do
+		if type(value) == "table" then
+			_G.settings[key] = {}
+		else
+			_G.settings[key] = value
+		end
+	end
+	Settings.FixColors()
+	Settings.Save()
 end
 
 function Settings.Save()

@@ -7,10 +7,12 @@ the local player only -- nothing is read off targets or the group.
 
 ## Status
 
-Phases 0-5 of `docs/IMPLEMENTATION_PLAN.md`: the full data pipeline and all three windows
-(live meter, death cause, post-combat analysis) are built. Phase 6 (options panel, `/reck`
-subcommands beyond `dump`, polish) is not started. None of the UI has been loaded in-game yet --
-see `CLAUDE.md`'s "Analysis window: what's genuinely unverified" before trusting it blind.
+All six phases of `docs/IMPLEMENTATION_PLAN.md` are built: the full data pipeline, all three
+windows (live meter, death cause, post-combat analysis), and the options panel / `/reck`
+commands. **None of it has been loaded in-game yet.** Phases 1-2 were checked offline against
+real combat logs; everything from Phase 2 on (all the `Turbine.UI` code) is syntax-checked only.
+See `CLAUDE.md`'s "Build status" and "Analysis window: what's genuinely unverified" before
+trusting any of it -- load it in-game and work through each phase's "Done when" line next.
 
 ## Design source
 

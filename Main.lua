@@ -60,6 +60,12 @@ liveMeter = UI.LiveMeter()
 deathCause = UI.DeathCause()
 analysis = UI.Analysis()
 
+optionsPanel = UI.Options()
+
+plugin.GetOptionsPanel = function(self)
+	return optionsPanel
+end
+
 ---------------------------------------------------------------------
 --== Shell command ===--
 ---------------------------------------------------------------------
@@ -106,16 +112,98 @@ local function DumpSession(s)
 	DumpCategory("Healing taken", s.agg.healIn)
 end
 
+-- "live"/"death" don't accept a forced show: both are driven entirely by combat events
+-- (Sessions.current, Sessions.OnSelfDefeat) and would just re-hide themselves on the next
+-- throttled Update() if shown with no active data. show/hide for those two only flips the
+-- enable flag (same effect as the options panel checkboxes) -- "analysis" is the one window
+-- that's genuinely opened/closed by hand.
+local function UnknownWindow(name)
+	Turbine.Shell.WriteLine("Reckoning: unknown window '" .. name .. "'. Use live | death | analysis.")
+end
+
+local function ShowWindow(name)
+	if name == "" or name == "analysis" then
+		analysis:SetVisible(true)
+		analysis:Activate()
+	elseif name == "live" then
+		_G.settings.liveMeterEnabled = true
+		Settings.Save()
+		Turbine.Shell.WriteLine("Reckoning: live meter enabled.")
+	elseif name == "death" then
+		_G.settings.deathCauseEnabled = true
+		Settings.Save()
+		Turbine.Shell.WriteLine("Reckoning: death cause window enabled.")
+	else
+		UnknownWindow(name)
+	end
+end
+
+local function HideWindow(name)
+	if name == "" or name == "analysis" then
+		analysis:SetVisible(false)
+	elseif name == "live" then
+		_G.settings.liveMeterEnabled = false
+		liveMeter:SetVisible(false)
+		Settings.Save()
+	elseif name == "death" then
+		_G.settings.deathCauseEnabled = false
+		deathCause:SetVisible(false)
+		Settings.Save()
+	else
+		UnknownWindow(name)
+	end
+end
+
+-- Recovery command: resets one window to (200, 200) and shows it, for when it's dragged
+-- off-screen (a resolution change, an accidental drag past the edge) and its header is no
+-- longer reachable to drag back.
+local function MoveWindow(name)
+	local window = (name == "live" and liveMeter) or (name == "death" and deathCause) or (name == "analysis" and analysis) or nil
+	if window == nil then
+		UnknownWindow(name)
+		return
+	end
+
+	window:SetPosition(200, 200)
+	_G.settings.windows[window.windowKey] = { left = 200, top = 200 }
+	Settings.Save()
+	window:SetVisible(true)
+end
+
+local function ResetAll()
+	Settings.ResetToDefaults()
+
+	liveMeter:SetPosition(200, 200)
+	deathCause:SetPosition(200, 200)
+	analysis:Resize(1080, 600)
+	analysis:SetPosition(200, 200)
+	analysis:Layout()
+
+	optionsPanel:Refresh()
+
+	Turbine.Shell.WriteLine("Reckoning: settings reset to defaults.")
+end
+
 command = Turbine.ShellCommand()
 
 function command:Execute(_, str)
-	local cmd = str and string.match(string.lower(str), "^%s*(%S*)") or ""
+	str = str or ""
+	local cmd, arg = string.match(string.lower(str), "^%s*(%S*)%s*(%S*)")
+	cmd = cmd or ""
+	arg = arg or ""
 
 	if cmd == "" or cmd == "help" then
-		Turbine.Shell.WriteLine("Reckoning v" .. Reckoning.Version .. ": /reck help | dump")
-		-- Phase 5/6 add: show, hide, move, reset.
+		Turbine.Shell.WriteLine("Reckoning v" .. Reckoning.Version .. ": /reck help | dump | show [live|death|analysis] | hide [live|death|analysis] | move <live|death|analysis> | reset")
 	elseif cmd == "dump" then
 		DumpSession(Sessions.current or Sessions.list[1])
+	elseif cmd == "show" then
+		ShowWindow(arg)
+	elseif cmd == "hide" then
+		HideWindow(arg)
+	elseif cmd == "move" then
+		MoveWindow(arg)
+	elseif cmd == "reset" then
+		ResetAll()
 	else
 		Turbine.Shell.WriteLine("Reckoning: unknown command '" .. cmd .. "'. Try /reck help.")
 	end

@@ -284,6 +284,11 @@ function LiveMeter:ActiveSession()
 end
 
 function LiveMeter:Refresh()
+	if not _G.settings.liveMeterEnabled then
+		self:SetVisible(false)
+		return
+	end
+
 	if Sessions.current ~= nil then
 		self.holdUntil = nil
 	end

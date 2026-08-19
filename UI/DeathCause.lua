@@ -160,6 +160,10 @@ end
 ---------------------------------------------------------------------------------------------------
 
 function DeathCause:Show(session)
+	if not _G.settings.deathCauseEnabled then
+		return
+	end
+
 	self.session = session
 	self.deathTime = session.endTime
 
