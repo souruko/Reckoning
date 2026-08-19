@@ -33,7 +33,15 @@ function Turbine.Chat.Received(sender, args)
 		return
 	end
 
-	if args.ChatType ~= Turbine.ChatType.PlayerCombat and args.ChatType ~= Turbine.ChatType.EnemyCombat then
+	-- Defeat/incapacitate/succumb lines ("The X incapacitated you.", "You succumb to your
+	-- wounds.") arrive on their own Turbine.ChatType.Death channel, not PlayerCombat/EnemyCombat
+	-- -- confirmed against a real captured log (a defeat never reached this handler at all,
+	-- despite regular damage/heal lines working) and against CombatAnalysis (a working combat
+	-- meter), whose own live parser gate is this exact same three-way check.
+	if args.ChatType ~= Turbine.ChatType.PlayerCombat
+		and args.ChatType ~= Turbine.ChatType.EnemyCombat
+		and args.ChatType ~= Turbine.ChatType.Death
+	then
 		return
 	end
 

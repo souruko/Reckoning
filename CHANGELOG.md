@@ -30,3 +30,9 @@ state if nothing's been fought yet, dimming when out of combat rather than disap
 
 Added `/reck testdeath` -- pops the death window with synthesized data, for checking the window
 itself works independently of whether a real death has actually been detected.
+
+Fixed: the death window still never appeared on a real death, even though `/reck testdeath`
+proved the window itself worked. Defeat/incapacitate lines ("The X incapacitated you.", "You
+succumb to your wounds.") arrive on their own chat channel, separate from the one regular
+damage/healing lines use -- they were being filtered out before ever reaching the parser. Found
+by testing the real parser and dispatch code against a combat log the user captured and shared.

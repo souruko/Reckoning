@@ -164,6 +164,28 @@ opposed to pure game logic, was invisible to it. If a third bug like this shows 
 first: any place code reads a bare field off something Turbine handed in, rather than a value
 this codebase constructed itself.
 
+**The predicted third bug did show up, and it was exactly that shape.** With both bugs above
+fixed, regular damage/heal tracking worked correctly in-game (confirmed with real accumulated
+numbers), but the death window never appeared -- even though `/reck testdeath` (which calls
+`DeathCause:Show()` directly, bypassing detection) proved the window itself was fine. The user
+captured a real combat log to a file and shared it; `Trigger.ParseCombatChat("The Utûgi Destroyer
+incapacitated you.")` parsed correctly and `Sessions.OnSelfDefeat` fired correctly when tested
+directly -- so the gap had to be upstream, in what never reached the parser at all.
+`Events.lua`'s channel filter only accepted `Turbine.ChatType.PlayerCombat` /
+`.EnemyCombat`. Defeat/incapacitate/succumb lines arrive on a **third, separate**
+`Turbine.ChatType.Death` channel -- confirmed against `CombatAnalysis` (a real working combat
+meter), whose own live parser gate (`Parser/Parser.lua`) is the identical three-way
+`PlayerCombat`/`EnemyCombat`/`Death` check, feeding the *same* parser pipeline as damage/heal
+lines, not a separate death-specific listener. `Gibberish3` itself never actually wires this up
+(`Death` is referenced there only as a display-label string) -- so this one had no working
+precedent in the plugin that the parser was ported from, only in a sibling plugin. Fixed by
+adding `Turbine.ChatType.Death` as a third accepted channel in `Events.lua`'s gate, verified with
+a probe script (`Turbine.Chat.Received` called directly, not hand-reimplemented) fed the real
+captured line under both the old and new channel value. **Lesson reinforced**: a chat message's
+`ChatType` cannot be assumed from which visible chat tab it showed up in -- LOTRO lets users
+combine multiple channel types into one tab, so "it appeared in the Enemy tab" does not mean
+`ChatType.EnemyCombat`.
+
 ## Load order
 
 `Reckoning.plugin` names `Reckoning.Main` as the package entry point. `Main.lua` imports drive
@@ -344,3 +366,12 @@ recent session's totals to chat -- the in-game way to re-check the event pipelin
 `reference/Combat_20260819_1.txt` / `reference/Enemy_20260819_1.txt` (read the two logs by eye
 and compare). See "Build status" above for how Phase 1 was checked offline before any in-game
 load existed to run `/reck dump` against.
+
+`reference/Enemy_20260819_2.txt` is a real user-captured log added specifically because it
+contains the local player being defeated and reviving four separate times ("The X incapacitated
+you." / "You succumb to your wounds.", lines 42/46, 68/74, 96/101, 125) -- the exact scenario
+that caught the `Turbine.ChatType.Death` channel bug (see "Build status"). If `Events.lua`'s
+channel filter ever regresses, feeding this file's defeat lines through
+`Trigger.ParseCombatChat` plus the dispatch logic (with `ChatType = Turbine.ChatType.Death`, not
+`EnemyCombat`) is the fastest way to re-catch it offline instead of waiting for another real
+death.
