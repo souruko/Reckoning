@@ -90,6 +90,23 @@ DamageType.OrcCraft         = 11
 DamageType.FellWrought      = 12
 DamageType.Unknown          = 13
 
+-- Display names, for the death window's "skill · type" column and any future type-split UI.
+DamageType.Names = {
+	[DamageType.Common]           = "Common",
+	[DamageType.Fire]              = "Fire",
+	[DamageType.Lightning]         = "Lightning",
+	[DamageType.Frost]             = "Frost",
+	[DamageType.Acid]              = "Acid",
+	[DamageType.Shadow]            = "Shadow",
+	[DamageType.Light]             = "Light",
+	[DamageType.Beleriand]         = "Beleriand",
+	[DamageType.Westernesse]       = "Westernesse",
+	[DamageType.AncientDwarfMake]  = "Ancient Dwarf-make",
+	[DamageType.OrcCraft]          = "Orc-craft",
+	[DamageType.FellWrought]       = "Fell-wrought",
+	[DamageType.Unknown]           = "Unknown",
+}
+
 ---------------------------------------------------------------------------------------------------
 -- Fonts -- only the faces/sizes docs/DESIGN.md "Type" actually uses. The client has no
 -- Verdana 11 or 13 -- do not interpolate.

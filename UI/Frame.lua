@@ -8,8 +8,10 @@
 
 Frame = class(Turbine.UI.Window)
 
--- params: { title, key, width, height, headerHeight, fillHex, borderHex, closable }
+-- params: { title, key, width, height, headerHeight, fillHex, borderHex, headerRuleHex, closable }
 -- `key` indexes _G.settings.windows for the persisted position. `closable` defaults to true.
+-- `headerRuleHex` defaults to `borderHex` -- only the death window (docs/DESIGN.md) uses a
+-- header rule distinct from its outer border.
 function Frame:Constructor(params)
 	Turbine.UI.Window.Constructor(self)
 
@@ -38,8 +40,10 @@ function Frame:Constructor(params)
 	self.background:SetMouseVisible(false)
 	self.background:SetZOrder(0)
 
+	local headerRule = Theme.Color(params.headerRuleHex or params.borderHex or Theme.Hex.Border)
+
 	self:BuildBorder(width, height, border)
-	self:BuildHeader(params.title, width, border)
+	self:BuildHeader(params.title, width, headerRule)
 
 	-- Content area below the header. Subclasses add their own children under this, not
 	-- directly under self, so header/border z-ordering never has to be revisited.

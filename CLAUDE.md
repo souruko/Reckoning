@@ -37,7 +37,7 @@ developers.
 
 ## Build status
 
-Phases 0-3 done, per `docs/IMPLEMENTATION_PLAN.md`. Phases 4-6 (death cause, analysis window,
+Phases 0-4 done, per `docs/IMPLEMENTATION_PLAN.md`. Phases 5-6 (analysis window,
 options/polish) are not started. Follow the implementation plan in order -- each phase is
 written to end somewhere loadable and testable in-game.
 
@@ -113,8 +113,10 @@ and can freely reference `Frame`/`Bar`/`Row` bare since they're siblings in the 
 
 | `UI/LiveMeter.lua` | `LiveMeter` (extends `Frame`, `key = "liveMeter"`, `closable = false`) -- window 1. Bespoke header (accent tick + "IN COMBAT"/"LAST FIGHT" + elapsed clock), 4 tabs, 4-line body. One `local` provider function per tab (`DoneLine`/`TakenLine`/`HealOutLine`/`HealInLine`) normalizes very different per-tab content (see `docs/DESIGN.md`'s table) into one `{headline,second,stat,max}` shape so the body-refresh code stays generic. Refreshed on a throttled `Update()` (~5Hz); shows/hides itself based on `Sessions.current` plus an 8s post-combat hold (`Sessions.OnClosed`). |
 
-Not yet created (see `docs/IMPLEMENTATION_PLAN.md` for what each owns): `UI/DeathCause.lua`
-(Phase 4), `UI/Analysis.lua` (Phase 5, or an `UI/Analysis/` subtree given its size).
+| `UI/DeathCause.lua` | `DeathCause` (extends `Frame`, `key = "deathCause"`, death-specific fill/border/header-rule colours) -- window 2. Fires from `Sessions.OnSelfDefeat`. "Last hit by" resolved by scanning `session.lastTaken` backward for the last `kind == "damage"` entry (temp-morale-loss rows don't carry an attacker). 5 pooled `Row` instances (never rebuilt), tinted per row: the killing-blow row's amount goes `DamageFatal`, temp-morale rows go `MutedText` end to end, everything else scales `DamageTaken`/`DamageSevere` off post-hit `moralePct`. Countdown is a `Bar` depleting via `Update()`, `_G.settings.deathAutoHide` seconds (default 15). |
+
+Not yet created (see `docs/IMPLEMENTATION_PLAN.md` for what each owns): `UI/Analysis.lua`
+(Phase 5, or an `UI/Analysis/` subtree given its size).
 
 ### Key globals
 
