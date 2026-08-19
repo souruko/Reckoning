@@ -49,6 +49,14 @@ import "Reckoning.Sessions"
 import "Reckoning.Events"
 
 ---------------------------------------------------------------------
+--== UI ===--
+---------------------------------------------------------------------
+-- Frame/Bar/Row (chrome primitives) first, then each window module as it's built. Reads
+-- Theme/Font (Constants.lua) and _G.settings.windows (Settings.lua), both already loaded above.
+
+import "Reckoning.UI"
+
+---------------------------------------------------------------------
 --== Shell command ===--
 ---------------------------------------------------------------------
 

@@ -37,9 +37,15 @@ developers.
 
 ## Build status
 
-Phases 0-1 done, per `docs/IMPLEMENTATION_PLAN.md`. Phases 2-6 (window chrome, live meter,
-death cause, analysis window, options/polish) are not started. Follow the implementation plan
-in order -- each phase is written to end somewhere loadable and testable in-game.
+Phases 0-2 done, per `docs/IMPLEMENTATION_PLAN.md`. Phases 3-6 (live meter, death cause,
+analysis window, options/polish) are not started. Follow the implementation plan in order --
+each phase is written to end somewhere loadable and testable in-game.
+
+Phase 2 (window chrome) has **not** been exercised even offline -- it is pure `Turbine.UI`
+(`Turbine.UI.Window`/`Control`/`Label`), which the offline harness described below cannot stub
+meaningfully (no real layout, sizing, or mouse-event system to fake). It is syntax-checked only
+(`luac -p`). Confirming it actually draws, drags, and persists its position needs an in-game
+load.
 
 Phase 1 (event pipeline) was verified **offline**, not in-game: `Utils/Class.lua`,
 `Utils/Type.lua`, `Constants.lua`, `Parse/en.lua`, `Session.lua` and `Sessions.lua` were
@@ -84,8 +90,25 @@ inheritance + mixins). Treat them as vendored, not Reckoning-specific.
 | `Events.lua` | Wraps `Turbine.Chat.Received` (chaining to whatever was already registered), strips `<rgb=#......>` tags and trims before calling `Trigger.ParseCombatChat`, dispatches into `Sessions.*`. Also hosts the heartbeat (`Events.heartbeat`, a bare `Turbine.UI.Window` with `SetWantsUpdates(true)`) that drives `Sessions.Tick()`, since session-close-on-silence has to run even when chat is quiet. `Events.Shutdown()` restores the previous `Turbine.Chat.Received` and stops the heartbeat -- called from `plugin.Unload`. |
 | `Utils/Class.lua`, `Utils/Type.lua` | Vendored OOP shim, see above. |
 
-Not yet created (see `docs/IMPLEMENTATION_PLAN.md` for what each owns): `UI/Frame.lua` /
-`UI/Bar.lua` / `UI/Row.lua` (Phase 2), and the three window modules (Phases 3-5).
+| `UI/Frame.lua` | `Frame` (extends `Turbine.UI.Window`) -- shared chrome every window subclasses: background + 1px border Controls, header with `TrajanPro13` title + close glyph, manual drag on the header, position persisted to `_G.settings.windows[key]`. |
+| `UI/Bar.lua` | `Bar` -- 1px-border track Control with a fill child; `SetPercent(pct)` sets width directly (no tweening anywhere, per `docs/DESIGN.md`). |
+| `UI/Row.lua` | `Row` -- a fixed-column-offset row of Labels for tables; pooled and reused across refreshes, never rebuilt per redraw. |
+
+`UI/__init__.lua` imports Frame/Bar/Row in that order; `Main.lua` does `import "Reckoning.UI"`
+once. **Cross-directory class visibility**: a bare `X = class(...)` assigned inside `UI/*.lua`
+is only visible to *other files in `UI/`* (same-directory sibling access, confirmed against
+`VitalSelf/UI/Vital.lua`, which is referenced from root-level `Main.lua` as `UI.Vital()`, not
+bare `Vital()`). Root-level files (`Main.lua`, `Constants.lua`, `Session.lua`, `Sessions.lua`,
+`Settings.lua`, `Events.lua` -- anything directly in `Reckoning/`) behave differently: a bare
+global assigned there (`Trigger`, `L`, `EventCode`, `Theme`, `Font`, `Session`, `Sessions`, ...)
+*is* visible everywhere, because the root package's own environment is `_G` itself. So: Phase
+3-5 window classes (`LiveMeter`, `DeathCause`, `Analysis`) go in `UI/`, get instantiated from
+`Main.lua` via `UI.LiveMeter()` etc. (matching `vital = UI.Vital()` in `VitalSelf/Main.lua`),
+and can freely reference `Frame`/`Bar`/`Row` bare since they're siblings in the same directory.
+
+Not yet created (see `docs/IMPLEMENTATION_PLAN.md` for what each owns): the three window
+modules themselves (Phases 3-5) -- `UI/LiveMeter.lua`, `UI/DeathCause.lua`, `UI/Analysis.lua`
+(or similar, an `UI/Analysis/` subtree given its size).
 
 ### Key globals
 
