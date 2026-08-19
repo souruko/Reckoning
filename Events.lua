@@ -25,7 +25,15 @@ function Turbine.Chat.Received(sender, args)
 		previousChatReceived(sender, args)
 	end
 
-	if args.Type ~= Turbine.ChatType.PlayerCombat and args.Type ~= Turbine.ChatType.EnemyCombat then
+	-- The field is `args.ChatType`, not `args.Type` -- confirmed against Gibberish3
+	-- (TRIGGER/CHAT/Functions.lua), CombatAnalysis (Parser/Parser.lua), and LootLogs
+	-- (ChatParsing.lua), all three of which also guard a nil Message before using it (some
+	-- chat events carry no text at all).
+	if args.Message == nil then
+		return
+	end
+
+	if args.ChatType ~= Turbine.ChatType.PlayerCombat and args.ChatType ~= Turbine.ChatType.EnemyCombat then
 		return
 	end
 

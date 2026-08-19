@@ -10,3 +10,7 @@ load and shake out.
 Fixed: the analysis window's skill table failed to load (`attempt to call field 'ScrollView'`)
 -- `Turbine.UI.ScrollView` isn't a real class. Switched to the real `Turbine.UI.ListBox` +
 `Turbine.UI.Lotro.ScrollBar` pattern.
+
+Fixed: no combat was ever recorded (`/reck dump` always said "no session data yet"). The chat
+listener read `args.Type` off the incoming chat event; the real field is `args.ChatType`, so
+every line was silently discarded before reaching the parser.

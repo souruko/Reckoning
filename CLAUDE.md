@@ -105,6 +105,20 @@ and was not committed. **None of this exercised real Turbine.UI, `Turbine.Chat.R
 registration order against other loaded plugins, or `Turbine.PluginData` -- those still need an
 in-game load to confirm.**
 
+**A real gap this left, found by an actual in-game load**: the harness called
+`Trigger.ParseCombatChat` and the `Sessions.*` dispatch directly, hand-reimplementing the
+mine/onMe branch inline -- it never went through `Turbine.Chat.Received` itself, so it could not
+have caught a wrong field name on the real chat event object. `Events.lua` read `args.Type`,
+which doesn't exist (the real field is `args.ChatType` -- confirmed against Gibberish3, LootLogs,
+and CombatAnalysis, all three of which use it identically). `nil ~= Turbine.ChatType.X` is always
+true, so every chat line was silently discarded before ever reaching the parser: plugin loaded
+fine, UI drew fine, `/reck dump` after a real fight reported "no session data yet". Fixed, plus
+added the `args.Message == nil` guard those same three plugins all have before touching the text.
+**Lesson for next time**: anywhere this codebase reads a field off a Turbine-supplied event
+object (`args.*`) without a same-directory precedent already confirmed working (mouse events were
+fine -- `args.X`/`args.Y`/`args.Button` are a direct copy from `VitalSelf/UI/Vital.lua`'s already-
+working drag code), that field name is a guess until grepped against real plugin source.
+
 ## Load order
 
 `Reckoning.plugin` names `Reckoning.Main` as the package entry point. `Main.lua` imports drive
