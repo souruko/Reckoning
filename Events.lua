@@ -63,10 +63,19 @@ local function Dispatch(args)
 		Sessions.AddDone(skill, dmgType, target, amount, avoidType, critType, t)
 	elseif code == EventCode.Damage and onMe then
 		Sessions.AddTaken(skill, dmgType, initiator, amount, avoidType, critType, t)
-	elseif code == EventCode.Heal and mine then
-		Sessions.AddHealOut(skill, target, amount, critType, t)
-	elseif code == EventCode.Heal and onMe then
-		Sessions.AddHealIn(skill, initiator, amount, critType, t)
+	elseif code == EventCode.Heal then
+		-- Not an elseif between mine/onMe like Damage above: a self-heal (e.g. "Bracing Guard")
+		-- has no "with <skill>" clause, so the parser swaps names and initiator == target ==
+		-- LocalPlayer.name, making both true at once. DESIGN.md is explicit that this should
+		-- count on both sides -- self-sustain toward Healing Done *and* incoming heal toward
+		-- Healing Taken (and the damage-taken graph's "healing in" series) -- not just whichever
+		-- branch happened to be checked first.
+		if mine then
+			Sessions.AddHealOut(skill, target, amount, critType, t)
+		end
+		if onMe then
+			Sessions.AddHealIn(skill, initiator, amount, critType, t)
+		end
 	elseif code == EventCode.TempMoraleLoss then
 		Sessions.AddTempMoraleLoss(amount, t)
 	elseif code == EventCode.Defeat then

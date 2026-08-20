@@ -54,7 +54,10 @@ local PANEL_WIDTH = 233
 local BUFF_HEADER_HEIGHT = 26
 local BUFF_TABLE_HEADER_HEIGHT = 20
 local BUFF_ROW_HEIGHT = 22
-local BUFF_POOL = 12
+local BUFF_POOL = 40 -- generous, matching tableRowPool's 30: the section already scrolls
+                      -- (BuildBuffSection's ListBox+ScrollBar) and Layout() already clamps
+                      -- bottomHeight to available window space, so this only bounds how many
+                      -- distinct buffs can ever be listed, not how many are visible at once.
 local MAX_CHARTED = 3
 
 -- Tab order is damage pair then healing pair, so the two views a reader actually compares sit
@@ -137,6 +140,20 @@ local AVOID_NAMES = {
 	[AvoidType.Deflected] = "Deflected",
 }
 
+-- Search box geometry, shared by the skill table and the buff table.
+local SEARCH_HEIGHT = 20
+local SEARCH_WIDTH = 190
+
+-- Plain substring match, case-insensitive -- `string.find(..., true)` (plain mode) so a name
+-- with pattern-magic characters in it (unlikely in a skill/buff name, but free to guard) can't
+-- break the search.
+local function MatchesFilter(text, query)
+	if query == nil or query == "" then
+		return true
+	end
+	return string.find(string.lower(text or ""), string.lower(query), 1, true) ~= nil
+end
+
 ---------------------------------------------------------------------------------------------------
 -- Construction
 ---------------------------------------------------------------------------------------------------
@@ -150,6 +167,12 @@ function Analysis:Constructor()
 	self.viewTab = "done"
 	self.filter = { done = nil, taken = nil, healOut = nil, healIn = nil }
 	self.selectedSession = nil
+
+	-- Search text for the skill table and the buff table, independent of each other and of the
+	-- target/source picker filter above -- not persisted, same as viewTab/filter (ephemeral UI
+	-- state, resets to blank when the window is next built).
+	self.tableFilterText = ""
+	self.buffFilterText = ""
 
 	self.bucketCount = GraphBucketCount()
 	self.rangeFrom = 1
@@ -792,6 +815,76 @@ function Analysis:BuildGraphArea()
 end
 
 ---------------------------------------------------------------------------------------------------
+-- Search boxes -- shared shape for the skill table and the buff table below; the pattern (border
+-- + inset + TextBox + placeholder Label + clear glyph) matches LootLogs' own sidebar search
+-- (Turbine.UI.TextBox, TextChanged/FocusGained/FocusLost, SetText not firing TextChanged so a
+-- clear button has to update the filter itself) -- the only confirmed-working TextBox precedent
+-- anywhere in this environment's installed plugins.
+---------------------------------------------------------------------------------------------------
+
+function Analysis:BuildSearchBox(parent, placeholderText)
+	local control = Turbine.UI.Control()
+	control:SetParent(parent)
+	control:SetPosition(0, 0)
+	control:SetSize(SEARCH_WIDTH, SEARCH_HEIGHT)
+	control:SetBackColor(Theme.Color(Theme.Hex.Border))
+
+	local inset = Turbine.UI.Control()
+	inset:SetParent(control)
+	inset:SetPosition(1, 1)
+	inset:SetSize(SEARCH_WIDTH - 2, SEARCH_HEIGHT - 2)
+	inset:SetBackColor(Theme.Color(Theme.Hex.WindowFill))
+	inset:SetMouseVisible(false)
+
+	local fieldWidth = SEARCH_WIDTH - 2 - 6 - 18
+
+	local textbox = Turbine.UI.TextBox()
+	textbox:SetParent(inset)
+	textbox:SetPosition(6, 0)
+	textbox:SetSize(fieldWidth, SEARCH_HEIGHT - 2)
+	textbox:SetMultiline(false)
+	textbox:SetFont(Font.Verdana10)
+	textbox:SetBackColor(Theme.Color(Theme.Hex.WindowFill))
+	textbox:SetForeColor(Theme.Color(Theme.Hex.Text))
+	textbox:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
+	textbox:SetText("")
+
+	-- A real placeholder Label, not seeded prompt text left in the field -- matching LootLogs'
+	-- own comment on why (a seeded value would have to be filtered back out of every search).
+	local placeholder = Turbine.UI.Label()
+	placeholder:SetParent(inset)
+	placeholder:SetPosition(8, 0)
+	placeholder:SetSize(fieldWidth, SEARCH_HEIGHT - 2)
+	placeholder:SetFont(Font.Verdana10)
+	placeholder:SetForeColor(Theme.Color(Theme.Hex.DimText))
+	placeholder:SetText(placeholderText)
+	placeholder:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
+	placeholder:SetMouseVisible(false)
+
+	local clear = Turbine.UI.Label()
+	clear:SetParent(control)
+	clear:SetPosition(SEARCH_WIDTH - 2 - 16, 1)
+	clear:SetSize(16, SEARCH_HEIGHT - 2)
+	clear:SetFont(Font.Verdana10)
+	clear:SetText("x")
+	clear:SetForeColor(Theme.Color(Theme.Hex.DimText))
+	clear:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleCenter)
+	clear:SetVisible(false)
+	clear.MouseEnter = function() clear:SetForeColor(Theme.Color(Theme.Hex.Accent200)) end
+	clear.MouseLeave = function() clear:SetForeColor(Theme.Color(Theme.Hex.DimText)) end
+
+	return { control = control, textbox = textbox, placeholder = placeholder, clear = clear, focused = false }
+end
+
+-- Placeholder shows only while empty and unfocused; the clear glyph only while there's something
+-- to clear. Called after every text/focus change on either search box.
+function Analysis:RefreshSearchBox(widgets)
+	local filtering = widgets.textbox:GetText() ~= ""
+	widgets.placeholder:SetVisible(not filtering and not widgets.focused)
+	widgets.clear:SetVisible(filtering)
+end
+
+---------------------------------------------------------------------------------------------------
 -- Skill table
 ---------------------------------------------------------------------------------------------------
 
@@ -800,9 +893,31 @@ function Analysis:BuildTable()
 	self.tableHolder:SetParent(self.contentArea)
 	self.tableHolder:SetMouseVisible(false)
 
+	self.tableSearch = self:BuildSearchBox(self.tableHolder, "Search skills...")
+	local window = self
+	self.tableSearch.textbox.TextChanged = function()
+		window.tableFilterText = window.tableSearch.textbox:GetText()
+		window:RefreshSearchBox(window.tableSearch)
+		window:RefreshContent()
+	end
+	self.tableSearch.textbox.FocusGained = function()
+		window.tableSearch.focused = true
+		window:RefreshSearchBox(window.tableSearch)
+	end
+	self.tableSearch.textbox.FocusLost = function()
+		window.tableSearch.focused = false
+		window:RefreshSearchBox(window.tableSearch)
+	end
+	self.tableSearch.clear.MouseClick = function()
+		window.tableSearch.textbox:SetText("")
+		window.tableFilterText = ""
+		window:RefreshSearchBox(window.tableSearch)
+		window:RefreshContent()
+	end
+
 	self.tableHeaderRow = Turbine.UI.Control()
 	self.tableHeaderRow:SetParent(self.tableHolder)
-	self.tableHeaderRow:SetPosition(0, 0)
+	self.tableHeaderRow:SetPosition(0, SEARCH_HEIGHT)
 	self.tableHeaderRow:SetSize(1, ROW_HEIGHT)
 	self.tableHeaderRow:SetBackColor(Theme.Color(Theme.Hex.HeaderFill))
 	self.tableHeaderRow:SetMouseVisible(false)
@@ -824,7 +939,7 @@ function Analysis:BuildTable()
 	-- wired to it. Items are Controls added via AddItem, not manually positioned/parented.
 	self.scrollView = Turbine.UI.ListBox()
 	self.scrollView:SetParent(self.tableHolder)
-	self.scrollView:SetPosition(0, ROW_HEIGHT)
+	self.scrollView:SetPosition(0, SEARCH_HEIGHT + ROW_HEIGHT)
 	self.scrollView:SetBackColor(Theme.Color(Theme.Hex.WindowFill))
 
 	self.tableScrollBar = Turbine.UI.Lotro.ScrollBar()
@@ -1023,9 +1138,35 @@ function Analysis:RowValues(view, row)
 	}
 end
 
+-- Matches the search text against the skill name plus whichever counterpart column the active
+-- view shows (type for damage views, who for heal views), so "regen" finds a heal named that and
+-- "orc" finds anything sourced from an orc, not only a skill literally named "orc".
+function Analysis:FilterTableRows(list)
+	local query = self.tableFilterText
+	if query == nil or query == "" then
+		return list
+	end
+
+	local filtered = {}
+	for i = 1, table.getn(list) do
+		local row = list[i]
+		local haystack = row.skill or ""
+		if row.who ~= nil then
+			haystack = haystack .. " " .. row.who
+		elseif row.type ~= nil then
+			haystack = haystack .. " " .. (DamageType.Names[row.type] or "")
+		end
+		if MatchesFilter(haystack, query) then
+			table.insert(filtered, row)
+		end
+	end
+	return filtered
+end
+
 function Analysis:RefreshTable(rows)
 	local view = self.viewTab
 	local list = self:TableRows(rows, view)
+	list = self:FilterTableRows(list)
 
 	local maxTotal = 0
 	for i = 1, table.getn(list) do
@@ -1121,6 +1262,28 @@ function Analysis:BuildBuffSection()
 	end
 
 	self.buffHeader = { control = header, caret = caret, title = title, summary = summary }
+
+	self.buffSearch = self:BuildSearchBox(self.buffHolder, "Search buffs...")
+	self.buffSearch.control:SetPosition(0, BUFF_HEADER_HEIGHT + 1)
+	self.buffSearch.textbox.TextChanged = function()
+		window.buffFilterText = window.buffSearch.textbox:GetText()
+		window:RefreshSearchBox(window.buffSearch)
+		window:RefreshContent()
+	end
+	self.buffSearch.textbox.FocusGained = function()
+		window.buffSearch.focused = true
+		window:RefreshSearchBox(window.buffSearch)
+	end
+	self.buffSearch.textbox.FocusLost = function()
+		window.buffSearch.focused = false
+		window:RefreshSearchBox(window.buffSearch)
+	end
+	self.buffSearch.clear.MouseClick = function()
+		window.buffSearch.textbox:SetText("")
+		window.buffFilterText = ""
+		window:RefreshSearchBox(window.buffSearch)
+		window:RefreshContent()
+	end
 
 	self.buffTableHeader = Turbine.UI.Control()
 	self.buffTableHeader:SetParent(self.buffHolder)
@@ -1345,9 +1508,29 @@ function Analysis:ToggleCharted(name)
 	self:RefreshContent()
 end
 
-function Analysis:RefreshBuffSection(stats, fromSec, toSec)
+-- Matches the search text against the buff's own name -- the only column that's ever a name.
+function Analysis:FilterBuffStats(stats)
+	local query = self.buffFilterText
+	if query == nil or query == "" then
+		return stats
+	end
+
+	local filtered = {}
+	for i = 1, table.getn(stats) do
+		if MatchesFilter(stats[i].name, query) then
+			table.insert(filtered, stats[i])
+		end
+	end
+	return filtered
+end
+
+-- `stats` is the full tracked set (drives the "N tracked" summary count); `filtered` is what the
+-- search box narrowed it to and is what's actually listed. Kept separate so typing a search
+-- doesn't make the summary lie about how many buffs the session tracks in total.
+function Analysis:RefreshBuffSection(stats, filtered, fromSec, toSec)
 	local open = self.buffsOpen
 	local tracked = table.getn(stats)
+	local shownCount = table.getn(filtered)
 
 	self.buffHeader.caret:SetText(open and "v" or ">")
 
@@ -1360,6 +1543,7 @@ function Analysis:RefreshBuffSection(stats, fromSec, toSec)
 	self.buffHeader.summary:SetText(
 		"· " .. tracked .. " tracked · " .. table.getn(self.charted) .. " charted · " .. scope)
 
+	self.buffSearch.control:SetVisible(open)
 	self.buffTableHeader:SetVisible(open)
 	self.buffScrollView:SetVisible(open)
 	self.buffScrollBar:SetVisible(open)
@@ -1369,10 +1553,10 @@ function Analysis:RefreshBuffSection(stats, fromSec, toSec)
 	-- list is rebuilt, never the Controls themselves (matching RefreshTable's own comment).
 	self.buffScrollView:ClearItems()
 
-	local shown = open and math.min(tracked, BUFF_POOL) or 0
+	local shown = open and math.min(shownCount, BUFF_POOL) or 0
 	for i = 1, shown do
 		local widgets = self.buffRows[i]
-		local row = stats[i]
+		local row = filtered[i]
 
 		widgets.name = row.name
 		widgets.container:SetBackColor(Theme.Color(Theme.Hex.WindowFill))
@@ -1683,10 +1867,13 @@ function Analysis:RefreshContent(skipRelayout)
 	local stats = Buffs.Stats(session, fromSec, toSec)
 
 	-- Re-run the layout if the variable-height blocks changed shape, then let that pass do the
-	-- drawing (it calls back in with skipRelayout set).
+	-- drawing (it calls back in with skipRelayout set). Lanes come from the UNFILTERED stats --
+	-- the buff search narrows which rows the table lists, not what's plotted on the graph, so a
+	-- charted buff the search doesn't match still keeps its lane.
 	local lanes = self:ChartedLanes(stats)
 	local laneCount = table.getn(lanes)
-	local buffRowsWanted = self.buffsOpen and math.min(table.getn(stats), BUFF_POOL) or 0
+	local buffStats = self:FilterBuffStats(stats)
+	local buffRowsWanted = self.buffsOpen and math.min(table.getn(buffStats), BUFF_POOL) or 0
 
 	if not skipRelayout and (laneCount ~= self.layoutLanes or buffRowsWanted ~= self.layoutBuffRows) then
 		self.laneCountWanted = laneCount
@@ -1713,7 +1900,7 @@ function Analysis:RefreshContent(skipRelayout)
 	end
 
 	self:RefreshTable(rows)
-	self:RefreshBuffSection(stats, fromSec, toSec)
+	self:RefreshBuffSection(stats, buffStats, fromSec, toSec)
 
 	if session == nil then
 		self:RefreshPanel(self.panelA, { title = "", items = {} }, meta.color)
@@ -1899,10 +2086,10 @@ function Analysis:Layout()
 	local buffRows = self.buffRowsWanted or 0
 	local bottomHeight = BUFF_HEADER_HEIGHT + 1
 	if self.buffsOpen then
-		bottomHeight = bottomHeight + BUFF_TABLE_HEADER_HEIGHT + buffRows * BUFF_ROW_HEIGHT
+		bottomHeight = bottomHeight + SEARCH_HEIGHT + BUFF_TABLE_HEADER_HEIGHT + buffRows * BUFF_ROW_HEIGHT
 	end
 
-	local minTable = ROW_HEIGHT * 5
+	local minTable = SEARCH_HEIGHT + ROW_HEIGHT * 5
 	local maxBottom = available - GAP - minTable
 	if bottomHeight > maxBottom then
 		bottomHeight = math.max(BUFF_HEADER_HEIGHT + 1, maxBottom)
@@ -1912,8 +2099,8 @@ function Analysis:Layout()
 	end
 
 	local tableHeight = available - GAP - bottomHeight
-	if tableHeight < ROW_HEIGHT * 2 then
-		tableHeight = ROW_HEIGHT * 2
+	if tableHeight < SEARCH_HEIGHT + ROW_HEIGHT * 2 then
+		tableHeight = SEARCH_HEIGHT + ROW_HEIGHT * 2
 	end
 
 	local listWidth = innerWidth - SCROLLBAR_WIDTH
@@ -1921,10 +2108,10 @@ function Analysis:Layout()
 
 	self.tableHolder:SetPosition(innerX, tableY)
 	self.tableHolder:SetSize(innerWidth, tableHeight)
-	self.scrollView:SetPosition(0, ROW_HEIGHT)
-	self.scrollView:SetSize(listWidth, math.max(0, tableHeight - ROW_HEIGHT))
-	self.tableScrollBar:SetPosition(listWidth, ROW_HEIGHT)
-	self.tableScrollBar:SetHeight(math.max(0, tableHeight - ROW_HEIGHT))
+	self.scrollView:SetPosition(0, SEARCH_HEIGHT + ROW_HEIGHT)
+	self.scrollView:SetSize(listWidth, math.max(0, tableHeight - SEARCH_HEIGHT - ROW_HEIGHT))
+	self.tableScrollBar:SetPosition(listWidth, SEARCH_HEIGHT + ROW_HEIGHT)
+	self.tableScrollBar:SetHeight(math.max(0, tableHeight - SEARCH_HEIGHT - ROW_HEIGHT))
 	self:RefreshTableColumns(listWidth)
 
 	local bottomY = tableY + tableHeight + GAP
@@ -1936,12 +2123,12 @@ function Analysis:Layout()
 	self.buffTopRule:SetSize(buffWidth, 1)
 	self.buffHeader.control:SetSize(buffWidth, BUFF_HEADER_HEIGHT)
 	self.buffHeader.summary:SetSize(math.max(0, buffWidth - 100), BUFF_HEADER_HEIGHT)
-	self.buffTableHeader:SetPosition(0, BUFF_HEADER_HEIGHT + 1)
+	self.buffTableHeader:SetPosition(0, BUFF_HEADER_HEIGHT + 1 + SEARCH_HEIGHT)
 
 	local buffListWidth = math.max(0, buffWidth - SCROLLBAR_WIDTH)
 	self:LayoutBuffColumns(buffListWidth)
 
-	local buffListY = BUFF_HEADER_HEIGHT + 1 + BUFF_TABLE_HEADER_HEIGHT
+	local buffListY = BUFF_HEADER_HEIGHT + 1 + SEARCH_HEIGHT + BUFF_TABLE_HEADER_HEIGHT
 	local buffListHeight = math.max(0, bottomHeight - buffListY)
 	self.buffScrollView:SetPosition(0, buffListY)
 	self.buffScrollView:SetSize(buffListWidth, buffListHeight)

@@ -325,4 +325,5 @@ plugin.Unload = function(self)
 	Settings.Save()
 	Turbine.Shell.RemoveCommand(command)
 	Events.Shutdown()
+	Session.ShutdownMorale()
 end

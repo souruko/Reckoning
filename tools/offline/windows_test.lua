@@ -89,7 +89,7 @@ check("max-hit sub-line is its own label, not appended to the number",
   and not m.lineLabels[3].value:GetText():find(" ", 1, true),
   m.lineLabels[3].value:GetText() .. " / " .. m.lineLabels[3].sub:GetText())
 check("three stat rows, none overlapping the sub-line",
-  select(2, m.lineLabels[3].label:GetPosition()) + 16 <= 113)
+  select(2, m.lineLabels[3].label:GetPosition()) + 16 <= select(2, m.lineLabels[3].sub:GetPosition()))
 
 ------------------------------------------------------------------ death cause
 session.died = true

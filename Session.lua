@@ -190,24 +190,77 @@ function Session:PushLastTaken(entry)
 	end
 end
 
--- Called from AddTaken/AddTempMoraleLoss, i.e. from inside Turbine.Chat.Received's own handler
--- (Events.lua has no pcall around its dispatch). An uncaught error here would abort the whole
--- AddTaken call before the hit is ever logged to the row/bucket/event log -- the damage would
--- silently vanish from tracking -- and could propagate out into the chat dispatch itself. Wrapped
--- for the same reason as LiveMeter's CurrentTargetName(): _G.lp is a native handle captured once
--- at load and never re-validated, and this is a real (if rarer) path to reading it.
-function Session:MoralePct()
-	local ok, pct = pcall(function()
-		local morale, maxMorale = _G.lp:GetMorale(), _G.lp:GetMaxMorale()
-		if morale == nil or maxMorale == nil or maxMorale <= 0 then
-			return nil
+-- Cached morale percentage, kept fresh by the real MoraleChanged/MaxMoraleChanged events on
+-- _G.lp instead of a fresh _G.lp:GetMorale()/GetMaxMorale() pcall closure on every single call to
+-- Session:MoralePct() below -- that used to run once per AddTaken/AddTempMoraleLoss call, i.e.
+-- once per damage-taken chat line including avoided hits that never change morale at all. In a
+-- busy fight with several attackers that's real closure-allocation churn on Lua 5.1's collector
+-- (see CLAUDE.md's own GC notes) for numbers that don't need to be read more often than they
+-- actually change.
+--
+-- MaxMorale (the raw points value, not a percentage) rides along in the same cache -- it backs
+-- UI/AnalysisGraph.lua's morale axis label, which used to run its own separate
+-- pcall(_G.lp:GetMaxMorale()) on every real Redraw() rather than every chat line, but is the same
+-- read for the same reason and has no cause to duplicate the defensiveness independently.
+--
+-- MoraleChanged/MaxMoraleChanged are confirmed real Turbine.Gameplay.LocalPlayer events --
+-- VitalSelf/UI/Vital.lua hooks both the same way (`self:Hook(_G.lp, "MoraleChanged", ...)`).
+-- _G.lp.MoraleChanged is a single field slot, not a real multi-subscriber event, and VitalSelf
+-- (confirmed installed alongside this plugin) already hooks the same field on the same
+-- LocalPlayer instance -- CallField() below lets this chain onto whatever's already sitting
+-- there (a plain function, or the table-of-functions shape several plugins' own AddCallback
+-- convention leaves behind) instead of clobbering it outright, the same reasoning Events.lua
+-- already applies to chaining previousChatReceived instead of overwriting Turbine.Chat.Received.
+MoralePct = nil
+MaxMorale = nil
+
+local function CallField(field, ...)
+	if field == nil then
+		return
+	elseif type(field) == "table" then
+		for i = 1, table.getn(field) do
+			field[i](...)
 		end
-		return morale / maxMorale
-	end)
-	if ok then
-		return pct
+	else
+		field(...)
 	end
-	return nil
+end
+
+local function RefreshMoralePct()
+	local ok, morale, maxMorale = pcall(function()
+		return _G.lp:GetMorale(), _G.lp:GetMaxMorale()
+	end)
+	if not ok or morale == nil or maxMorale == nil or maxMorale <= 0 then
+		MoralePct, MaxMorale = nil, nil
+		return
+	end
+	MoralePct = morale / maxMorale
+	MaxMorale = maxMorale
+end
+
+local previousMoraleChanged = _G.lp ~= nil and _G.lp.MoraleChanged or nil
+local previousMaxMoraleChanged = _G.lp ~= nil and _G.lp.MaxMoraleChanged or nil
+
+RefreshMoralePct()
+if _G.lp ~= nil then
+	_G.lp.MoraleChanged = function(...) CallField(previousMoraleChanged, ...); RefreshMoralePct() end
+	_G.lp.MaxMoraleChanged = function(...) CallField(previousMaxMoraleChanged, ...); RefreshMoralePct() end
+end
+
+-- Restores whatever was in the two field slots before this file hooked them -- called from
+-- Main.lua's plugin.Unload, mirroring Events.Shutdown()'s restore of previousChatReceived.
+function Session.ShutdownMorale()
+	if _G.lp ~= nil then
+		_G.lp.MoraleChanged = previousMoraleChanged
+		_G.lp.MaxMoraleChanged = previousMaxMoraleChanged
+	end
+end
+
+-- Called from AddTaken/AddTempMoraleLoss, i.e. from inside Turbine.Chat.Received's own handler
+-- (Events.lua has no pcall around its dispatch) -- now just a read of the cache above, never a
+-- native call or a closure allocation on this hot path.
+function Session:MoralePct()
+	return MoralePct
 end
 
 ---------------------------------------------------------------------------------------------------

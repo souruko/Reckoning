@@ -852,20 +852,11 @@ function Graph:DrawMorale()
 			end
 		end
 
-		-- The existence check above (nil/method-presence) doesn't guarantee the call itself won't
-		-- throw against a native handle mid-transition -- same reasoning as LiveMeter's
-		-- CurrentTargetName() and Session:MoralePct(). This one fires far less often (only on a
-		-- real Redraw(), not continuously), but it's the same category of read.
-		local maxMorale = nil
-		if _G.lp ~= nil and _G.lp.GetMaxMorale ~= nil then
-			local ok, result = pcall(function() return _G.lp:GetMaxMorale() end)
-			if ok then
-				maxMorale = result
-			end
-		end
-
-		if maxMorale ~= nil and maxMorale > 0 then
-			self.moraleAxisLabel:SetText("MORALE " .. Format.Number(peak * maxMorale))
+		-- MaxMorale (Session.lua) is the same read this used to make itself with its own
+		-- pcall(_G.lp:GetMaxMorale()) -- now kept fresh by the real MaxMoraleChanged event instead
+		-- of a fresh native call + closure on every Redraw().
+		if MaxMorale ~= nil and MaxMorale > 0 then
+			self.moraleAxisLabel:SetText("MORALE " .. Format.Number(peak * MaxMorale))
 		else
 			self.moraleAxisLabel:SetText("MORALE " .. Format.Percent(peak))
 		end
@@ -1040,7 +1031,7 @@ function Graph:DrawLanes()
 			if data.icon ~= nil then
 				-- See UI/Analysis.lua's FillBuffRow comment: clears whatever the initials
 				-- fallback left behind.
-				lane.iconInset:SetBackColor(Turbine.UI.Color(0, 0, 0, 0))
+				-- lane.iconInset:SetBackColor(Turbine.UI.Color(0, 0, 0, 0))
 				-- No stretch, native size -- see UI/Analysis.lua's FillBuffRow comment.
 				Icon.Apply(lane.iconInset, data.icon)
 				lane.iconInset:SetPosition(1, 1)

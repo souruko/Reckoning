@@ -1,5 +1,5 @@
 --=================================================================================================
--- Sessions -- the manager: opens/closes Session instances on silence, keeps the ring of 10
+-- Sessions -- the manager: opens/closes Session instances on silence, keeps the ring of 20
 -- (pinned exempt), tracks which session is selected for the analysis window.
 -- See docs/DESIGN.md "Session model". Not a class -- a single static namespace.
 --=================================================================================================
@@ -10,7 +10,7 @@ Sessions.list = {}      -- newest first; pinned entries are exempt from the MAX_
 Sessions.current = nil  -- the open Session, or nil between fights
 Sessions.selected = nil -- the Session shown in the analysis window
 
-local MAX_SESSIONS = 10
+local MAX_SESSIONS = 20
 local CLOSE_AFTER  = 5  -- seconds of silence closes the open session
 local MIN_DURATION = 3  -- seconds; a session shorter than this is discarded, not archived
 

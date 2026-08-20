@@ -278,17 +278,20 @@ function LiveMeter:BuildBody()
 	self.valueLabel = self:BodyLabel(x, 18, 150, 24, Font.Verdana20, Theme.Hex.Text, Turbine.UI.ContentAlignment.BottomLeft)
 	self.rateLabel = self:BodyLabel(x + 150, 18, 90, 24, Font.LucidaConsole12, Theme.Hex.Accent300, Turbine.UI.ContentAlignment.BottomRight)
 
-	self:BuildSparkline(x, 42, w)
+	self:BuildSparkline(x, 45)
 
 	local divider = Turbine.UI.Control()
 	divider:SetParent(self.body)
-	divider:SetPosition(x, 61)
+	divider:SetPosition(x, 65)
 	divider:SetSize(w, 1)
 	divider:SetBackColor(Theme.Color(Theme.Hex.MeterDivider))
 	divider:SetMouseVisible(false)
 
+	-- 19px pitch (16px row + 3px air) instead of the old flush 16px -- the three stat rows used
+	-- to butt directly against each other with no gap at all, per feedback that the whole block
+	-- read as too cramped. The body has 138px to work with and this now fills all of it deliberately.
 	self.lineLabels = {}
-	local ys = { 65, 81, 97 }
+	local ys = { 71, 90, 109 }
 	for i = 1, 3 do
 		local labelL = self:BodyLabel(x, ys[i], 120, 16, Font.Verdana10, Theme.Hex.DimText, Turbine.UI.ContentAlignment.MiddleLeft)
 		local valueL = self:BodyLabel(x + 120, ys[i], 120, 16, Font.LucidaConsole12, Theme.Hex.Text, Turbine.UI.ContentAlignment.MiddleRight)
@@ -297,14 +300,13 @@ function LiveMeter:BuildBody()
 
 	-- The max-hit row keeps its skill name on its own line under the number rather than crammed
 	-- onto it -- a long skill name overflowed badly when the two shared one LucidaConsole12 cell.
-	self.lineLabels[3].sub = self:BodyLabel(x, 113, w, 10, Font.Verdana10, Theme.Hex.DimText, Turbine.UI.ContentAlignment.TopRight)
+	self.lineLabels[3].sub = self:BodyLabel(x, 128, w, 10, Font.Verdana10, Theme.Hex.DimText, Turbine.UI.ContentAlignment.TopRight)
 end
 
 -- 30 pooled columns, one per second of the last half-minute, drawn as a filled band rather than
 -- a line: 16px of height cannot express a polyline, and the shape of the last 30 seconds is all
--- this is for. The "LAST 30s" tag sits on its own WindowFill ground so a tall column behind it
--- cannot make it unreadable.
-function LiveMeter:BuildSparkline(x, y, width)
+-- this is for.
+function LiveMeter:BuildSparkline(x, y)
 	self.sparkColumns = {}
 	for i = 1, SPARK_SECONDS do
 		local column = Turbine.UI.Control()
@@ -315,24 +317,6 @@ function LiveMeter:BuildSparkline(x, y, width)
 		column:SetMouseVisible(false)
 		self.sparkColumns[i] = column
 	end
-
-	self.sparkTagGround = Turbine.UI.Control()
-	self.sparkTagGround:SetParent(self.body)
-	self.sparkTagGround:SetPosition(x + width - 52, y + SPARK_HEIGHT - 10)
-	self.sparkTagGround:SetSize(52, 10)
-	self.sparkTagGround:SetBackColor(Theme.Color(Theme.Hex.WindowFill))
-	self.sparkTagGround:SetMouseVisible(false)
-	self.sparkTagGround:SetZOrder(1)
-
-	self.sparkTag = Turbine.UI.Label()
-	self.sparkTag:SetParent(self.sparkTagGround)
-	self.sparkTag:SetFont(Font.Verdana10)
-	self.sparkTag:SetText("LAST 30s")
-	self.sparkTag:SetForeColor(Theme.Color(Theme.Hex.Disabled))
-	self.sparkTag:SetPosition(0, 0)
-	self.sparkTag:SetSize(52, 10)
-	self.sparkTag:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleRight)
-	self.sparkTag:SetMouseVisible(false)
 
 	self.sparkX, self.sparkY = x, y
 end
@@ -473,7 +457,15 @@ function LiveMeter:Refresh()
 	local inCombat = (Sessions.current ~= nil)
 	self.combatLabel:SetText(inCombat and "IN COMBAT" or "IDLE")
 	self.combatTick:SetBackColor(Theme.Color(inCombat and Theme.Hex.Accent or Theme.Hex.Border))
-	self.clockLabel:SetText(Format.Clock(session:Duration()))
+
+	-- session:Duration() is endTime - startTime, and endTime only moves when Touch() runs (i.e.
+	-- on a real combat event) -- Session.lua's own Touch() comment says as much. Fine for a
+	-- finished fight (where "duration" should mean "time of the last hit", not "time until the
+	-- player happened to check"), but during a live fight it froze the clock between events
+	-- instead of ticking with Refresh()'s own 0.1s timer. Only the live case needs the live
+	-- game clock; a finished/idle session keeps the frozen, correct-for-a-fight-summary value.
+	local elapsed = inCombat and (Turbine.Engine.GetGameTime() - session.startTime) or session:Duration()
+	self.clockLabel:SetText(Format.Clock(elapsed))
 end
 
 function LiveMeter:Update()

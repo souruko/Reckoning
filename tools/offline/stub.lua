@@ -97,6 +97,7 @@ function Control:SetOrientation(o) self._orient = o end
 function Control:SetChecked(v) self._checked = v end
 function Control:IsChecked() return self._checked end
 function Control:SetClipMode(m) self._clip = m end
+function Control:SetMultiline(v) self._multiline = v end
 
 local Window = class(Control)
 function Window:Constructor() Control.Constructor(self) end
@@ -114,6 +115,7 @@ Turbine = {
 		Window = Window,
 		Label = Label,
 		ListBox = ListBox,
+		TextBox = Control,
 		Color = function(r, g, b, a) return { R = r, G = g, B = b, A = a } end,
 		ContentAlignment = {
 			TopLeft = 1, TopCenter = 2, TopRight = 3,

@@ -251,6 +251,20 @@ be wrong:
   (matching by name against `_G.lp:GetEffects()` at render time) with this fixed path kept as the
   fallback for anything not currently live -- not a wholesale swap.
 
+**Skill table and buff table each got a search box** (`Analysis:BuildSearchBox`, wired in
+`BuildTable`/`BuildBuffSection`), filtering by skill/type/who name and buff name respectively,
+case-insensitive substring. This is the first use anywhere in this codebase of
+`Turbine.UI.TextBox` -- confirmed only against a same-shape precedent in a sibling plugin
+(`LootLogs/UI/Window/Sidebar.lua`'s own sidebar search: `Turbine.UI.TextBox()`,
+`SetMultiline(false)`, `TextChanged`/`FocusGained`/`FocusLost` events, and `SetText("")` not
+itself firing `TextChanged` -- the clear glyph updates the filter directly rather than relying on
+the event), not against any prior use in this plugin. `tools/offline/stub.lua` needed two new stub
+methods to even load this (`Turbine.UI.TextBox` as a class alias and `Control:SetMultiline`) --
+neither existed before because nothing in this codebase had touched a text-entry control.
+**Not yet confirmed in-game**: whether the box actually accepts keyboard focus/typing, whether
+`TextChanged` fires per-keystroke as assumed (bufferless filtering depends on it), and whether
+`FocusGained`/`FocusLost` fire in a game window the way they do in LootLogs' distributed one.
+
 Two Design-token values `docs/DESIGN.md` names but never gives hex for (`--color-accent-200`,
 `-300`, `-500`, `-700`) were pulled directly from the mockup's own CSS custom properties and
 added as `Theme.Hex.Accent200/300/500/700` in `Constants.lua` -- see that file's comment. If a
@@ -284,6 +298,43 @@ to cache. And the death window's countdown label (`UI/DeathCause.lua`) used to r
 `SetText` every single rendered frame for a number that only visibly changes once a second; it now
 only touches the label when the displayed integer second actually changes -- the countdown bar
 itself is untouched and still updates every frame, since that one needs to look smooth.
+
+**Later report: performance "very bad" specifically while a fight is being recorded**, prompting
+a look at `Session:MoralePct()` (`Session.lua`), the one native read on `AddTaken`'s/
+`AddTempMoraleLoss`'s own path (i.e. once per damage-taken chat line, including avoided hits that
+never change morale at all -- a busy fight with several attackers can mean many of these per
+second). It used to call `_G.lp:GetMorale()`/`GetMaxMorale()` inline, wrapped in a **freshly
+allocated** `pcall(function() ... end)` closure every single time -- real per-event garbage on
+Lua 5.1's collector, the same category of cost the `Theme.Color`/`Theme.Mix` caching pass above
+already targeted, just not caught in that pass. Replaced with a cached `MoralePct`/`MaxMorale`
+pair, kept fresh by the real `MoraleChanged`/`MaxMoraleChanged` events on `_G.lp` instead --
+confirmed real `Turbine.Gameplay.LocalPlayer` events, `VitalSelf/UI/Vital.lua` hooks both the same
+way (`self:Hook(_G.lp, "MoraleChanged", ...)`). `AddTaken`/`AddTempMoraleLoss` now just read the
+cache, no native call and no closure on their own path at all. `UI/AnalysisGraph.lua`'s morale
+axis label had its own independent `pcall(_G.lp:GetMaxMorale())` on every `Redraw()` for the same
+value -- folded into the same cache rather than duplicating the defensiveness a second time.
+**A real compatibility risk this raised, handled rather than ignored**: `_G.lp.MoraleChanged` is
+a single field slot, not a real multi-subscriber event -- confirmed by reading the identical
+`AddCallback`/`RemoveCallback` convention independently copied into at least six other installed
+plugins (`VitalSelf`, `VitalTarget`, four `PrimePlugins` modules), which exists specifically to
+chain multiple subscribers onto one slot without clobbering each other. Since `VitalSelf` is
+confirmed installed alongside this plugin and already hooks the same two events on the same
+`LocalPlayer` instance, a raw overwrite here would have silently broken its live morale bar.
+`Session.lua` captures whatever was already in the slot before hooking (`previousMoraleChanged`/
+`previousMaxMoraleChanged`) and calls through it first via `CallField()`, which handles both a
+plain function and the table-of-functions shape that convention leaves behind -- the same
+chain-don't-clobber reasoning `Events.lua` already applies to `Turbine.Chat.Received`. Restored on
+unload via `Session.ShutdownMorale()`, called from `Main.lua`'s `plugin.Unload`. Offline-verified
+(all five non-`load` harnesses set up `_G.lp` with `GetMorale`/`GetMaxMorale` before `import
+"Reckoning.Session"`, exactly the order this hook needs, so `tools/offline/run.sh` exercises the
+cache-population path already; the event-firing path itself cannot be exercised offline since the
+stub's `_G.lp` is a plain table, not a real Turbine object that invokes the field on change).
+**Not yet confirmed in-game** -- specifically, whether `_G.lp.MoraleChanged`/`MaxMoraleChanged`
+actually fire as often (and only as often) as real morale changes, and whether chaining through a
+pre-existing `VitalSelf` hook this way leaves its morale bar visibly unaffected. If morale-derived
+numbers (the death window's per-row morale%, the analysis graph's morale lane) ever look stale or
+wrong in-game after this, check whether the events are firing at all before assuming the cache
+logic itself is wrong.
 
 **Follow-up performance report, after the pass above, tried something and reverted it -- read
 this before ever calling `collectgarbage()` from this codebase again.** The game was still
@@ -483,7 +534,7 @@ inheritance + mixins). Treat them as vendored, not Reckoning-specific.
 | `Settings.lua` | `Settings.Load()` / `Settings.Save()` / `Settings.FixColors()` via `Turbine.PluginData`, `DEFAULTS` as single source of truth, `COLOR_KEYS` for colour rebuild. |
 | `Parse/en.lua` | `Trigger.ParseCombatChat` -- ported **verbatim** from `souruko/Gibberish3` (`UTILS/COMBATCHATPARSE/en.lua`). Do not rewrite it; `de.lua` / `fr.lua` are later drop-ins with the same signature. |
 | `Session.lua` | The `Session` class -- one fight's aggregate (`agg.done/taken/healOut/healIn`, `buckets`, `lastTaken` ring). One `Add*`/`On*` method per event kind: `AddDone`, `AddTaken`, `AddHealOut`, `AddHealIn`, `AddTempMoraleLoss`, `OnDefeat`, `OnRevive`. Each `buckets[second]` entry also carries a `<field>ByWho[counterpartName] = amount` table alongside its pooled scalar (`done`/`taken`/`healOut`/`healIn`) -- added so the analysis window's graph can respect the target/source picker; the pooled scalar is always exactly the sum of its own `ByWho` table (`AddToBucket()` updates both together, in one place, so they can't drift apart). Verified offline (a synthetic multi-target fight, checked the per-target and pooled sums against hand-computed expectations). |
-| `Sessions.lua` | The manager singleton (not a class): `Sessions.current` / `Sessions.list` (ring of 10, pinned exempt) / `Sessions.selected`; opens a `Session` lazily on the first own event, closes it after 5s of silence via `Sessions.Tick()`, discards anything under 3s. `Sessions.OnClosed` / `Sessions.OnSelfDefeat` are the callback lists Phase 3/4 UI hooks into. |
+| `Sessions.lua` | The manager singleton (not a class): `Sessions.current` / `Sessions.list` (ring of 20, pinned exempt) / `Sessions.selected`; opens a `Session` lazily on the first own event, closes it after 5s of silence via `Sessions.Tick()`, discards anything under 3s. `Sessions.OnClosed` / `Sessions.OnSelfDefeat` are the callback lists Phase 3/4 UI hooks into. |
 | `Events.lua` | Wraps `Turbine.Chat.Received` (chaining to whatever was already registered), strips `<rgb=#......>` tags and trims before calling `Trigger.ParseCombatChat`, dispatches into `Sessions.*`. Also hosts the heartbeat (`Events.heartbeat`, a bare `Turbine.UI.Window` with `SetWantsUpdates(true)`) that drives `Sessions.Tick()`, since session-close-on-silence has to run even when chat is quiet. `Events.Shutdown()` restores the previous `Turbine.Chat.Received` and stops the heartbeat -- called from `plugin.Unload`. |
 | `Buffs.lua` | Self-buff uptime tracking. Polls `_G.lp:GetEffects()` at 4Hz from Events.lua's heartbeat (**not** the live meter's Update, as the spec suggested -- that meter can be switched off and uptime must keep recording either way), opening/closing an interval per effect name on `session.buffs[name] = { intervals, apps }`. `Buffs.Stats(session, fromSec, toSec)` clips every interval to a range and returns uptime / uptime% / apps / longest gap, sorted. Data source is the live effect list, **not** parser event 17 -- event 17 carries no duration and no fade, so uptime from it would be a guess. Everything here is defensive (one pcall around the whole enumeration; a failed read is a no-op, never "everything faded"; the 0-vs-1-based index base of `EffectList:Get` is **detected**, by probing index 0, not assumed) because nothing in this codebase has touched `Turbine.Gameplay.EffectList` before -- see the three "guessed the shape of a Turbine object" bugs in Build status. |
 | `Utils/Class.lua`, `Utils/Type.lua` | Vendored OOP shim, see above. |
