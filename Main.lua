@@ -51,7 +51,13 @@ Settings.Load()
 
 import "Reckoning.Session"
 import "Reckoning.Sessions"
+import "Reckoning.Buffs"
 import "Reckoning.Events"
+
+-- Close every still-open buff interval the moment a session closes. Registered here, before any
+-- window is constructed, so it runs ahead of the windows' own OnClosed callbacks and none of
+-- them can render a closed session with a dangling interval.
+Sessions.OnClosed(function(s) Buffs.CloseSession(s) end)
 
 ---------------------------------------------------------------------
 --== UI ===--
@@ -203,14 +209,65 @@ local function TestDeath()
 	Turbine.Shell.WriteLine("Reckoning: triggered a test death popup.")
 end
 
+-- `/reck buffs` -- what self-buff tracking is currently seeing, and the ignore list that shapes
+-- it. The default Buffs.Ignore entries are a best guess at the client's own effect names and are
+-- not verified against a running game, so this command (not that table) is the real mechanism for
+-- keeping mounts and travel skills out of the uptime table.
+local function BuffsCommand(action, name)
+	if action == "" or action == "list" then
+		local session = Sessions.current or Sessions.list[1]
+		local rows = Buffs.Stats(session, nil, nil)
+
+		if table.getn(rows) == 0 then
+			Turbine.Shell.WriteLine("Reckoning: no self-buffs tracked yet (nothing fought, or every effect is ignored).")
+		else
+			Turbine.Shell.WriteLine("Reckoning: self-buffs in the most recent fight --")
+			for i = 1, table.getn(rows) do
+				local row = rows[i]
+				Turbine.Shell.WriteLine(string.format("  %s: %s uptime (%s), %d applied, longest gap %ds",
+					row.name, Format.Percent(row.uptimePct), Format.Clock(row.uptime),
+					row.apps, math.floor(row.longestGap + 0.5)))
+			end
+		end
+
+		local ignored = {}
+		for key in pairs(Buffs.Ignore) do
+			table.insert(ignored, key)
+		end
+		if _G.settings.buffIgnore ~= nil then
+			for key in pairs(_G.settings.buffIgnore) do
+				table.insert(ignored, key)
+			end
+		end
+		table.sort(ignored)
+		if table.getn(ignored) > 0 then
+			Turbine.Shell.WriteLine("  ignored: " .. table.concat(ignored, ", "))
+		end
+		return
+	end
+
+	if name == "" then
+		Turbine.Shell.WriteLine("Reckoning: /reck buffs ignore <name> | unignore <name> | list")
+		return
+	end
+
+	if action == "ignore" then
+		Buffs.AddIgnore(name)
+		Turbine.Shell.WriteLine("Reckoning: ignoring self-buff '" .. name .. "'.")
+	elseif action == "unignore" then
+		Buffs.RemoveIgnore(name)
+		Turbine.Shell.WriteLine("Reckoning: no longer ignoring '" .. name .. "'.")
+	else
+		Turbine.Shell.WriteLine("Reckoning: /reck buffs ignore <name> | unignore <name> | list")
+	end
+end
+
 local function ResetAll()
 	Settings.ResetToDefaults()
 
 	liveMeter:SetPosition(200, 200)
 	deathCause:SetPosition(200, 200)
-	analysis:Resize(1080, 600)
-	analysis:SetPosition(200, 200)
-	analysis:Layout()
+	analysis:ResetGeometry()
 
 	optionsPanel:Refresh()
 
@@ -225,8 +282,16 @@ function command:Execute(_, str)
 	cmd = cmd or ""
 	arg = arg or ""
 
+	-- Buff names are case-sensitive and contain spaces ("Writ of Health"), so `buffs` re-reads
+	-- its arguments from the RAW string rather than the lower-cased, single-token parse above.
+	if cmd == "buffs" then
+		local action, name = string.match(str, "^%s*%S+%s*(%S*)%s*(.-)%s*$")
+		BuffsCommand(string.lower(action or ""), name or "")
+		return
+	end
+
 	if cmd == "" or cmd == "help" then
-		Turbine.Shell.WriteLine("Reckoning v" .. Reckoning.Version .. ": /reck help | dump | testdeath | show [live|death|analysis] | hide [live|death|analysis] | move <live|death|analysis> | reset")
+		Turbine.Shell.WriteLine("Reckoning v" .. Reckoning.Version .. ": /reck help | dump | buffs [list|ignore <name>|unignore <name>] | testdeath | show [live|death|analysis] | hide [live|death|analysis] | move <live|death|analysis> | reset")
 	elseif cmd == "dump" then
 		DumpSession(Sessions.current or Sessions.list[1])
 	elseif cmd == "testdeath" then

@@ -1,63 +1,135 @@
 --=================================================================================================
--- Analysis -- window 3, 1080x600 resizable to 1440x800. The post-mortem, per fight and per
--- target. See docs/DESIGN.md "3. Post-combat analysis".
+-- Analysis -- window 3, 1080x820 resizable to 1440x880. The post-mortem, per fight and per
+-- target. See docs/DESIGN.md "3. Post-combat analysis" and the redesign bundle's
+-- REDESIGN_SPEC.md section 7.
 --
--- Deliberate deviations from the literal mockup numbers, since this is the one window meant to
+-- The content column is 848px wide at the minimum window size (1080 - 208 rail - 2x12 padding),
+-- which is exactly the width every number in the redesign mock was measured against. Blocks
+-- stack: tab strip + goal line (30), picker chips (22), 5 KPI cards (50), the graph block
+-- (plot + charted buff lanes + range slider + timeline + legend, see UI/AnalysisGraph.lua),
+-- the skill table at full content width, then the SELF BUFFS table and the two side panels
+-- sharing the bottom row.
+--
+-- Deliberate deviations from the literal mock numbers, since this is the one window meant to
 -- resize:
---  - The graph and skill table stretch to fill the available content width instead of the
---    mockup's fixed 640px graph -- a fixed-width graph would get no benefit from resizing up to
---    1440px, which is the whole point of the resize gripper existing on this window and not the
---    other two. Bucket COUNT stays fixed at 48 per docs/IMPLEMENTATION_PLAN.md; bucket width
---    scales instead.
---  - The 5 KPIs are one uniform shape across all four views (total+rate, hits/heals+distinct
---    count, crit/dev%, largest+skill, active time) rather than bespoke per view -- docs/DESIGN.md
---    specifies "five KPIs" per view without dictating their exact content.
+--  - Every block stretches to fill the available content width instead of being pinned at 848 --
+--    a fixed-width graph and table would get no benefit from resizing up to 1440px, which is the
+--    whole point of the resize gripper existing on this window and not the other two. Bucket
+--    COUNT stays fixed at 48 (docs/IMPLEMENTATION_PLAN.md); bucket width scales instead. The two
+--    side panels keep their 233px so the buff table gets every pixel the window gains.
+--  - The 5 KPIs are one uniform shape across all four views (total+rate, hits/heals+skill count,
+--    crit/dev%, largest+skill, active-or-range time) rather than bespoke per view --
+--    docs/DESIGN.md specifies "five KPIs" per view without dictating their exact content.
+--
+-- EVERYTHING IS RANGE-SCOPED. Dragging either handle on the range slider re-runs a single
+-- Session:Slice for the selected seconds, and the KPIs, skill table, both side panels and the
+-- buff table are all fed from that one result -- one recount per interaction, not one per
+-- widget. A full-fight range takes Slice's aggregate path, so an unscoped window shows exactly
+-- the same numbers it did before the slider existed.
 --=================================================================================================
 
 Analysis = class(Frame)
 
 local MIN_WIDTH, MIN_HEIGHT = 1080, 600
-local MAX_WIDTH, MAX_HEIGHT = 1440, 800
+local MAX_WIDTH, MAX_HEIGHT = 1440, 880
+-- The redesign's own stack (buff section open, 2 lanes charted, 9 skill rows) comes to ~851px,
+-- so a new install opens tall enough to show all of it. MIN_HEIGHT stays at 600 for anyone on a
+-- short screen -- the skill table shrinks and scrolls first, the buff table second.
+local DEFAULT_HEIGHT = 820
+
 local RAIL_WIDTH = 208
 local HEADER_HEIGHT = 32
 local TAB_STRIP_HEIGHT = 30
+local TAB_WIDTH = 140
 local GAP = 11
 local PAD = 12
 local KPI_ROW_HEIGHT = 50
--- 150px plot + a taller bottom strip than the mockup's 22px (14px timeline + 18px legend + 4px
--- gap) -- UI/AnalysisGraph.lua's AXIS_HEIGHT, kept in sync here since Layout() needs it before
--- a Graph instance necessarily exists yet.
-local GRAPH_HEIGHT = 150 + 36
+local PICKER_HEIGHT = 22
 local ROW_HEIGHT = 22
 local RAIL_ROW_HEIGHT = 34
 local SCROLLBAR_WIDTH = 10
 local RAIL_POOL = 20 -- generous: ring cap is 10 but pinned sessions are exempt from it
+local PANEL_WIDTH = 233
 
-local VIEWS = { "done", "healOut", "healIn", "taken" }
+local BUFF_HEADER_HEIGHT = 26
+local BUFF_TABLE_HEADER_HEIGHT = 20
+local BUFF_ROW_HEIGHT = 22
+local BUFF_POOL = 12
+local MAX_CHARTED = 3
+
+-- Tab order is damage pair then healing pair, so the two views a reader actually compares sit
+-- next to each other. This drives tab ORDER only -- VIEW_META, the filter table and the graph's
+-- series map are all keyed, never indexed.
+local VIEWS = { "done", "taken", "healOut", "healIn" }
+
 local VIEW_META = {
 	done = {
 		label = "Damage done", question = "Which skills carried it, against whom",
 		pickerLabel = "targets", hitWord = "hits", color = Theme.Hex.DamageDone,
-		headers = { "Skill", "Type", "Hits", "Crit", "Dev", "Max", "Total" },
-	},
-	healOut = {
-		label = "Healing done", question = "Self-sustain and group contribution",
-		pickerLabel = "recipients", hitWord = "heals", color = Theme.Hex.HealingDone,
-		headers = { "Skill", "To", "Heals", "Crit", "Dev", "Max", "Total" },
-	},
-	healIn = {
-		label = "Healing taken", question = "Did healers keep pace",
-		pickerLabel = "casters", hitWord = "heals", color = Theme.Hex.HealingTaken,
-		headers = { "Skill", "From", "Heals", "Crit", "Dev", "Max", "Total" },
+		shape = "damage", counterpartHeader = "TYPE",
 	},
 	taken = {
 		label = "Damage taken", question = "What hit you, what got through",
 		pickerLabel = "sources", hitWord = "hits", color = Theme.Hex.DamageTaken,
-		headers = { "Skill", "Type", "Hits", "Crit", "Dev", "Avoided", "Max", "Total" },
+		shape = "damage", counterpartHeader = "TYPE",
+	},
+	healOut = {
+		label = "Healing done", question = "Self-sustain and group contribution",
+		pickerLabel = "recipients", hitWord = "heals", color = Theme.Hex.HealingDone,
+		shape = "heal", counterpartHeader = "TO",
+	},
+	healIn = {
+		label = "Healing taken", question = "Did healers keep pace",
+		pickerLabel = "casters", hitWord = "heals", color = Theme.Hex.HealingTaken,
+		shape = "heal", counterpartHeader = "FROM",
 	},
 }
 
-local NUMERIC_HEADERS = { Hits = true, Heals = true, Crit = true, Dev = true, Avoided = true, Max = true, Total = true }
+-- Column specs, replacing the old derive-widths-from-header-names approach. Crit and Dev are one
+-- CRIT / DEV percentage column now: two separate 60px counter columns were what pushed the
+-- `taken` view's 8 columns past its own viewport and clipped TOTAL off the right-hand edge, and
+-- percentages are what a reader wants from those two anyway (the raw counters stay separate in
+-- the data, per docs/DESIGN.md). MAX and TOTAL are deliberately wide -- a 7-figure comma-formatted
+-- number at LucidaConsole12 needs ~80px inside 8px padding, and a clipped total is the one number
+-- in this table nobody can afford to lose. `width = nil` means "take whatever is left over".
+local COLUMN_SETS = {
+	damage = {
+		{ key = "skill",   label = "SKILL",      width = nil },
+		{ key = "type",    label = nil,          width = 110 },
+		{ key = "hits",    label = nil,          width = 58,  numeric = true },
+		{ key = "critdev", label = "CRIT / DEV", width = 106, numeric = true },
+		{ key = "avoid",   label = "AVOID",      width = 68,  numeric = true },
+		{ key = "max",     label = "MAX",        width = 88,  numeric = true },
+		{ key = "total",   label = "TOTAL",      width = 104, numeric = true, accent = true },
+	},
+	heal = {
+		{ key = "skill",   label = "SKILL",      width = nil },
+		{ key = "type",    label = nil,          width = 156 },
+		{ key = "hits",    label = nil,          width = 58,  numeric = true },
+		{ key = "critdev", label = "CRIT / DEV", width = 106, numeric = true },
+		{ key = "max",     label = "MAX",        width = 88,  numeric = true },
+		{ key = "total",   label = "TOTAL",      width = 104, numeric = true, accent = true },
+	},
+}
+
+local SKILL_COLUMN_MIN = 150
+local MAX_TABLE_COLUMNS = 7
+
+-- [chart box 22][icon 24][name 190][uptime % 98][uptime 90][apps 74][longest gap 106] = 604,
+-- which is exactly the content width minus the two side panels and their gap.
+local BUFF_COLUMNS = {
+	{ key = "check", width = 22,  label = "" },
+	{ key = "icon",  width = 24,  label = "" },
+	{ key = "name",  width = 190, label = "BUFF" },
+	{ key = "pct",   width = 98,  label = "UPTIME %",    numeric = true },
+	{ key = "up",    width = 90,  label = "UPTIME",      numeric = true },
+	{ key = "apps",  width = 74,  label = "APPS",        numeric = true },
+	{ key = "gap",   width = 106, label = "LONGEST GAP", numeric = true },
+}
+
+local BUFF_GOOD_UPTIME = 0.75
+local BUFF_POOR_UPTIME = 0.35
+local BUFF_LONG_GAP = 12 -- seconds
 
 local AVOID_NAMES = {
 	[AvoidType.Missed] = "Missed", [AvoidType.Immune] = "Immune", [AvoidType.Resisted] = "Resisted",
@@ -72,16 +144,47 @@ local AVOID_NAMES = {
 function Analysis:Constructor()
 	Frame.Constructor(self, {
 		key = "analysis", title = "Reckoning", closable = true,
-		width = MIN_WIDTH, height = MIN_HEIGHT, headerHeight = HEADER_HEIGHT,
+		width = MIN_WIDTH, height = DEFAULT_HEIGHT, headerHeight = HEADER_HEIGHT,
 	})
 
 	self.viewTab = "done"
-	self.filter = { done = nil, healOut = nil, healIn = nil, taken = nil }
+	self.filter = { done = nil, taken = nil, healOut = nil, healIn = nil }
 	self.selectedSession = nil
 
+	self.bucketCount = GraphBucketCount()
+	self.rangeFrom = 1
+	self.rangeTo = self.bucketCount
+
+	-- Restored from settings, then re-validated against whatever buffs the selected session
+	-- actually has (a name list is safe to persist; a Turbine.UI.Color never is -- Settings.lua).
+	self.charted = {}
+	local savedCharted = _G.settings.chartedBuffs
+	if type(savedCharted) == "table" then
+		for i = 1, table.getn(savedCharted) do
+			if i <= MAX_CHARTED and type(savedCharted[i]) == "string" then
+				self.charted[table.getn(self.charted) + 1] = savedCharted[i]
+			end
+		end
+	end
+	self.buffsOpen = (_G.settings.buffsOpen ~= false)
+
+	-- What the last Layout() sized the variable-height blocks for. RefreshContent compares
+	-- against these and re-runs Layout only when the shape actually changed, which is what stops
+	-- the two from calling each other forever.
+	self.layoutLanes = -1
+	self.layoutBuffRows = -1
+	self.laneCountWanted = 0
+	self.buffRowsWanted = 0
+
+	self:BuildHeaderExtras()
 	self:BuildSessionRail()
 	self:BuildContentArea()
 	self:BuildResizeGripper()
+
+	-- Adopt whatever the manager already has. Sessions.OnClosed only fires for fights that
+	-- close AFTER this window exists, so without this the window would sit empty for anything
+	-- already in the ring -- which is exactly the state a /plugins refresh mid-session leaves.
+	self.selectedSession = Sessions.selected or Sessions.list[1]
 
 	local saved = _G.settings.windows[self.windowKey]
 	if saved ~= nil and saved.width ~= nil and saved.height ~= nil then
@@ -103,11 +206,149 @@ end
 function Analysis:OnSessionsChanged(newSession)
 	if self.selectedSession == nil then
 		self.selectedSession = newSession
+		self:ResetRange()
 	end
 	self:RefreshRail()
 	if self.selectedSession == newSession then
 		self:RefreshContent()
 	end
+end
+
+---------------------------------------------------------------------------------------------------
+-- Header extras: the range chip and RESET RANGE
+---------------------------------------------------------------------------------------------------
+
+-- Both live in Frame's own header bar, to the left of the close glyph. The chip states what the
+-- window is currently showing, which matters most exactly when it is NOT showing the whole fight
+-- -- an unnoticed range would make every number on screen quietly wrong to a reader who looked
+-- away and back.
+function Analysis:BuildHeaderExtras()
+	self.rangeChip = Turbine.UI.Label()
+	self.rangeChip:SetParent(self.header)
+	self.rangeChip:SetFont(Font.LucidaConsole12)
+	self.rangeChip:SetForeColor(Theme.Color(Theme.Hex.DimText))
+	self.rangeChip:SetSize(220, HEADER_HEIGHT)
+	self.rangeChip:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleRight)
+	self.rangeChip:SetMouseVisible(false)
+
+	local button = Turbine.UI.Label()
+	button:SetParent(self.header)
+	button:SetFont(Font.Verdana10)
+	button:SetText("RESET RANGE")
+	button:SetForeColor(Theme.Color(Theme.Hex.Disabled))
+	button:SetSize(90, HEADER_HEIGHT)
+	button:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleCenter)
+
+	local window = self
+	button.MouseClick = function()
+		if not window:IsFullRange() then
+			window:ResetRange()
+			window:RefreshContent()
+		end
+	end
+	button.MouseEnter = function()
+		if not window:IsFullRange() then
+			button:SetForeColor(Theme.Color(Theme.Hex.Accent200))
+		end
+	end
+	button.MouseLeave = function() window:RefreshHeaderExtras() end
+
+	self.resetButton = button
+
+	-- The title label was sized by Frame to run the full width; pull it in so it cannot collide
+	-- with the chip.
+	if self.titleLabel ~= nil then
+		self.titleLabel:SetSize(200, HEADER_HEIGHT)
+	end
+
+	self:LayoutHeaderExtras()
+end
+
+function Analysis:LayoutHeaderExtras()
+	local width = select(1, self:GetSize())
+	self.resetButton:SetPosition(width - 22 - 96, 0)
+	self.rangeChip:SetPosition(width - 22 - 96 - 6 - 220, 0)
+end
+
+function Analysis:RefreshHeaderExtras()
+	local full = self:IsFullRange()
+	local session = self.selectedSession
+
+	if session == nil then
+		self.rangeChip:SetText("")
+	elseif full then
+		self.rangeChip:SetText("FULL FIGHT · " .. Format.Clock(session:Duration()))
+	else
+		local fromSec, toSec = self:RangeSeconds()
+		self.rangeChip:SetText("RANGE " .. Format.Clock(fromSec) .. " - " .. Format.Clock(toSec)
+			.. " · " .. math.floor(toSec - fromSec + 0.5) .. "s")
+	end
+
+	self.rangeChip:SetForeColor(Theme.Color(full and Theme.Hex.DimText or Theme.Hex.Accent300))
+	self.resetButton:SetForeColor(Theme.Color(full and Theme.Hex.Disabled or Theme.Hex.Accent200))
+end
+
+-- Chrome resize plus the two header widgets Frame knows nothing about.
+function Analysis:Resize(width, height)
+	Frame.Resize(self, width, height)
+	if self.titleLabel ~= nil then
+		self.titleLabel:SetSize(200, HEADER_HEIGHT)
+	end
+	if self.resetButton ~= nil then
+		self:LayoutHeaderExtras()
+	end
+end
+
+-- Back to the shipped size and position, for /reck reset.
+function Analysis:ResetGeometry()
+	self:Resize(MIN_WIDTH, DEFAULT_HEIGHT)
+	self:SetPosition(200, 200)
+	self:Layout()
+end
+
+---------------------------------------------------------------------------------------------------
+-- Range
+---------------------------------------------------------------------------------------------------
+
+function Analysis:IsFullRange()
+	return self.rangeFrom == 1 and self.rangeTo == self.bucketCount
+end
+
+-- Bucket stops -> real seconds into the fight. Returns nil, nil for the whole fight, which is
+-- Session:Slice's signal to take its aggregate path -- so an unscoped window is provably showing
+-- the same numbers it always did rather than a re-count that might disagree at the edges.
+function Analysis:RangeSeconds()
+	local session = self.selectedSession
+	if session == nil or self:IsFullRange() then
+		return nil, nil
+	end
+
+	local duration = session:Duration()
+	if duration <= 0 then
+		return nil, nil
+	end
+
+	local span = self.bucketCount - 1
+	local fromSec = math.floor((self.rangeFrom - 1) / span * duration)
+	local toSec = math.ceil((self.rangeTo - 1) / span * duration)
+	if toSec <= fromSec then
+		toSec = fromSec + 1
+	end
+	return fromSec, toSec
+end
+
+function Analysis:ResetRange()
+	self.rangeFrom = 1
+	self.rangeTo = self.bucketCount
+	if self.graph ~= nil then
+		self.graph:SetRange(self.rangeFrom, self.rangeTo)
+	end
+end
+
+function Analysis:OnRangeChanged(from, to)
+	self.rangeFrom = from
+	self.rangeTo = to
+	self:RefreshContent()
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -225,7 +466,7 @@ function Analysis:RefreshRail()
 			widgets.control:SetPosition(0, (i - 1) * RAIL_ROW_HEIGHT)
 			widgets.name:SetText(s:DisplayName() .. (s.died and " · died" or ""))
 			widgets.meta:SetText(s.startClock .. " · " .. Format.Clock(s:Duration()) .. " · " .. Format.Rate(s:Rate("done")))
-			widgets.pin:SetBackColor(Theme.Color(s.pinned and Theme.Hex.Accent or "#5c5f70"))
+			widgets.pin:SetBackColor(Theme.Color(s.pinned and Theme.Hex.Accent or Theme.Hex.Disabled))
 			self:RefreshRailRow(widgets)
 		end
 	end
@@ -250,17 +491,21 @@ function Analysis:RefreshRailRow(widgets)
 	end
 end
 
+-- Selecting a session always resets the range to the full fight: the bucket COUNT is the same
+-- for every session but the seconds behind each stop are not, so carrying a range across would
+-- silently mean a different slice of a different fight.
 function Analysis:SelectSession(session)
 	if session == nil then
 		return
 	end
 	self.selectedSession = session
+	self:ResetRange()
 	self:RefreshRail()
 	self:RefreshContent()
 end
 
 ---------------------------------------------------------------------------------------------------
--- Content area: tab strip, goal line, picker, KPI row, graph, table + side panels
+-- Content area: tab strip, goal line, picker, KPI row, graph, table, buff section, side panels
 ---------------------------------------------------------------------------------------------------
 
 function Analysis:BuildContentArea()
@@ -274,13 +519,13 @@ function Analysis:BuildContentArea()
 	self:BuildKpiRow()
 	self:BuildGraphArea()
 	self:BuildTable()
+	self:BuildBuffSection()
 	self:BuildPanels()
 end
 
 function Analysis:BuildTabStrip()
 	self.viewTabs = {}
 	local x = PAD
-	local tabWidth = 140
 	local window = self
 
 	for i = 1, table.getn(VIEWS) do
@@ -290,29 +535,31 @@ function Analysis:BuildTabStrip()
 		local tab = Turbine.UI.Control()
 		tab:SetParent(self.contentArea)
 		tab:SetPosition(x, 0)
-		tab:SetSize(tabWidth, TAB_STRIP_HEIGHT)
+		tab:SetSize(TAB_WIDTH, TAB_STRIP_HEIGHT)
 		tab:SetBackColor(Theme.Color(Theme.Hex.WindowFill))
 
+		-- Centred in its cell, not flush left: four equal 140px cells read as a tab strip only
+		-- when their labels are centred in them.
 		local label = Turbine.UI.Label()
 		label:SetParent(tab)
 		label:SetFont(Font.Verdana12)
 		label:SetText(meta.label)
 		label:SetForeColor(Theme.Color(Theme.Hex.DimText))
 		label:SetPosition(0, 0)
-		label:SetSize(tabWidth, TAB_STRIP_HEIGHT - 2)
-		label:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
+		label:SetSize(TAB_WIDTH, TAB_STRIP_HEIGHT - 2)
+		label:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleCenter)
 		label:SetMouseVisible(false)
 
 		local underline = Turbine.UI.Control()
 		underline:SetParent(tab)
 		underline:SetPosition(0, TAB_STRIP_HEIGHT - 2)
-		underline:SetSize(tabWidth, 2)
+		underline:SetSize(TAB_WIDTH, 2)
 		underline:SetMouseVisible(false)
 
 		tab.MouseClick = function() window:SelectView(key) end
 		tab.MouseEnter = function()
 			if window.viewTab ~= key then
-				tab:SetBackColor(Theme.Mix(Theme.Hex.Accent, Theme.Hex.WindowFill, 0.05))
+				tab:SetBackColor(Theme.Color(Theme.Hex.Hover))
 			end
 		end
 		tab.MouseLeave = function()
@@ -322,22 +569,32 @@ function Analysis:BuildTabStrip()
 		end
 
 		self.viewTabs[key] = { control = tab, label = label, underline = underline }
-		x = x + tabWidth
+		x = x + TAB_WIDTH
 	end
 end
 
+-- The goal line shares the tab strip's row now, right-aligned in whatever the tabs leave over,
+-- with a 1px rule under it that continues the inactive tabs' baseline across to the window edge.
 function Analysis:BuildGoalLine()
 	self.goalLine = Turbine.UI.Label()
 	self.goalLine:SetParent(self.contentArea)
-	self.goalLine:SetFont(Font.Verdana12)
+	self.goalLine:SetFont(Font.Verdana10)
 	self.goalLine:SetForeColor(Theme.Color(Theme.Hex.DimText))
-	self.goalLine:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
+	self.goalLine:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleRight)
 	self.goalLine:SetMouseVisible(false)
+
+	self.goalRule = Turbine.UI.Control()
+	self.goalRule:SetParent(self.contentArea)
+	self.goalRule:SetBackColor(Theme.Color(Theme.Hex.Border))
+	self.goalRule:SetMouseVisible(false)
 end
 
 -- Picker chips are rebuilt on session/view change (a handful of controls, not a hot path) since
 -- the distinct-name set differs per session and view. Width is a rough per-character estimate --
--- Turbine.UI exposes no text-measurement call used elsewhere in this codebase.
+-- Turbine.UI exposes no text-measurement call used anywhere in this codebase.
+--
+-- The chip set is deliberately SESSION-wide, not range-scoped: a chip vanishing mid-drag because
+-- that target happened not to be hit inside the current range would be the opposite of useful.
 function Analysis:BuildPicker()
 	self.pickerRow = Turbine.UI.Control()
 	self.pickerRow:SetParent(self.contentArea)
@@ -374,8 +631,7 @@ function Analysis:RefreshPicker()
 	-- X" chip's filter value), and table.insert(t, v) on a table whose length is ambiguous
 	-- because of a leading nil hole silently overwrites that slot instead of appending after
 	-- it (confirmed live: it shifted every chip's filter value one position off from its
-	-- label, so clicking a chip filtered by a *different* target than the one shown, and the
-	-- last real-target chip ended up pointing at nil/pooled instead of "All X" doing that).
+	-- label, so clicking a chip filtered by a *different* target than the one shown).
 	local labels = { "All " .. meta.pickerLabel }
 	local values = {}
 	for i = 1, table.getn(names) do
@@ -384,7 +640,6 @@ function Analysis:RefreshPicker()
 	end
 
 	local x = 0
-	local window = self
 	for i = 1, table.getn(labels) do
 		local chip = self.pickerChips[i]
 		if chip == nil then
@@ -395,9 +650,9 @@ function Analysis:RefreshPicker()
 		local text = labels[i]
 		local w = ChipWidth(text)
 		chip.control:SetPosition(x, 0)
-		chip.control:SetSize(w, 22)
-		chip.border:SetSize(w, 22)
-		chip.label:SetSize(w, 22)
+		chip.control:SetSize(w, PICKER_HEIGHT)
+		chip.border:SetSize(w, PICKER_HEIGHT)
+		chip.label:SetSize(w, PICKER_HEIGHT)
 		chip.label:SetText(text)
 		chip.value = values[i]
 		chip.control:SetVisible(true)
@@ -440,7 +695,7 @@ function Analysis:BuildPickerChip()
 	control.MouseClick = function() window:SelectFilter(chip.value) end
 	control.MouseEnter = function()
 		if window.filter[window.viewTab] ~= chip.value then
-			inset:SetBackColor(Theme.Mix(Theme.Hex.Accent, Theme.Hex.WindowFill, 0.05))
+			inset:SetBackColor(Theme.Color(Theme.Hex.Hover))
 		end
 	end
 	control.MouseLeave = function() window:RefreshPickerSelection() end
@@ -454,7 +709,7 @@ function Analysis:RefreshPickerSelection()
 		local chip = self.pickerChips[i]
 		if chip.control:IsVisible() then
 			local isSelected = (chip.value == selected)
-			chip.inset:SetBackColor(isSelected and Theme.Mix(Theme.Hex.Accent, Theme.Hex.WindowFill, 0.11) or Theme.Color(Theme.Hex.WindowFill))
+			chip.inset:SetBackColor(Theme.Color(isSelected and Theme.Hex.ActiveTab or Theme.Hex.WindowFill))
 			chip.border:SetBackColor(Theme.Color(isSelected and Theme.Hex.Accent700 or Theme.Hex.Border))
 			chip.label:SetForeColor(Theme.Color(isSelected and Theme.Hex.Accent200 or Theme.Hex.DimText))
 
@@ -470,6 +725,10 @@ function Analysis:SelectFilter(who)
 	self:RefreshContent()
 end
 
+---------------------------------------------------------------------------------------------------
+-- KPI cards
+---------------------------------------------------------------------------------------------------
+
 function Analysis:BuildKpiRow()
 	self.kpiRow = Turbine.UI.Control()
 	self.kpiRow:SetParent(self.contentArea)
@@ -481,13 +740,13 @@ function Analysis:BuildKpiRow()
 	end
 end
 
+-- Card content stacks label 12 / value 20 / sub 12 inside 50px with 4px of top padding. The old
+-- card put the value at y=18 with height 24 and the sub at y=36 -- a 6px collision that clipped
+-- the bottom of every value against the top of its own sub-label.
 function Analysis:BuildKpiCard()
 	local card = Turbine.UI.Control()
 	card:SetParent(self.kpiRow)
-	-- PanelFill ("#ffffff05") is an alpha-bearing token -- Theme.Color would truncate it to
-	-- solid white (only the first 6 hex digits are RGB). Theme.Mix approximates the real 5/255
-	-- wash against the window fill instead.
-	card:SetBackColor(Theme.Mix("#ffffff", Theme.Hex.WindowFill, 5 / 255))
+	card:SetBackColor(Theme.Color(Theme.Hex.KpiFill))
 	card:SetMouseVisible(false)
 
 	local border = Turbine.UI.Control()
@@ -500,7 +759,7 @@ function Analysis:BuildKpiCard()
 	label:SetParent(card)
 	label:SetFont(Font.Verdana10)
 	label:SetForeColor(Theme.Color(Theme.Hex.DimText))
-	label:SetPosition(8, 6)
+	label:SetPosition(8, 4)
 	label:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
 	label:SetMouseVisible(false)
 
@@ -508,7 +767,7 @@ function Analysis:BuildKpiCard()
 	value:SetParent(card)
 	value:SetFont(Font.Verdana20)
 	value:SetForeColor(Theme.Color(Theme.Hex.Text))
-	value:SetPosition(8, 18)
+	value:SetPosition(8, 16)
 	value:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
 	value:SetMouseVisible(false)
 
@@ -549,7 +808,7 @@ function Analysis:BuildTable()
 	self.tableHeaderRow:SetMouseVisible(false)
 
 	self.tableHeaderLabels = {}
-	for i = 1, 8 do
+	for i = 1, MAX_TABLE_COLUMNS do
 		local label = Turbine.UI.Label()
 		label:SetParent(self.tableHeaderRow)
 		label:SetFont(Font.Verdana10)
@@ -581,7 +840,7 @@ function Analysis:BuildTable()
 end
 
 -- Not parented here -- AddItem (called from RefreshTable, every data refresh) does that. A row
--- never sits in the ListBox until it actually has data for the current view/filter.
+-- never sits in the ListBox until it actually has data for the current view/filter/range.
 function Analysis:BuildTableRowSlot()
 	local container = Turbine.UI.Control()
 	container:SetSize(1, ROW_HEIGHT)
@@ -606,78 +865,110 @@ function Analysis:BuildTableRowSlot()
 	return { container = container, divider = divider, shareBar = shareBar, row = row }
 end
 
+-- Header text for a column, given the active view. Only three of them vary.
+local function ColumnLabel(column, meta)
+	if column.key == "type" then
+		return meta.counterpartHeader
+	elseif column.key == "hits" then
+		return string.upper(meta.hitWord)
+	end
+	return column.label
+end
+
 -- (Re)builds the header labels and the pooled rows' column geometry for the active view. Called
 -- on view change and on resize -- not per data refresh.
 function Analysis:RefreshTableColumns(tableWidth)
 	local meta = VIEW_META[self.viewTab]
-	local headers = meta.headers
+	local spec = COLUMN_SETS[meta.shape]
 
-	local FIXED, NAME_COL = 60, 110
 	local fixedTotal = 0
-	for i = 2, table.getn(headers) do
-		fixedTotal = fixedTotal + (NUMERIC_HEADERS[headers[i]] and FIXED or NAME_COL)
+	for i = 1, table.getn(spec) do
+		fixedTotal = fixedTotal + (spec[i].width or 0)
 	end
-	local skillWidth = tableWidth - fixedTotal
-	if skillWidth < 150 then
-		skillWidth = 150
+
+	local flexWidth = tableWidth - fixedTotal
+	if flexWidth < SKILL_COLUMN_MIN then
+		flexWidth = SKILL_COLUMN_MIN
 	end
 
 	local columns = {}
 	local x = 0
-	for i = 1, table.getn(headers) do
-		local h = headers[i]
-		local numeric = NUMERIC_HEADERS[h] and i > 1
-		local width = (i == 1) and skillWidth or (numeric and FIXED or NAME_COL)
+	for i = 1, table.getn(spec) do
+		local column = spec[i]
+		local width = column.width or flexWidth
+		local colorHex = Theme.Hex.MutedText
+		if column.key == "skill" then
+			colorHex = Theme.Hex.Text
+		elseif column.accent then
+			colorHex = meta.color
+		end
 
 		columns[i] = {
 			x = x, width = width,
-			font = numeric and Font.LucidaConsole12 or Font.Verdana12,
-			align = numeric and Turbine.UI.ContentAlignment.MiddleRight or Turbine.UI.ContentAlignment.MiddleLeft,
-			colorHex = Theme.Hex.Text,
+			font = column.numeric and Font.LucidaConsole12 or Font.Verdana12,
+			align = column.numeric and Turbine.UI.ContentAlignment.MiddleRight or Turbine.UI.ContentAlignment.MiddleLeft,
+			colorHex = colorHex,
 		}
 		x = x + width
 	end
+
 	self.tableColumns = columns
 	self.tableWidth = x
 
-	for i = 1, 8 do
+	for i = 1, MAX_TABLE_COLUMNS do
 		local label = self.tableHeaderLabels[i]
-		local h = headers[i]
-		if h == nil then
+		local column = spec[i]
+		if column == nil then
 			label:SetVisible(false)
 		else
 			local col = columns[i]
+			-- 8px cell padding on both sides, so a right-aligned header sits directly over the
+			-- right-aligned number underneath it.
 			label:SetPosition(col.x + 8, 0)
-			label:SetSize(col.width - (i == 1 and 8 or 0), ROW_HEIGHT)
-			label:SetText(string.upper(h))
+			label:SetSize(math.max(0, col.width - 16), ROW_HEIGHT)
+			label:SetText(ColumnLabel(column, meta))
 			label:SetTextAlignment(col.align)
 			label:SetVisible(true)
 		end
 	end
 	self.tableHeaderRow:SetSize(x, ROW_HEIGHT)
 
+	-- The same 8px padding on the cells themselves.
+	local padded = {}
+	for i = 1, table.getn(columns) do
+		padded[i] = {
+			x = columns[i].x + 8, width = math.max(0, columns[i].width - 16),
+			font = columns[i].font, align = columns[i].align, colorHex = columns[i].colorHex,
+		}
+	end
+
 	for i = 1, table.getn(self.tableRowPool) do
 		local slot = self.tableRowPool[i]
 		slot.container:SetSize(x, ROW_HEIGHT)
+		slot.divider:SetSize(x, 1)
 		slot.shareBar:SetBackColor(Theme.Mix(meta.color, Theme.Hex.WindowFill, 0.08))
 
 		if slot.row == nil then
-			slot.row = Row(x, ROW_HEIGHT, columns)
+			slot.row = Row(x, ROW_HEIGHT, padded)
 			slot.row:SetParent(slot.container)
 			slot.row:SetPosition(0, 0)
 		else
-			slot.row:Reconfigure(x, columns)
+			slot.row:Reconfigure(x, padded)
 		end
 	end
 end
 
-function Analysis:TableRows(session, view, filterWho)
-	if view == "healOut" or view == "healIn" then
+-- Damage views group across counterparts by skill+type; heal views keep one row per
+-- skill+counterpart, since "who healed you" is the interesting axis there. `rows` is whatever
+-- Session:Slice returned for the current category/range/filter, so this is the same code path
+-- whether or not a range is active.
+function Analysis:TableRows(rows, view)
+	local meta = VIEW_META[view]
+
+	if meta.shape == "heal" then
 		local list = {}
-		for _, row in pairs(session.agg[view]) do
-			if filterWho == nil or row.who == filterWho then
-				table.insert(list, row)
-			end
+		for i = 1, table.getn(rows) do
+			list[i] = rows[i]
 		end
 		table.sort(list, function(a, b) return a.total > b.total end)
 		return list
@@ -685,50 +976,61 @@ function Analysis:TableRows(session, view, filterWho)
 
 	local grouped = {}
 	local order = {}
-	for _, row in pairs(session.agg[view]) do
-		if filterWho == nil or row.who == filterWho then
-			local key = row.skill .. "\1" .. row.type
-			local g = grouped[key]
-			if g == nil then
-				g = { skill = row.skill, type = row.type, hits = 0, total = 0, max = 0, crits = 0, devs = 0, avoided = 0 }
-				grouped[key] = g
-				table.insert(order, g)
-			end
-			g.hits = g.hits + row.hits
-			g.total = g.total + row.total
-			g.crits = g.crits + row.crits
-			g.devs = g.devs + row.devs
-			g.avoided = g.avoided + (row.avoided or 0)
-			if row.max > g.max then
-				g.max = row.max
-			end
+	for i = 1, table.getn(rows) do
+		local row = rows[i]
+		local key = row.skill .. "\1" .. row.type
+		local g = grouped[key]
+		if g == nil then
+			g = { skill = row.skill, type = row.type, hits = 0, total = 0, max = 0, crits = 0, devs = 0, avoided = 0 }
+			grouped[key] = g
+			table.insert(order, g)
+		end
+		g.hits = g.hits + row.hits
+		g.total = g.total + row.total
+		g.crits = g.crits + row.crits
+		g.devs = g.devs + row.devs
+		g.avoided = g.avoided + (row.avoided or 0)
+		if row.max > g.max then
+			g.max = row.max
 		end
 	end
 	table.sort(order, function(a, b) return a.total > b.total end)
 	return order
 end
 
-function Analysis:RowValues(view, row)
-	if view == "healOut" or view == "healIn" then
-		return { row.skill, row.who, Format.Number(row.hits), Format.Number(row.crits), Format.Number(row.devs), Format.Number(row.max), Format.Number(row.total) }
-	elseif view == "taken" then
-		local swings = row.hits + row.avoided
-		local avoidedPct = swings > 0 and Format.Percent(row.avoided / swings) or "0%"
-		return { row.skill, DamageType.Names[row.type] or "?", Format.Number(row.hits), Format.Number(row.crits), Format.Number(row.devs), avoidedPct, Format.Number(row.max), Format.Number(row.total) }
-	else
-		return { row.skill, DamageType.Names[row.type] or "?", Format.Number(row.hits), Format.Number(row.crits), Format.Number(row.devs), Format.Number(row.max), Format.Number(row.total) }
+local function CritDevText(row)
+	if row.hits <= 0 then
+		return "0% / 0%"
 	end
+	return Format.Percent(row.crits / row.hits) .. " / " .. Format.Percent(row.devs / row.hits)
 end
 
-function Analysis:RefreshTable(session)
+function Analysis:RowValues(view, row)
+	local meta = VIEW_META[view]
+
+	if meta.shape == "heal" then
+		return {
+			row.skill, row.who, Format.Number(row.hits), CritDevText(row),
+			Format.Number(row.max), Format.Number(row.total),
+		}
+	end
+
+	local swings = row.hits + (row.avoided or 0)
+	local avoidedPct = swings > 0 and Format.Percent((row.avoided or 0) / swings) or "0%"
+	return {
+		row.skill, DamageType.Names[row.type] or "?", Format.Number(row.hits), CritDevText(row),
+		avoidedPct, Format.Number(row.max), Format.Number(row.total),
+	}
+end
+
+function Analysis:RefreshTable(rows)
 	local view = self.viewTab
-	local filterWho = self.filter[view]
-	local rows = session and self:TableRows(session, view, filterWho) or {}
+	local list = self:TableRows(rows, view)
 
 	local maxTotal = 0
-	for i = 1, table.getn(rows) do
-		if rows[i].total > maxTotal then
-			maxTotal = rows[i].total
+	for i = 1, table.getn(list) do
+		if list[i].total > maxTotal then
+			maxTotal = list[i].total
 		end
 	end
 
@@ -737,7 +1039,7 @@ function Analysis:RefreshTable(session)
 	-- membership list is rebuilt, never the Controls themselves.
 	self.scrollView:ClearItems()
 
-	local n = table.getn(rows)
+	local n = table.getn(list)
 	local poolSize = table.getn(self.tableRowPool)
 	if n > poolSize then
 		n = poolSize
@@ -745,7 +1047,7 @@ function Analysis:RefreshTable(session)
 
 	for i = 1, n do
 		local slot = self.tableRowPool[i]
-		local row = rows[i]
+		local row = list[i]
 
 		slot.row:SetValues(self:RowValues(view, row))
 		local share = (maxTotal > 0) and (row.total / maxTotal) or 0
@@ -753,6 +1055,392 @@ function Analysis:RefreshTable(session)
 
 		self.scrollView:AddItem(slot.container)
 	end
+end
+
+---------------------------------------------------------------------------------------------------
+-- Self-buff section
+---------------------------------------------------------------------------------------------------
+
+function Analysis:BuildBuffSection()
+	self.buffHolder = Turbine.UI.Control()
+	self.buffHolder:SetParent(self.contentArea)
+	self.buffHolder:SetMouseVisible(false)
+
+	self.buffTopRule = Turbine.UI.Control()
+	self.buffTopRule:SetParent(self.buffHolder)
+	self.buffTopRule:SetPosition(0, 0)
+	self.buffTopRule:SetSize(1, 1)
+	self.buffTopRule:SetBackColor(Theme.Color(Theme.Hex.Border))
+	self.buffTopRule:SetMouseVisible(false)
+
+	local header = Turbine.UI.Control()
+	header:SetParent(self.buffHolder)
+	header:SetPosition(0, 1)
+	header:SetSize(1, BUFF_HEADER_HEIGHT)
+	header:SetBackColor(Theme.Color(Theme.Hex.WindowFill))
+
+	-- ASCII caret, not the mock's Unicode triangles (U+25BE/25B8): the same class of glyph the
+	-- session-rail pins had to give up on, since this client's fonts render them as "?".
+	local caret = Turbine.UI.Label()
+	caret:SetParent(header)
+	caret:SetFont(Font.Verdana10)
+	caret:SetForeColor(Theme.Color(Theme.Hex.Accent))
+	caret:SetPosition(0, 0)
+	caret:SetSize(14, BUFF_HEADER_HEIGHT)
+	caret:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleCenter)
+	caret:SetMouseVisible(false)
+
+	local title = Turbine.UI.Label()
+	title:SetParent(header)
+	title:SetFont(Font.Verdana10)
+	title:SetText("SELF BUFFS")
+	title:SetForeColor(Theme.Color(Theme.Hex.MutedText))
+	title:SetPosition(16, 0)
+	title:SetSize(80, BUFF_HEADER_HEIGHT)
+	title:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
+	title:SetMouseVisible(false)
+
+	local summary = Turbine.UI.Label()
+	summary:SetParent(header)
+	summary:SetFont(Font.Verdana10)
+	summary:SetForeColor(Theme.Color(Theme.Hex.DimText))
+	summary:SetPosition(100, 0)
+	summary:SetSize(1, BUFF_HEADER_HEIGHT)
+	summary:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
+	summary:SetMouseVisible(false)
+
+	local window = self
+	header.MouseClick = function() window:ToggleBuffSection() end
+	header.MouseEnter = function()
+		header:SetBackColor(Theme.Color(Theme.Hex.Hover))
+		title:SetForeColor(Theme.Color(Theme.Hex.Accent200))
+	end
+	header.MouseLeave = function()
+		header:SetBackColor(Theme.Color(Theme.Hex.WindowFill))
+		title:SetForeColor(Theme.Color(Theme.Hex.MutedText))
+	end
+
+	self.buffHeader = { control = header, caret = caret, title = title, summary = summary }
+
+	self.buffTableHeader = Turbine.UI.Control()
+	self.buffTableHeader:SetParent(self.buffHolder)
+	self.buffTableHeader:SetSize(1, BUFF_TABLE_HEADER_HEIGHT)
+	self.buffTableHeader:SetBackColor(Theme.Color(Theme.Hex.HeaderFill))
+	self.buffTableHeader:SetMouseVisible(false)
+
+	self.buffHeaderLabels = {}
+	for i = 1, table.getn(BUFF_COLUMNS) do
+		local column = BUFF_COLUMNS[i]
+		local label = Turbine.UI.Label()
+		label:SetParent(self.buffTableHeader)
+		label:SetFont(Font.Verdana10)
+		label:SetForeColor(Theme.Color(Theme.Hex.DimText))
+		label:SetText(column.label)
+		label:SetSize(math.max(0, column.width - 16), BUFF_TABLE_HEADER_HEIGHT)
+		label:SetTextAlignment(column.numeric and Turbine.UI.ContentAlignment.MiddleRight
+			or Turbine.UI.ContentAlignment.MiddleLeft)
+		label:SetMouseVisible(false)
+		self.buffHeaderLabels[i] = label
+	end
+
+	self.buffRows = {}
+	for i = 1, BUFF_POOL do
+		self.buffRows[i] = self:BuildBuffRow()
+	end
+
+	self:LayoutBuffColumns(604)
+end
+
+function Analysis:BuildBuffRow()
+	local container = Turbine.UI.Control()
+	container:SetParent(self.buffHolder)
+	container:SetSize(1, BUFF_ROW_HEIGHT)
+	container:SetVisible(false)
+
+	local shareBar = Turbine.UI.Control()
+	shareBar:SetParent(container)
+	shareBar:SetPosition(0, 0)
+	shareBar:SetSize(0, BUFF_ROW_HEIGHT - 1)
+	shareBar:SetMouseVisible(false)
+
+	local divider = Turbine.UI.Control()
+	divider:SetParent(container)
+	divider:SetPosition(0, BUFF_ROW_HEIGHT - 1)
+	divider:SetSize(1, 1)
+	divider:SetBackColor(Theme.Color(Theme.Hex.RowBorder))
+	divider:SetMouseVisible(false)
+
+	-- The charted checkbox: an 8x8 border square whose inset fills with the lane colour when
+	-- this buff is charted, empty when it is not.
+	local box = Turbine.UI.Control()
+	box:SetParent(container)
+	box:SetPosition(8, math.floor((BUFF_ROW_HEIGHT - 8) / 2))
+	box:SetSize(8, 8)
+	box:SetMouseVisible(false)
+
+	local boxInset = Turbine.UI.Control()
+	boxInset:SetParent(box)
+	boxInset:SetPosition(1, 1)
+	boxInset:SetSize(6, 6)
+	boxInset:SetMouseVisible(false)
+
+	local icon = Turbine.UI.Control()
+	icon:SetParent(container)
+	icon:SetPosition(22, math.floor((BUFF_ROW_HEIGHT - 16) / 2))
+	icon:SetSize(16, 16)
+	icon:SetMouseVisible(false)
+
+	local iconInset = Turbine.UI.Control()
+	iconInset:SetParent(icon)
+	iconInset:SetPosition(1, 1)
+	iconInset:SetSize(14, 14)
+	iconInset:SetBackColor(Theme.Color(Theme.Hex.RailFill))
+	iconInset:SetMouseVisible(false)
+
+	local iconLabel = Turbine.UI.Label()
+	iconLabel:SetParent(icon)
+	iconLabel:SetFont(Font.Verdana10)
+	iconLabel:SetPosition(0, 0)
+	iconLabel:SetSize(16, 16)
+	iconLabel:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleCenter)
+	iconLabel:SetMouseVisible(false)
+
+	local cells = {}
+	for i = 3, table.getn(BUFF_COLUMNS) do
+		local column = BUFF_COLUMNS[i]
+		local label = Turbine.UI.Label()
+		label:SetParent(container)
+		label:SetFont(column.numeric and Font.LucidaConsole12 or Font.Verdana12)
+		label:SetForeColor(Theme.Color(Theme.Hex.MutedText))
+		label:SetSize(math.max(0, column.width - 16), BUFF_ROW_HEIGHT - 1)
+		label:SetTextAlignment(column.numeric and Turbine.UI.ContentAlignment.MiddleRight
+			or Turbine.UI.ContentAlignment.MiddleLeft)
+		label:SetMouseVisible(false)
+		cells[i] = label
+	end
+
+	local widgets = {
+		container = container, shareBar = shareBar, divider = divider,
+		box = box, boxInset = boxInset,
+		icon = icon, iconInset = iconInset, iconLabel = iconLabel,
+		cells = cells, name = nil,
+	}
+
+	local window = self
+	container.MouseClick = function()
+		if widgets.name ~= nil then
+			window:ToggleCharted(widgets.name)
+		end
+	end
+	container.MouseEnter = function()
+		container:SetBackColor(Theme.Color(Theme.Hex.Hover))
+	end
+	container.MouseLeave = function()
+		container:SetBackColor(Theme.Color(Theme.Hex.WindowFill))
+	end
+
+	return widgets
+end
+
+function Analysis:LayoutBuffColumns(width)
+	-- The name column absorbs the slack when the window is wider than the mock's 604.
+	local fixed = 0
+	for i = 1, table.getn(BUFF_COLUMNS) do
+		if BUFF_COLUMNS[i].key ~= "name" then
+			fixed = fixed + BUFF_COLUMNS[i].width
+		end
+	end
+	local nameWidth = math.max(120, width - fixed)
+
+	local x = 0
+	self.buffColumnX = {}
+	for i = 1, table.getn(BUFF_COLUMNS) do
+		local column = BUFF_COLUMNS[i]
+		local w = (column.key == "name") and nameWidth or column.width
+		self.buffColumnX[i] = { x = x, width = w }
+		x = x + w
+	end
+
+	self.buffWidth = x
+
+	for i = 1, table.getn(BUFF_COLUMNS) do
+		local geo = self.buffColumnX[i]
+		local label = self.buffHeaderLabels[i]
+		label:SetPosition(geo.x + 8, 0)
+		label:SetSize(math.max(0, geo.width - 16), BUFF_TABLE_HEADER_HEIGHT)
+	end
+	-- The BUFF header spans the checkbox+icon gutter as well as the name column, matching the
+	-- mock's single 214px heading over the three of them.
+	self.buffHeaderLabels[3]:SetPosition(self.buffColumnX[2].x + 8, 0)
+	self.buffHeaderLabels[3]:SetSize(
+		math.max(0, self.buffColumnX[2].width + self.buffColumnX[3].width - 16),
+		BUFF_TABLE_HEADER_HEIGHT)
+
+	self.buffTableHeader:SetSize(x, BUFF_TABLE_HEADER_HEIGHT)
+
+	for r = 1, BUFF_POOL do
+		local widgets = self.buffRows[r]
+		widgets.container:SetSize(x, BUFF_ROW_HEIGHT)
+		widgets.divider:SetSize(x, 1)
+		for i = 3, table.getn(BUFF_COLUMNS) do
+			local geo = self.buffColumnX[i]
+			widgets.cells[i]:SetPosition(geo.x + 8, 0)
+			widgets.cells[i]:SetSize(math.max(0, geo.width - 16), BUFF_ROW_HEIGHT - 1)
+		end
+	end
+end
+
+function Analysis:ToggleBuffSection()
+	self.buffsOpen = not self.buffsOpen
+	_G.settings.buffsOpen = self.buffsOpen
+	Settings.Save()
+	self:RefreshContent()
+end
+
+function Analysis:IsCharted(name)
+	for i = 1, table.getn(self.charted) do
+		if self.charted[i] == name then
+			return i
+		end
+	end
+	return nil
+end
+
+-- Charted buffs are capped at MAX_CHARTED because there are exactly that many lane colours, and
+-- because more than three interval rails under one plot stops being readable. The fourth click
+-- drops the OLDEST rather than refusing: a click that appears to do nothing reads as a bug.
+function Analysis:ToggleCharted(name)
+	local index = self:IsCharted(name)
+	if index ~= nil then
+		table.remove(self.charted, index)
+	else
+		table.insert(self.charted, name)
+		while table.getn(self.charted) > MAX_CHARTED do
+			table.remove(self.charted, 1)
+		end
+	end
+
+	local names = {}
+	for i = 1, table.getn(self.charted) do
+		names[i] = self.charted[i]
+	end
+	_G.settings.chartedBuffs = names
+	Settings.Save()
+
+	self:RefreshContent()
+end
+
+function Analysis:RefreshBuffSection(stats, fromSec, toSec)
+	local open = self.buffsOpen
+	local tracked = table.getn(stats)
+
+	self.buffHeader.caret:SetText(open and "v" or ">")
+
+	local scope
+	if fromSec == nil then
+		scope = "full fight"
+	else
+		scope = Format.Clock(fromSec) .. "-" .. Format.Clock(toSec)
+	end
+	self.buffHeader.summary:SetText(
+		"· " .. tracked .. " tracked · " .. table.getn(self.charted) .. " charted · " .. scope)
+
+	self.buffTableHeader:SetVisible(open)
+
+	local shown = 0
+	if open then
+		shown = math.min(tracked, BUFF_POOL, self.buffRowsAllowed or BUFF_POOL)
+	end
+
+	for i = 1, BUFF_POOL do
+		local widgets = self.buffRows[i]
+		local row = (i <= shown) and stats[i] or nil
+
+		if row == nil then
+			widgets.container:SetVisible(false)
+			widgets.name = nil
+		else
+			widgets.name = row.name
+			widgets.container:SetVisible(true)
+			widgets.container:SetBackColor(Theme.Color(Theme.Hex.WindowFill))
+			self:FillBuffRow(widgets, row)
+		end
+	end
+end
+
+function Analysis:FillBuffRow(widgets, row)
+	local chartIndex = self:IsCharted(row.name)
+	local laneHex = chartIndex and Theme.BuffLane[chartIndex] or nil
+
+	widgets.shareBar:SetBackColor(Theme.Mix(laneHex or Theme.Hex.Accent, Theme.Hex.WindowFill, 0.08))
+	widgets.shareBar:SetSize(
+		math.floor(math.min(1, row.uptimePct) * self.buffWidth), BUFF_ROW_HEIGHT - 1)
+
+	widgets.box:SetBackColor(Theme.Color(laneHex or Theme.Hex.Disabled))
+	widgets.boxInset:SetBackColor(Theme.Color(laneHex or Theme.Hex.WindowFill))
+
+	widgets.icon:SetBackColor(Theme.Color(laneHex or "#3a3d4e"))
+	if row.icon ~= nil and row.icon ~= false then
+		widgets.iconInset:SetBackground(row.icon)
+		widgets.iconLabel:SetText("")
+	else
+		widgets.iconLabel:SetText(row.initials or "")
+		widgets.iconLabel:SetForeColor(Theme.Color(laneHex or Theme.Hex.DimText))
+	end
+
+	local pctHex = Theme.Hex.Text
+	if row.uptimePct >= BUFF_GOOD_UPTIME then
+		pctHex = Theme.Hex.HealingDone
+	elseif row.uptimePct < BUFF_POOR_UPTIME then
+		pctHex = Theme.Hex.DamageSevere
+	end
+
+	local gapHex = (row.longestGap > BUFF_LONG_GAP) and Theme.Hex.DamageSevere or Theme.Hex.MutedText
+
+	local texts = {
+		[3] = row.name,
+		[4] = Format.Percent(row.uptimePct),
+		[5] = Format.Clock(row.uptime),
+		[6] = Format.Number(row.apps),
+		[7] = math.floor(row.longestGap + 0.5) .. "s",
+	}
+	local colors = {
+		[3] = chartIndex and Theme.Hex.Accent200 or Theme.Hex.Text,
+		[4] = pctHex,
+		[5] = Theme.Hex.MutedText,
+		[6] = Theme.Hex.MutedText,
+		[7] = gapHex,
+	}
+
+	for i = 3, table.getn(BUFF_COLUMNS) do
+		widgets.cells[i]:SetText(texts[i] or "")
+		widgets.cells[i]:SetForeColor(Theme.Color(colors[i] or Theme.Hex.MutedText))
+	end
+end
+
+-- Lane descriptors for the graph, in charted order so lane 1 always keeps lane colour 1. A
+-- charted name with no stats row (a buff from a different session) is skipped rather than
+-- dropped from self.charted -- reselecting the session it came from brings its lane back.
+function Analysis:ChartedLanes(stats)
+	local byName = {}
+	for i = 1, table.getn(stats) do
+		byName[stats[i].name] = stats[i]
+	end
+
+	local lanes = {}
+	for i = 1, table.getn(self.charted) do
+		local row = byName[self.charted[i]]
+		if row ~= nil then
+			lanes[table.getn(lanes) + 1] = {
+				name = row.name,
+				colorHex = Theme.BuffLane[i] or Theme.BuffLane[1],
+				initials = row.initials,
+				icon = (row.icon ~= false) and row.icon or nil,
+				intervals = row.intervals,
+			}
+		end
+	end
+	return lanes
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -783,7 +1471,7 @@ function Analysis:BuildPanel()
 	title:SetMouseVisible(false)
 
 	local rows = {}
-	for i = 1, 6 do
+	for i = 1, 5 do
 		local nameLabel = Turbine.UI.Label()
 		nameLabel:SetParent(holder)
 		nameLabel:SetFont(Font.Verdana10)
@@ -795,12 +1483,12 @@ function Analysis:BuildPanel()
 		local valueLabel = Turbine.UI.Label()
 		valueLabel:SetParent(holder)
 		valueLabel:SetFont(Font.LucidaConsole12)
-		valueLabel:SetForeColor(Theme.Color(Theme.Hex.Text))
+		valueLabel:SetForeColor(Theme.Color(Theme.Hex.MutedText))
 		valueLabel:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleRight)
 		valueLabel:SetMouseVisible(false)
 		valueLabel:SetVisible(false)
 
-		local bar = Bar(1, 3, Theme.Hex.Accent, "#ffffff0e")
+		local bar = Bar(1, 3, Theme.Hex.Accent, Theme.Hex.RowBorder)
 		bar:SetParent(holder)
 		bar:SetVisible(false)
 
@@ -810,17 +1498,18 @@ function Analysis:BuildPanel()
 	return { holder = holder, title = title, rows = rows }
 end
 
-function Analysis:PanelData(session, view, filterWho)
-	local isHeal = (view == "healOut" or view == "healIn")
+-- Both panels are fed from the same sliced rows as everything else, so they follow the range
+-- and the picker without a second recount.
+function Analysis:PanelData(rows, view, filterWho)
 	local meta = VIEW_META[view]
+	local isHeal = (meta.shape == "heal")
 
-	local function totalsBy(field, who)
+	local function totalsBy(field)
 		local totals = {}
-		for _, row in pairs(session.agg[view]) do
-			if who == nil or row.who == who then
-				local key = (field == "type") and (DamageType.Names[row.type] or "Unknown") or row[field]
-				totals[key] = (totals[key] or 0) + row.total
-			end
+		for i = 1, table.getn(rows) do
+			local row = rows[i]
+			local key = (field == "type") and (DamageType.Names[row.type] or "Unknown") or row[field]
+			totals[key] = (totals[key] or 0) + row.total
 		end
 		return totals
 	end
@@ -835,20 +1524,18 @@ function Analysis:PanelData(session, view, filterWho)
 	end
 
 	if filterWho == nil then
-		local panelA = { title = string.upper(meta.pickerLabel), items = toItems(totalsBy("who", nil)) }
-		local panelB = { title = isHeal and "BY SKILL" or "BY TYPE", items = toItems(totalsBy(isHeal and "skill" or "type", nil)) }
+		local panelA = { title = string.upper(meta.pickerLabel), items = toItems(totalsBy("who")) }
+		local panelB = { title = isHeal and "BY SKILL" or "BY TYPE", items = toItems(totalsBy(isHeal and "skill" or "type")) }
 		return panelA, panelB
 	end
 
-	local panelA = { title = isHeal and "BY SKILL" or "BY TYPE", items = toItems(totalsBy(isHeal and "skill" or "type", filterWho)) }
+	local panelA = { title = isHeal and "BY SKILL" or "BY TYPE", items = toItems(totalsBy(isHeal and "skill" or "type")) }
 
 	if isHeal then
 		local crit, normal = 0, 0
-		for _, row in pairs(session.agg[view]) do
-			if row.who == filterWho then
-				crit = crit + row.crits + row.devs
-				normal = normal + (row.hits - row.crits - row.devs)
-			end
+		for i = 1, table.getn(rows) do
+			crit = crit + rows[i].crits + rows[i].devs
+			normal = normal + (rows[i].hits - rows[i].crits - rows[i].devs)
 		end
 		local items = {}
 		if crit > 0 then table.insert(items, { name = "Critical", value = crit }) end
@@ -857,9 +1544,10 @@ function Analysis:PanelData(session, view, filterWho)
 	end
 
 	local avoidTotals = {}
-	for _, row in pairs(session.agg[view]) do
-		if row.who == filterWho then
-			for avoidType, count in pairs(row.avoidBreakdown) do
+	for i = 1, table.getn(rows) do
+		local breakdown = rows[i].avoidBreakdown
+		if breakdown ~= nil then
+			for avoidType, count in pairs(breakdown) do
 				local name = AVOID_NAMES[avoidType] or "Other"
 				avoidTotals[name] = (avoidTotals[name] or 0) + count
 			end
@@ -868,7 +1556,7 @@ function Analysis:PanelData(session, view, filterWho)
 	return panelA, { title = "AVOIDANCE", items = toItems(avoidTotals) }
 end
 
-function Analysis:RefreshPanel(panel, data)
+function Analysis:RefreshPanel(panel, data, colorHex)
 	panel.title:SetText(data.title)
 
 	local maxValue = 0
@@ -878,9 +1566,9 @@ function Analysis:RefreshPanel(panel, data)
 		end
 	end
 
-	local barWidth = select(1, panel.holder:GetSize())
+	local panelWidth = select(1, panel.holder:GetSize())
 
-	for i = 1, 6 do
+	for i = 1, 5 do
 		local widgets = panel.rows[i]
 		local item = data.items[i]
 
@@ -889,20 +1577,21 @@ function Analysis:RefreshPanel(panel, data)
 			widgets.value:SetVisible(false)
 			widgets.bar:SetVisible(false)
 		else
-			local y = 16 + (i - 1) * 16
+			local y = 16 + (i - 1) * 20
 			widgets.name:SetPosition(0, y)
-			widgets.name:SetSize(barWidth - 70, 12)
+			widgets.name:SetSize(math.max(0, panelWidth - 70), 12)
 			widgets.name:SetText(item.name)
 			widgets.name:SetVisible(true)
 
-			widgets.value:SetPosition(barWidth - 60, y)
-			widgets.value:SetSize(60, 12)
+			widgets.value:SetPosition(panelWidth - 66, y)
+			widgets.value:SetSize(66, 12)
 			widgets.value:SetText(Format.Number(item.value))
 			widgets.value:SetVisible(true)
 
-			widgets.bar:SetPosition(0, y + 13)
-			widgets.bar.maxWidth = barWidth
-			widgets.bar:SetSize(barWidth, 3)
+			widgets.bar:SetPosition(0, y + 14)
+			widgets.bar.maxWidth = panelWidth
+			widgets.bar:SetSize(panelWidth, 3)
+			widgets.bar:SetFillColor(colorHex)
 			widgets.bar:SetPercent(maxValue > 0 and (item.value / maxValue) or 0)
 			widgets.bar:SetVisible(true)
 		end
@@ -913,7 +1602,7 @@ end
 -- View / data refresh
 ---------------------------------------------------------------------------------------------------
 
-function Analysis:SelectView(key, skipReset)
+function Analysis:SelectView(key, skipRefresh)
 	self.viewTab = key
 
 	for i = 1, table.getn(VIEWS) do
@@ -921,44 +1610,98 @@ function Analysis:SelectView(key, skipReset)
 		local t = self.viewTabs[k]
 		local selected = (k == key)
 		t.label:SetForeColor(Theme.Color(selected and Theme.Hex.Accent200 or Theme.Hex.DimText))
-		t.underline:SetBackColor(Theme.Color(selected and Theme.Hex.Accent or Theme.Hex.WindowFill))
-		t.control:SetBackColor(selected and Theme.Mix(Theme.Hex.Accent, Theme.Hex.WindowFill, 0.11) or Theme.Color(Theme.Hex.WindowFill))
+		t.underline:SetBackColor(Theme.Color(selected and Theme.Hex.Accent or Theme.Hex.Border))
+		t.control:SetBackColor(Theme.Color(selected and Theme.Hex.ActiveTab or Theme.Hex.WindowFill))
 	end
 
-	if self.graph ~= nil then
-		self:ConfigureGraphSeries()
+	self:RefreshTableColumns(self.tableListWidth or 400)
+
+	if not skipRefresh then
+		self:RefreshContent()
 	end
-
-	self:RefreshTableColumns(self.tableWidth or 400)
-	self:RefreshContent()
 end
 
-function Analysis:ConfigureGraphSeries()
-	local seriesForView = {
-		done = { { key = "done", label = "Damage", colorHex = Theme.Hex.DamageDone } },
-		healOut = { { key = "healOut", label = "Healing out", colorHex = Theme.Hex.HealingDone } },
-		healIn = {
-			{ key = "healIn", label = "Healing in", colorHex = Theme.Hex.HealingTaken },
-			{ key = "taken", label = "Damage taken", colorHex = Theme.Hex.DamageTaken },
-		},
-		taken = {
-			{ key = "taken", label = "Damage taken", colorHex = Theme.Hex.DamageTaken },
-			{ key = "healIn", label = "Healing in", colorHex = Theme.Hex.HealingTaken },
-		},
-	}
-	self.graph:SetSeries(seriesForView[self.viewTab])
-end
+-- Which series each view plots. The two "incoming" views carry both sides of the exchange, since
+-- damage taken only means something next to the healing that did or didn't cover it.
+local SERIES_FOR_VIEW = {
+	done = { { key = "done", label = "Damage", colorHex = Theme.Hex.DamageDone } },
+	healOut = { { key = "healOut", label = "Healing out", colorHex = Theme.Hex.HealingDone } },
+	taken = {
+		{ key = "taken", label = "Damage taken", colorHex = Theme.Hex.DamageTaken },
+		{ key = "healIn", label = "Healing in", colorHex = Theme.Hex.HealingTaken },
+	},
+	healIn = {
+		{ key = "healIn", label = "Healing in", colorHex = Theme.Hex.HealingTaken },
+		{ key = "taken", label = "Damage taken", colorHex = Theme.Hex.DamageTaken },
+	},
+}
 
-function Analysis:RefreshContent()
+-- One recount per interaction. Every widget below is fed from `rows` (a single Session:Slice)
+-- and `stats` (a single Buffs.Stats), never from its own separate pass over the session.
+--
+-- skipRelayout is set only by Layout()'s own trailing call: this function can discover that the
+-- number of charted lanes or visible buff rows changed, which changes the window's block
+-- geometry, and asks Layout() to run again -- but Layout() ends by calling back here, so the
+-- second pass must not be allowed to bounce back.
+function Analysis:RefreshContent(skipRelayout)
 	local session = self.selectedSession
 	local view = self.viewTab
 	local filterWho = self.filter[view]
 	local meta = VIEW_META[view]
+	local showMorale = (view == "taken" or view == "healIn")
 
 	self.goalLine:SetText(meta.question)
-
 	self:RefreshPicker()
+	self:RefreshHeaderExtras()
 
+	local fromSec, toSec = self:RangeSeconds()
+	local rows = session and session:Slice(view, fromSec, toSec, filterWho) or {}
+	local stats = Buffs.Stats(session, fromSec, toSec)
+
+	-- Re-run the layout if the variable-height blocks changed shape, then let that pass do the
+	-- drawing (it calls back in with skipRelayout set).
+	local lanes = self:ChartedLanes(stats)
+	local laneCount = table.getn(lanes)
+	local buffRowsWanted = self.buffsOpen and math.min(table.getn(stats), BUFF_POOL) or 0
+
+	if not skipRelayout and (laneCount ~= self.layoutLanes or buffRowsWanted ~= self.layoutBuffRows) then
+		self.laneCountWanted = laneCount
+		self.buffRowsWanted = buffRowsWanted
+		self:Layout()
+		return
+	end
+	self.laneCountWanted = laneCount
+	self.buffRowsWanted = buffRowsWanted
+
+	self:RefreshKpis(session, view, filterWho, meta, rows, fromSec, toSec)
+
+	if self.graph ~= nil then
+		-- Only re-declare the series when the VIEW changed: SetSeries clears the hidden set, so
+		-- doing it on every refresh would silently un-hide a series the reader had toggled off
+		-- the moment they dragged a range handle or picked a different target.
+		if self.graphSeriesView ~= view then
+			self.graphSeriesView = view
+			self.graph:SetSeriesWithMorale(SERIES_FOR_VIEW[view], showMorale)
+		end
+		self.graph:SetData(session, showMorale, filterWho)
+		self.graph:SetRange(self.rangeFrom, self.rangeTo)
+		self.graph:SetLanes(lanes)
+	end
+
+	self:RefreshTable(rows)
+	self:RefreshBuffSection(stats, fromSec, toSec)
+
+	if session == nil then
+		self:RefreshPanel(self.panelA, { title = "", items = {} }, meta.color)
+		self:RefreshPanel(self.panelB, { title = "", items = {} }, meta.color)
+	else
+		local dataA, dataB = self:PanelData(rows, view, filterWho)
+		self:RefreshPanel(self.panelA, dataA, meta.color)
+		self:RefreshPanel(self.panelB, dataB, Theme.Hex.Accent)
+	end
+end
+
+function Analysis:RefreshKpis(session, view, filterWho, meta, rows, fromSec, toSec)
 	local kpis
 	if session == nil then
 		kpis = {}
@@ -966,8 +1709,9 @@ function Analysis:RefreshContent()
 			kpis[i] = { label = "--", value = "--", sub = "", subColor = Theme.Hex.DimText }
 		end
 	else
-		kpis = self:ComputeKpis(session, view, filterWho, meta)
+		kpis = self:ComputeKpis(session, view, filterWho, meta, rows, fromSec, toSec)
 	end
+
 	for i = 1, 5 do
 		local card = self.kpiCards[i]
 		card.label:SetText(kpis[i].label)
@@ -975,49 +1719,53 @@ function Analysis:RefreshContent()
 		card.sub:SetText(kpis[i].sub)
 		card.sub:SetForeColor(Theme.Color(kpis[i].subColor))
 	end
-
-	if self.graph ~= nil then
-		local showMorale = (view == "healIn" or view == "taken")
-		-- Respects the target/source picker, same as the KPIs/table/side panels -- per direct
-		-- feedback ("the graph should also be updated with the target/source selection").
-		self.graph:SetData(session, showMorale, filterWho)
-	end
-
-	self:RefreshTable(session)
-
-	if session == nil then
-		self:RefreshPanel(self.panelA, { title = "", items = {} })
-		self:RefreshPanel(self.panelB, { title = "", items = {} })
-	else
-		local dataA, dataB = self:PanelData(session, view, filterWho)
-		self:RefreshPanel(self.panelA, dataA)
-		self:RefreshPanel(self.panelB, dataB)
-	end
 end
 
-function Analysis:ComputeKpis(session, category, filterWho, meta)
-	local stats = session:HitStats(category, filterWho)
-	local total = session:Total(category, filterWho)
-	local rate = session:Rate(category, filterWho)
-
-	local names = {}
-	local count = 0
-	for _, row in pairs(session.agg[category]) do
-		if (filterWho == nil or row.who == filterWho) and not names[row.who] then
-			names[row.who] = true
-			count = count + 1
+function Analysis:ComputeKpis(session, category, filterWho, meta, rows, fromSec, toSec)
+	local total, hits, crits, devs, max, maxSkill = 0, 0, 0, 0, 0, nil
+	for i = 1, table.getn(rows) do
+		local row = rows[i]
+		total = total + row.total
+		hits = hits + row.hits
+		crits = crits + row.crits
+		devs = devs + row.devs
+		if row.max > max then
+			max = row.max
+			maxSkill = row.skill
 		end
 	end
 
-	local critPct = stats.hits > 0 and (stats.crits / stats.hits) or 0
-	local devPct = stats.hits > 0 and (stats.devs / stats.hits) or 0
+	local activeSeconds = session:ActiveSeconds(fromSec, toSec)
+	local rate = (activeSeconds > 0) and (total / activeSeconds) or 0
+
+	local critPct = hits > 0 and (crits / hits) or 0
+	local devPct = hits > 0 and (devs / hits) or 0
+
+	-- The fifth card swaps role with the range: unscoped it reports how much of the fight you
+	-- were actually acting in, scoped it reports which slice you are looking at -- which is the
+	-- thing you most need confirmed while dragging a handle.
+	local timeCard
+	if fromSec == nil then
+		timeCard = {
+			label = "ACTIVE", value = Format.Clock(activeSeconds),
+			sub = "of " .. Format.Clock(session:Duration()), subColor = Theme.Hex.DimText,
+		}
+	else
+		timeCard = {
+			label = "RANGE", value = Format.Clock(toSec - fromSec),
+			sub = Format.Clock(fromSec) .. "-" .. Format.Clock(toSec), subColor = Theme.Hex.Accent300,
+		}
+	end
 
 	return {
 		{ label = "TOTAL", value = Format.Number(total), sub = Format.Rate(rate), subColor = Theme.Hex.Accent300 },
-		{ label = string.upper(meta.hitWord), value = Format.Number(stats.hits), sub = count .. " " .. meta.pickerLabel, subColor = Theme.Hex.DimText },
-		{ label = "CRIT / DEV", value = Format.Percent(critPct) .. " / " .. Format.Percent(devPct), sub = "of " .. meta.hitWord, subColor = Theme.Hex.DimText },
-		{ label = "LARGEST", value = stats.max > 0 and Format.Number(stats.max) or "--", sub = stats.maxSkill or "--", subColor = Theme.Hex.DimText },
-		{ label = "ACTIVE", value = Format.Clock(session:ActiveSeconds()), sub = "of " .. Format.Clock(session:Duration()), subColor = Theme.Hex.DimText },
+		{ label = string.upper(meta.hitWord), value = Format.Number(hits),
+		  sub = table.getn(rows) .. " skills", subColor = Theme.Hex.DimText },
+		{ label = "CRIT / DEV", value = Format.Percent(critPct) .. " / " .. Format.Percent(devPct),
+		  sub = "of " .. meta.hitWord, subColor = Theme.Hex.DimText },
+		{ label = "LARGEST", value = max > 0 and Format.Number(max) or "--",
+		  sub = maxSkill or "--", subColor = Theme.Hex.DimText },
+		timeCard,
 	}
 end
 
@@ -1085,48 +1833,98 @@ function Analysis:Layout()
 	self.contentArea:SetSize(contentWidth, contentHeight)
 
 	local innerX = PAD
-	local innerWidth = contentWidth - PAD * 2
+	local innerWidth = math.max(200, contentWidth - PAD * 2)
 
-	local goalY = TAB_STRIP_HEIGHT + GAP
-	self.goalLine:SetPosition(innerX, goalY)
-	self.goalLine:SetSize(innerWidth, 16)
+	-- Tab strip: four 140px tabs from the left, the goal line filling whatever is left, and a
+	-- 1px rule under the goal line continuing the inactive tabs' baseline to the window edge.
+	local tabsWidth = table.getn(VIEWS) * TAB_WIDTH
+	local goalX = innerX + tabsWidth
+	local goalWidth = math.max(0, contentWidth - PAD - goalX)
+	self.goalLine:SetPosition(goalX, 0)
+	self.goalLine:SetSize(goalWidth, TAB_STRIP_HEIGHT - 3)
+	self.goalRule:SetPosition(goalX, TAB_STRIP_HEIGHT - 1)
+	self.goalRule:SetSize(goalWidth, 1)
 
-	local pickerY = goalY + 16 + GAP
+	local pickerY = 40
 	self.pickerRow:SetPosition(innerX, pickerY)
-	self.pickerRow:SetSize(innerWidth, 24)
+	self.pickerRow:SetSize(innerWidth, PICKER_HEIGHT)
 
-	local kpiY = pickerY + 24 + GAP
+	local kpiY = 72
 	self.kpiRow:SetPosition(innerX, kpiY)
 	self.kpiRow:SetSize(innerWidth, KPI_ROW_HEIGHT)
 	self:LayoutKpiCards(innerWidth)
 
-	local graphY = kpiY + KPI_ROW_HEIGHT + GAP
+	-- The graph's own height depends on how many buff lanes are charted, so ask it rather than
+	-- keeping a second copy of that arithmetic here.
+	local graphHeight = GraphHeightFor(self.laneCountWanted or 0)
+
+	local graphY = 133
 	self.graphHolder:SetPosition(innerX, graphY)
-	self.graphHolder:SetSize(innerWidth, GRAPH_HEIGHT)
+	self.graphHolder:SetSize(innerWidth, graphHeight)
 	self:LayoutGraph(innerWidth)
 
-	local tableY = graphY + GRAPH_HEIGHT + GAP
-	local tableAreaHeight = contentHeight - tableY - PAD
-	if tableAreaHeight < 80 then
-		tableAreaHeight = 80
+	local tableY = graphY + graphHeight + GAP
+
+	-- The bottom row (buff table on the left, side panels on the right) claims what its content
+	-- needs; the skill table takes everything that is left and scrolls. When the window is too
+	-- short for both, the skill table shrinks to its floor first and the buff list gets capped
+	-- second -- in that order, because the skill table is the block a reader came for.
+	local available = math.max(0, contentHeight - tableY - PAD)
+	local buffRows = self.buffRowsWanted or 0
+	local bottomHeight = BUFF_HEADER_HEIGHT + 1
+	if self.buffsOpen then
+		bottomHeight = bottomHeight + BUFF_TABLE_HEADER_HEIGHT + buffRows * BUFF_ROW_HEIGHT
 	end
 
-	local tableWidth = math.floor((innerWidth - GAP) * 2.6 / 3.6)
-	local panelsWidth = innerWidth - GAP - tableWidth
+	local minTable = ROW_HEIGHT * 5
+	local maxBottom = available - GAP - minTable
+	if bottomHeight > maxBottom then
+		bottomHeight = math.max(BUFF_HEADER_HEIGHT + 1, maxBottom)
+	end
+	if bottomHeight < BUFF_HEADER_HEIGHT + 1 then
+		bottomHeight = BUFF_HEADER_HEIGHT + 1
+	end
 
-	local listWidth = tableWidth - SCROLLBAR_WIDTH
+	-- How many buff rows actually fit in whatever the bottom row ended up with.
+	local rowSpace = bottomHeight - BUFF_HEADER_HEIGHT - 1 - BUFF_TABLE_HEADER_HEIGHT
+	self.buffRowsAllowed = self.buffsOpen and math.max(0, math.floor(rowSpace / BUFF_ROW_HEIGHT)) or 0
+
+	local tableHeight = available - GAP - bottomHeight
+	if tableHeight < ROW_HEIGHT * 2 then
+		tableHeight = ROW_HEIGHT * 2
+	end
+
+	local listWidth = innerWidth - SCROLLBAR_WIDTH
+	self.tableListWidth = listWidth
 
 	self.tableHolder:SetPosition(innerX, tableY)
-	self.tableHolder:SetSize(tableWidth, tableAreaHeight)
+	self.tableHolder:SetSize(innerWidth, tableHeight)
 	self.scrollView:SetPosition(0, ROW_HEIGHT)
-	self.scrollView:SetSize(listWidth, tableAreaHeight - ROW_HEIGHT)
+	self.scrollView:SetSize(listWidth, math.max(0, tableHeight - ROW_HEIGHT))
 	self.tableScrollBar:SetPosition(listWidth, ROW_HEIGHT)
-	self.tableScrollBar:SetHeight(tableAreaHeight - ROW_HEIGHT)
+	self.tableScrollBar:SetHeight(math.max(0, tableHeight - ROW_HEIGHT))
 	self:RefreshTableColumns(listWidth)
 
-	self.panelsHolder:SetPosition(innerX + tableWidth + GAP, tableY)
-	self.panelsHolder:SetSize(panelsWidth, tableAreaHeight)
-	local panelHeight = math.floor((tableAreaHeight - GAP) / 2)
+	local bottomY = tableY + tableHeight + GAP
+	local panelsWidth = PANEL_WIDTH
+	local buffWidth = math.max(200, innerWidth - GAP - panelsWidth)
+
+	self.buffHolder:SetPosition(innerX, bottomY)
+	self.buffHolder:SetSize(buffWidth, bottomHeight)
+	self.buffTopRule:SetSize(buffWidth, 1)
+	self.buffHeader.control:SetSize(buffWidth, BUFF_HEADER_HEIGHT)
+	self.buffHeader.summary:SetSize(math.max(0, buffWidth - 100), BUFF_HEADER_HEIGHT)
+	self.buffTableHeader:SetPosition(0, BUFF_HEADER_HEIGHT + 1)
+	self:LayoutBuffColumns(buffWidth)
+
+	for i = 1, BUFF_POOL do
+		self.buffRows[i].container:SetPosition(
+			0, BUFF_HEADER_HEIGHT + 1 + BUFF_TABLE_HEADER_HEIGHT + (i - 1) * BUFF_ROW_HEIGHT)
+	end
+
+	self.panelsHolder:SetPosition(innerX + buffWidth + GAP, bottomY)
+	self.panelsHolder:SetSize(panelsWidth, bottomHeight)
+	local panelHeight = math.max(20, math.floor((bottomHeight - GAP) / 2))
 	self.panelA.holder:SetPosition(0, 0)
 	self.panelA.holder:SetSize(panelsWidth, panelHeight)
 	self.panelB.holder:SetPosition(0, panelHeight + GAP)
@@ -1134,7 +1932,12 @@ function Analysis:Layout()
 
 	self.gripper:SetPosition(w - 12, h - 12)
 
-	self:RefreshContent()
+	-- Record what this pass sized things for, so RefreshContent can tell whether the shape
+	-- changed and skip re-entering here when it did not.
+	self.layoutBuffRows = self.buffRowsWanted or 0
+	self.layoutLanes = self.laneCountWanted or 0
+
+	self:RefreshContent(true)
 end
 
 function Analysis:LayoutKpiCards(innerWidth)
@@ -1146,7 +1949,7 @@ function Analysis:LayoutKpiCards(innerWidth)
 		card.control:SetSize(cardWidth, KPI_ROW_HEIGHT)
 		card.border:SetSize(cardWidth, KPI_ROW_HEIGHT)
 		card.label:SetSize(cardWidth - 16, 12)
-		card.value:SetSize(cardWidth - 16, 24)
+		card.value:SetSize(cardWidth - 16, 20)
 		card.sub:SetSize(cardWidth - 16, 12)
 		x = x + cardWidth + 8
 	end
@@ -1154,10 +1957,11 @@ end
 
 function Analysis:LayoutGraph(innerWidth)
 	if self.graph == nil then
+		local window = self
 		self.graph = Graph(innerWidth)
 		self.graph:SetParent(self.graphHolder)
 		self.graph:SetPosition(0, 0)
-		self:ConfigureGraphSeries()
+		self.graph.OnRangeChanged = function(from, to) window:OnRangeChanged(from, to) end
 	elseif self.graph.plotWidth ~= innerWidth then
 		self.graph:Resize(innerWidth)
 	end

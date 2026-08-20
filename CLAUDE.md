@@ -11,7 +11,10 @@ meter, a death post-mortem, and a post-combat analysis window. It runs inside th
 Turbine plugin engine -- there is no build step, package manager, linter, or test runner.
 
 Read `docs/DESIGN.md` first (the data model and parser facts that decide what is buildable),
-then `docs/IMPLEMENTATION_PLAN.md` (the phased build order). Both came from a design handoff
+then `docs/IMPLEMENTATION_PLAN.md` (the phased build order), then `docs/redesign/` -- the v0.2.0
+handoff bundle (`REDESIGN_SPEC.md` is the Lua-side plan, `GRAPH_RESEARCH.md` is the four ways to
+draw a line in this API and why the code picked the one it did, `mock/` is an interactive HTML
+design reference you open in a browser). Code comments cite `REDESIGN_SPEC.md` section numbers. Both came from a design handoff
 bundle at `~/Downloads/design_handoff_combat_analyzer` and are reproduced here in full, along
 with the HTML mockup (`docs/mockup/`) and real combat-log fixtures (`reference/`).
 
@@ -33,9 +36,28 @@ Runtime errors surface in the LotRO chat window; there is no other log.
 The version appears in **three** places and must be kept in sync: `Reckoning.plugin`
 (`<Version>`), `Reckoning.plugincompendium` (`<Version>`), and `Constants.lua`
 (`Reckoning.Version`). `CHANGELOG.md` gets a matching entry, written for players rather than
-developers.
+developers. `tools/offline/load_test.lua` asserts the `Constants.lua` value, so a half-done bump
+fails there.
 
 ## Build status
+
+**v0.2.0 applies the analysis-window redesign** from the handoff bundle
+(`design_handoff_reckoning_redesign/`: `README.md`, `REDESIGN_SPEC.md`, `GRAPH_RESEARCH.md`, and
+an interactive HTML mock). Four changes plus two small passes: the graph became a line-and-dot
+plot, morale became a background bar graph, self-buff tracking arrived with its own table and
+charted lanes, and a two-handle range slider rescopes the whole window. See `CHANGELOG.md` for
+the player-facing version and `REDESIGN_SPEC.md` for the spec each piece came from.
+
+**There is now a real offline test suite: `tools/offline/`.** Unlike the original scratch harness
+(described below), it runs the **real** classes and the **real** `Main.lua` under a **real Lua
+5.1** interpreter against a `Turbine` stub built on this repo's own `class()` shim. `sh
+tools/offline/run.sh` runs 246 checks in about a second. It caught three genuine bugs during the
+redesign that `luac -p` could not have: an index-base probe that could not actually distinguish a
+0-based from a 1-based `EffectList`, a `nil` layout constant reaching `SetPosition`, and the
+analysis window failing to adopt an already-archived session. **Run it before every in-game
+load** -- it does not replace one, but everything it catches is something you would otherwise
+have burned a reload finding. Read `tools/offline/README.md` for what it deliberately cannot see.
+
 
 All six implementation-plan phases are done. **None of it has been loaded in-game yet** --
 every file is syntax-checked (`luac -p`) and, for Phases 1-2, verified offline against real
@@ -267,11 +289,13 @@ inheritance + mixins). Treat them as vendored, not Reckoning-specific.
 | `Session.lua` | The `Session` class -- one fight's aggregate (`agg.done/taken/healOut/healIn`, `buckets`, `lastTaken` ring). One `Add*`/`On*` method per event kind: `AddDone`, `AddTaken`, `AddHealOut`, `AddHealIn`, `AddTempMoraleLoss`, `OnDefeat`, `OnRevive`. Each `buckets[second]` entry also carries a `<field>ByWho[counterpartName] = amount` table alongside its pooled scalar (`done`/`taken`/`healOut`/`healIn`) -- added so the analysis window's graph can respect the target/source picker; the pooled scalar is always exactly the sum of its own `ByWho` table (`AddToBucket()` updates both together, in one place, so they can't drift apart). Verified offline (a synthetic multi-target fight, checked the per-target and pooled sums against hand-computed expectations). |
 | `Sessions.lua` | The manager singleton (not a class): `Sessions.current` / `Sessions.list` (ring of 10, pinned exempt) / `Sessions.selected`; opens a `Session` lazily on the first own event, closes it after 5s of silence via `Sessions.Tick()`, discards anything under 3s. `Sessions.OnClosed` / `Sessions.OnSelfDefeat` are the callback lists Phase 3/4 UI hooks into. |
 | `Events.lua` | Wraps `Turbine.Chat.Received` (chaining to whatever was already registered), strips `<rgb=#......>` tags and trims before calling `Trigger.ParseCombatChat`, dispatches into `Sessions.*`. Also hosts the heartbeat (`Events.heartbeat`, a bare `Turbine.UI.Window` with `SetWantsUpdates(true)`) that drives `Sessions.Tick()`, since session-close-on-silence has to run even when chat is quiet. `Events.Shutdown()` restores the previous `Turbine.Chat.Received` and stops the heartbeat -- called from `plugin.Unload`. |
+| `Buffs.lua` | Self-buff uptime tracking. Polls `_G.lp:GetEffects()` at 4Hz from Events.lua's heartbeat (**not** the live meter's Update, as the spec suggested -- that meter can be switched off and uptime must keep recording either way), opening/closing an interval per effect name on `session.buffs[name] = { intervals, apps }`. `Buffs.Stats(session, fromSec, toSec)` clips every interval to a range and returns uptime / uptime% / apps / longest gap, sorted. Data source is the live effect list, **not** parser event 17 -- event 17 carries no duration and no fade, so uptime from it would be a guess. Everything here is defensive (one pcall around the whole enumeration; a failed read is a no-op, never "everything faded"; the 0-vs-1-based index base of `EffectList:Get` is **detected**, by probing index 0, not assumed) because nothing in this codebase has touched `Turbine.Gameplay.EffectList` before -- see the three "guessed the shape of a Turbine object" bugs in Build status. |
 | `Utils/Class.lua`, `Utils/Type.lua` | Vendored OOP shim, see above. |
 
 | `UI/Frame.lua` | `Frame` (extends `Turbine.UI.Window`) -- shared chrome every window subclasses: background + 1px border Controls, header with `TrajanPro13` title + close glyph, manual drag on the header, position persisted to `_G.settings.windows[key]`. |
 | `UI/Bar.lua` | `Bar` -- 1px-border track Control with a fill child; `SetPercent(pct)` sets width directly (no tweening anywhere, per `docs/DESIGN.md`). |
 | `UI/Row.lua` | `Row` -- a fixed-column-offset row of Labels for tables; pooled and reused across refreshes, never rebuilt per redraw. |
+| `UI/RangeSlider.lua` | `RangeSlider` -- the two-handle time-range control under the plot. Snaps to the graph's 48 bucket stops, not to pixels, so the numbers in the window and the marks on the plot agree exactly and only 48 distinct ranges per endpoint can ever be asked for. Drag uses the same MouseDown/MouseMove/MouseUp shape as `Frame:WireDrag` and the resize gripper -- confirmed-working precedent, no new assumption about mouse delivery. Handles clamp to `other handle -/+ 1`; a zero-width range would divide by zero everywhere downstream. |
 
 `UI/__init__.lua` imports Frame/Bar/Row in that order; `Main.lua` does `import "Reckoning.UI"`
 once. **Cross-directory class visibility**: a bare `X = class(...)` assigned inside `UI/*.lua`
@@ -289,8 +313,8 @@ and can freely reference `Frame`/`Bar`/`Row` bare since they're siblings in the 
 
 | `UI/DeathCause.lua` | `DeathCause` (extends `Frame`, `key = "deathCause"`, death-specific fill/border/header-rule colours) -- window 2. Fires from `Sessions.OnSelfDefeat`. "Last hit by" resolved by scanning `session.lastTaken` backward for the last `kind == "damage"` entry (temp-morale-loss rows don't carry an attacker). 5 pooled `Row` instances (never rebuilt), tinted per row: the killing-blow row's amount goes `DamageFatal`, temp-morale rows go `MutedText` end to end, everything else scales `DamageTaken`/`DamageSevere` off post-hit `moralePct`. Countdown is a `Bar`, `_G.settings.deathAutoHide` seconds (default 15) -- tracked as `self.remaining` (seconds left, decremented by real elapsed `dt` each `Update()` tick) rather than an absolute target timestamp, specifically so **pausing is just "skip subtracting this tick"**: `self.MouseEnter`/`self.MouseLeave` toggle `self.paused`, per direct feedback that hovering the window to read it shouldn't race the auto-hide closing it. Row time column widened (38px -> 46px) and format changed from one decimal (`"-3.7s"`) to whole seconds (`"-4s"`) per feedback that the times "seemed broken" -- most likely a width/overflow problem given the format itself checked out fine standalone, but the exact in-game rendering was never confirmed, so this is a defensive fix (shorter string, wider column) rather than a diagnosed-and-proven one; if it's still wrong, the underlying `entry.time - self.deathTime` computation itself is the next thing to check with a real capture, the way the `ChatType.Death` bug was found. The morale column is now a `Bar` per row (`self.moraleBars`, pooled) instead of a `Format.Percent` Label, matching the analysis window's own bar style per feedback. Depends on `UI/Row.lua`'s rows being mouse-invisible (`SetMouseVisible(false)`, changed from `true` -- nothing in a `Row` was ever individually clickable) so a row sitting over the window doesn't swallow the hover before it reaches the window's own `MouseEnter`/`MouseLeave`. **Unverified**: whether `Turbine.UI.Window.MouseEnter`/`.MouseLeave` fire based on the window's own bounds regardless of mouse-invisible children on top (assumed, consistent with how mouse-invisible children behave for click-through elsewhere, but not confirmed for Enter/Leave specifically) -- if hover-pause doesn't trigger in-game, check this first. |
 
-| `UI/Analysis.lua` | `Analysis` (extends `Frame`, `key = "analysis"`, resizable) -- window 3. Session rail (pooled rows, pinned sort-to-top), 4 view tabs, picker chips (rebuilt on session/view change, not pooled -- a handful of controls, not a hot path), 5 KPI cards, skill table (`ScrollView` of pooled `Row`s with a per-row share-bar), two side panels. State: `self.viewTab`, `self.filter[view]`, `self.selectedSession`. `Analysis:Layout()` recomputes every block's position/size from the current window size and is called at construction and after a resize-drag ends (not continuously during the drag -- see the gripper's `MouseMove`/`MouseUp` comments). |
-| `UI/AnalysisGraph.lua` | `Graph` -- the time plot. Fixed 48 buckets (`docs/IMPLEMENTATION_PLAN.md`) spanning the session's actual duration, one pooled column of Controls per bucket per series slot (max 2 regular series), a **dotted approximation of the dashed morale overlay** (flagged as a deliberate simplification in the file's own header comment -- Turbine.UI Controls are axis-aligned rectangles, no cheap way to draw a literal dashed line). Morale now gets its own reserved `MORALE_LANE_HEIGHT` (22px) strip at the *top* of the plot rather than sharing space with the damage/heal bars -- per feedback that overlapping dots and bars read as confusing about which axis each mark belonged to; bars are scaled against `PLOT_HEIGHT - MORALE_LANE_HEIGHT` (only when `showMorale`) so they can never draw into the lane, verified offline (a probe asserted no bar's top ever went above y=22 in morale views). A `TIMELINE_MARKS`-count (5) row of elapsed-second labels sits under the plot, refreshed in `SetData` against the session's actual duration -- added per feedback ("the graph needs a timeline at the bottom"); `AXIS_HEIGHT` grew from the mockup's 22px to `TIMELINE_HEIGHT + LEGEND_HEIGHT + 4` (36px) to fit both rows, and `Analysis.lua`'s `GRAPH_HEIGHT` constant has to be kept in step with this by hand (duplicated rather than imported, since `Layout()` needs the value before any `Graph` instance necessarily exists). `Graph:Resize(width)` repositions the existing pool in place rather than rebuilding it. `SetData(session, showMorale, filterWho)` now takes an optional `filterWho`, read against each bucket's `<key>ByWho` table (`Session.lua`) instead of the pooled scalar when set -- keeps the graph in sync with the analysis window's picker; verified offline that a filtered graph's per-slice sum matches `session:Total(category, who)` exactly. `moraleAxisLabel` shows the actual peak morale % reached (`"MORALE (peak NN%)"`), not just the word "MORALE" -- per feedback. One invisible, mouse-visible `hoverZone` `Control` per bucket (`BuildHoverZones`), spanning the full bar-area height regardless of that bucket's own bar height so a short bar is still easy to hover, drives a pooled 4-line tooltip (`BuildTooltip`/`ShowTooltip`/`HideTooltip`) showing elapsed time, each visible series' value, and morale if the view carries it -- per feedback ("hovering over columns... should show the details"). The hover zones deliberately never call `SetBackColor` (so there's nothing to hide) and don't use `SetOpacity` either, unlike an earlier draft -- see `Theme.Mix`'s comment in `Constants.lua` for why `SetOpacity` doesn't actually work as a hide/blend mechanism in this engine. |
+| `UI/Analysis.lua` | `Analysis` (extends `Frame`, `key = "analysis"`, resizable 1080x820, min 1080x600, max 1440x880) -- window 3, redesigned in v0.2.0. Session rail (unchanged), 4 view tabs in **damage-pair-then-healing-pair** order (`done`/`taken`/`healOut`/`healIn`) with centred labels, picker chips, 5 KPI cards, the graph block, the skill table at **full content width**, then the SELF BUFFS table and the two 233px side panels sharing the bottom row. `RESET RANGE` and the range chip live in `Frame`'s own header. State: `viewTab`, `filter[view]`, `selectedSession`, `rangeFrom`/`rangeTo`, `charted` (ordered, max 3), `buffsOpen`. **Everything is range-scoped through one `Session:Slice` per refresh** -- KPIs, table, both panels and the buff table are all fed from that single result, never from their own separate passes. `Layout()` and `RefreshContent()` call each other exactly once each: `RefreshContent` detects that the charted-lane or buff-row count changed shape, sets `laneCountWanted`/`buffRowsWanted` and re-runs `Layout()`, which ends by calling back with `skipRelayout` set -- that flag is the only thing stopping an infinite bounce, so do not remove it. |
+| `UI/AnalysisGraph.lua` | `Graph` -- the time plot, rewritten in v0.2.0 as a **line-and-dot plot**. Owns four stacked rows: the 150px plot, 0-3 charted buff lanes, the range slider, and the timeline + legend; `GraphHeightFor(laneCount)` is a plain global so `Analysis:Layout` can ask for the total before a Graph exists. **A diagonal is not drawable here** -- Turbine has no canvas or line primitive -- so each polyline step is an L: a horizontal run at the *midpoint* height plus a vertical riser at its right end, risers z-ordered *under* the runs so the joint has no seam. This is Option A from `GRAPH_RESEARCH.md`, deliberately the one with no unknowns; Option B (the undocumented `SetRotation`, which Gibberish3 does use but only at 0/90/180/270) would halve the Control count and needs a 7-item in-game probe first, and `DrawStep` is the only function that would change. Morale is a **background bar graph** (48 bars + 48 brighter 1px top edges, low-morale pair below `MORALE_DANGER`, guide lines at 100%/50%), replacing the old 22px dot lane; unsampled buckets carry the last known value forward, because a second in which you took no damage is not a second at 0 morale. **Hovering is one mouse-visible Control -- the plot ground -- not 48 zones on top of the data**: the old per-bucket zones hid the morale trace underneath them (found in-game, mechanism never pinned down), and putting the hover surface *behind* everything sidesteps that question entirely while relying only on the click-through behaviour `UI/Row.lua` already depends on. Pools: 2x(48 dots + 47 runs + 47 risers) + 96 morale + 3x24 lane segments, all built once. |
 
 **Two documented deviations from the mockup's literal pixel values**, both explained in
 `UI/Analysis.lua`'s header comment: the graph and skill table stretch to fill the available
@@ -315,7 +339,9 @@ turns out to be) in-game first, on a low-stakes control, before relying on it an
 | `UI/Options.lua` | `Options` (extends `Turbine.UI.ListBox`) -- returned via `plugin.GetOptionsPanel`. Scoped to what `docs/DESIGN.md` actually calls settable: `deathAutoHide` (validated numeric row) and the two enable checkboxes. No colour rows and no "window scale" row -- neither is a real setting in this design (see `Settings.lua`'s `COLOR_KEYS` comment); `docs/IMPLEMENTATION_PLAN.md`'s Phase 6 line mirrors `VitalSelf`'s options shape generically and oversells what applies here. |
 
 `/reck show|hide [live\|death\|analysis]`, `/reck move <live\|death\|analysis>`,
-`/reck testdeath`, `/reck reset` are in `Main.lua`. `show`/`hide` for `live`/`death` only flip
+`/reck testdeath`, `/reck reset`, `/reck buffs [list|ignore <name>|unignore <name>]` are in
+`Main.lua`. `buffs` re-parses its arguments from the **raw** command string, not the lower-cased
+single-token parse the other subcommands use -- buff names are case-sensitive and contain spaces. `show`/`hide` for `live`/`death` only flip
 their enable flag (same effect as the options panel checkboxes) rather than forcing
 `SetVisible` -- `death` is still entirely event-driven (`Sessions.OnSelfDefeat`) and popping it
 open with no real death would be misleading; `live` is now permanently visible whenever enabled
@@ -392,7 +418,12 @@ Follow the `VitalSelf` pattern: `Turbine.PluginData.Save(Turbine.DataScope.Chara
 - Read new keys defensively; existing saves will not have them (`DEFAULTS` merge in
   `Settings.Load()`).
 - Sessions are **not** persisted (`docs/DESIGN.md` "Session model"). Persist: window
-  positions, `liveTab`, `deathAutoHide`, pins.
+  positions/size, `liveTab`, `deathAutoHide`, `buffsOpen`, `chartedBuffs`, `buffIgnore`.
+- `chartedBuffs` is an ordered list of buff **names**, never colours -- a charted buff's lane
+  colour is derived from its position in that list at render time, so no `Turbine.UI.Color` ever
+  reaches `PluginData`. `buffIgnore` is a `[name] = true` set. Both are table-valued defaults and
+  so get the fresh-`{}`-on-merge treatment (see `Settings.Load`'s note); `tools/offline/load_test.lua`
+  asserts that a mutation of `_G.settings.chartedBuffs` does not leak into `DEFAULTS`.
 - Open question from `docs/DESIGN.md`: should pins survive a reload (persist the session, not
   just the pin flag)? Not yet decided -- ask before building session persistence.
 
@@ -414,7 +445,13 @@ Follow the `VitalSelf` pattern: `Turbine.PluginData.Save(Turbine.DataScope.Chara
 
 ## Testing
 
-There is no test runner in the repo. `/reck dump` (in `Main.lua`) prints the current or most
+**Run `sh tools/offline/run.sh` before every in-game load** (needs `lua5.1`; see
+`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 246
+checks against the real classes and the real `Main.lua`. It is not a substitute for loading the
+plugin -- it cannot tell you whether anything actually *draws* -- but everything it catches is a
+reload you don't have to spend.
+
+Beyond that: `/reck dump` (in `Main.lua`) prints the current or most
 recent session's totals to chat -- the in-game way to re-check the event pipeline against
 `reference/Combat_20260819_1.txt` / `reference/Enemy_20260819_1.txt` (read the two logs by eye
 and compare). See "Build status" above for how Phase 1 was checked offline before any in-game

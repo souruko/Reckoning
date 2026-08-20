@@ -1,0 +1,1012 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="stylesheet" href="_ds/nocturne-d9f280c0-bd9b-477e-b6e5-f1454c9bc3eb/styles.css">
+<script src="_ds/nocturne-d9f280c0-bd9b-477e-b6e5-f1454c9bc3eb/_ds_bundle.js"></script>
+<style>
+  body { margin:0; background:#101120; }
+  a { color:#b5abfc; text-decoration:none; }
+  a:hover { color:#e7e5fe; }
+</style>
+</helmet>
+
+<section style="display:flex;flex-direction:column;gap:20px;padding:56px 56px 24px 56px;font-family:Verdana,'DejaVu Sans',sans-serif;color:#e9e9ed">
+  <div style="display:flex;align-items:baseline;gap:14px">
+    <div style="font-family:'Trajan Pro',Georgia,serif;font-size:22px;letter-spacing:.06em;color:#e9e9ed">Redesign — analysis window, live meter, death cause</div>
+    <div style="font-size:11px;color:#8b8d9b;letter-spacing:.08em">TURN 1 · line graph · morale behind the plot · self-buff tracking · time-range slider</div>
+  </div>
+
+  <div id="1a" style="display:flex;flex-direction:column;gap:10px">
+    <div style="display:flex;align-items:center;gap:10px">
+      <div style="font-size:10px;letter-spacing:.14em;color:#e7e5fe;border:1px solid #5d5294;padding:3px 7px">1a</div>
+      <div style="font-size:12px;color:#a9abb8">Post-combat analysis — interactive: drag the range handles, click legend swatches, toggle buffs, switch views</div>
+    </div>
+
+    <div style="position:relative;width:1080px;height:{{ winHeight }}px;background:#212433;border:1px solid #2e3140;box-sizing:border-box">
+      <div style="position:absolute;left:0;top:0;width:1078px;height:32px;background:#20222f;border-bottom:1px solid #2e3140;box-sizing:border-box;display:flex;align-items:center;padding:0 10px;gap:12px">
+        <div style="font-family:'Trajan Pro',Georgia,serif;font-size:13px;letter-spacing:.04em">Reckoning</div>
+        <div style="flex:1"></div>
+        <div style="font-family:'Lucida Console',monospace;font-size:12px;color:{{ rangeChipColor }}">{{ rangeChipText }}</div>
+        <div onClick="{{ resetRange }}" style="font-size:10px;letter-spacing:.1em;color:{{ resetColor }};cursor:pointer;padding:3px 6px;border:1px solid {{ resetBorder }}" style-hover="color:#e7e5fe;border-color:#5d5294">RESET RANGE</div>
+        <div style="font-size:11px;color:#a9abb8;cursor:pointer;padding:0 4px" style-hover="color:#e9e9ed">x</div>
+      </div>
+
+      <div style="position:absolute;left:0;top:32px;width:208px;bottom:0;background:#1e202d;border-right:1px solid #2e3140;box-sizing:border-box">
+        <div style="padding:8px 10px 6px 10px;font-size:10px;letter-spacing:.14em;color:#8b8d9b">LAST 10 FIGHTS</div>
+        <sc-for list="{{ sessions }}" as="s" hint-placeholder-count="6">
+          <div style="position:relative;height:34px;background:{{ s.bg }};border-left:2px solid {{ s.mark }};box-sizing:border-box;cursor:pointer;padding:2px 10px 0 8px" style-hover="background:#25283a">
+            <div style="display:flex;align-items:center;gap:6px">
+              <div style="width:7px;height:7px;background:{{ s.pin }}"></div>
+              <div style="font-size:12px;color:{{ s.nameColor }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ s.name }}</div>
+            </div>
+            <div style="font-family:'Lucida Console',monospace;font-size:11px;color:#8b8d9b;padding-left:13px">{{ s.meta }}</div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="position:absolute;left:208px;top:32px;right:0;bottom:0">
+        <div style="display:flex;align-items:flex-end;height:30px;padding:0 12px">
+          <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="4">
+            <div onClick="{{ t.select }}" style="width:140px;height:30px;display:flex;align-items:center;justify-content:center;font-size:12px;color:{{ t.color }};background:{{ t.bg }};border-bottom:2px solid {{ t.rule }};box-sizing:border-box;cursor:pointer">{{ t.label }}</div>
+          </sc-for>
+          <div style="flex:1;height:30px;display:flex;align-items:center;justify-content:flex-end;border-bottom:1px solid #2e3140;padding-bottom:2px;font-size:11px;color:#8b8d9b">{{ goalLine }}</div>
+        </div>
+
+        <div style="display:flex;gap:6px;padding:10px 12px 0 12px">
+          <sc-for list="{{ chips }}" as="c" hint-placeholder-count="4">
+            <div onClick="{{ c.select }}" style="height:22px;display:flex;align-items:center;padding:0 9px;font-size:10px;letter-spacing:.04em;color:{{ c.color }};background:{{ c.bg }};border:1px solid {{ c.border }};cursor:pointer">{{ c.label }}</div>
+          </sc-for>
+        </div>
+
+        <div style="display:flex;gap:8px;padding:10px 12px 0 12px">
+          <sc-for list="{{ kpis }}" as="k" hint-placeholder-count="5">
+            <div style="flex:1;min-width:0;height:50px;background:#222534;border:1px solid #2e3140;box-sizing:border-box;padding:4px 8px">
+              <div style="font-size:10px;letter-spacing:.12em;color:#8b8d9b;height:12px">{{ k.label }}</div>
+              <div style="font-size:18px;line-height:20px;color:#e9e9ed;white-space:nowrap;overflow:hidden">{{ k.value }}</div>
+              <div style="font-family:'Lucida Console',monospace;font-size:10px;line-height:12px;color:{{ k.subColor }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ k.sub }}</div>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="position:relative;margin:11px 12px 0 12px;width:848px;height:150px">
+          <div style="position:absolute;inset:0;background:#1d1f2d;border:1px solid #262939;box-sizing:border-box"></div>
+          <sc-for list="{{ moraleBars }}" as="m" hint-placeholder-count="48">
+            <div style="position:absolute;left:{{ m.left }}px;bottom:1px;width:{{ m.w }}px;height:{{ m.h }}px;background:{{ m.color }};border-top:1px solid {{ m.edge }};box-sizing:border-box"></div>
+          </sc-for>
+          <sc-if value="{{ showMorale }}" hint-placeholder-val="{{ true }}">
+            <div>
+              <div style="position:absolute;left:1px;right:1px;top:1px;height:1px;background:#3b3722"></div>
+              <div style="position:absolute;left:1px;right:1px;top:75px;height:1px;background:#302f26"></div>
+              <div style="position:absolute;right:4px;top:3px;font-size:9px;letter-spacing:.1em;color:#e6d98f">{{ moraleAxisLabel }}</div>
+            </div>
+          </sc-if>
+          <div style="position:absolute;left:1px;right:1px;top:37px;height:1px;background:#ffffff0d"></div>
+          <div style="position:absolute;left:1px;right:1px;top:112px;height:1px;background:#ffffff0d"></div>
+
+          <svg width="848" height="150" viewBox="0 0 848 150" style="position:absolute;left:0;top:0;overflow:visible">
+            <polyline points="{{ lineA }}" fill="none" stroke="{{ colorA }}" stroke-width="2"></polyline>
+            <polyline points="{{ lineB }}" fill="none" stroke="{{ colorB }}" stroke-width="2"></polyline>
+          </svg>
+          <sc-for list="{{ dots }}" as="d" hint-placeholder-count="40">
+            <div style="position:absolute;left:{{ d.left }}px;top:{{ d.top }}px;width:5px;height:5px;background:{{ d.color }};border:1px solid #1d1f2d;box-sizing:border-box"></div>
+          </sc-for>
+
+          <div style="position:absolute;left:0;top:0;width:{{ dimLeftW }}px;height:150px;background:#161826b8"></div>
+          <div style="position:absolute;left:{{ dimRightX }}px;top:0;width:{{ dimRightW }}px;height:150px;background:#161826b8"></div>
+          <div style="position:absolute;left:{{ handleAX }}px;top:0;width:1px;height:150px;background:#9184d9"></div>
+          <div style="position:absolute;left:{{ handleBX }}px;top:0;width:1px;height:150px;background:#9184d9"></div>
+        </div>
+
+        <sc-if value="{{ hasLanes }}" hint-placeholder-val="{{ true }}">
+          <div style="position:relative;margin:4px 12px 0 12px;width:848px;height:{{ laneStripH }}px">
+            <sc-for list="{{ laneRows }}" as="l" hint-placeholder-count="2">
+              <div style="position:relative;height:16px;margin-bottom:4px">
+                <div style="position:absolute;left:0;top:7px;width:826px;height:2px;background:#262939"></div>
+                <sc-for list="{{ l.segs }}" as="g" hint-placeholder-count="4">
+                  <div style="position:absolute;left:{{ g.left }}px;top:5px;width:{{ g.w }}px;height:6px;background:{{ g.color }}"></div>
+                </sc-for>
+                <div title="{{ l.label }}" style="position:absolute;left:832px;top:0;width:16px;height:16px;background:{{ l.iconBg }};border:1px solid {{ l.color }};box-sizing:border-box;display:flex;align-items:center;justify-content:center;font-size:8px;letter-spacing:.02em;color:{{ l.color }}">{{ l.icon }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <div style="position:relative;margin:6px 12px 0 12px;width:848px;height:16px">
+          <div style="position:absolute;left:0;top:7px;width:848px;height:2px;background:#2e3140"></div>
+          <div style="position:absolute;left:{{ handleAX }}px;top:7px;width:{{ rangeW }}px;height:2px;background:#9184d9"></div>
+          <div onPointerDown="{{ dragA }}" style="position:absolute;left:{{ handleAX }}px;top:0;width:9px;height:16px;margin-left:-4px;background:#212433;border:1px solid #9184d9;box-sizing:border-box;cursor:ew-resize" style-hover="background:#2b2e3e"></div>
+          <div onPointerDown="{{ dragB }}" style="position:absolute;left:{{ handleBX }}px;top:0;width:9px;height:16px;margin-left:-5px;background:#212433;border:1px solid #9184d9;box-sizing:border-box;cursor:ew-resize" style-hover="background:#2b2e3e"></div>
+        </div>
+
+        <div style="position:relative;margin:2px 12px 0 12px;width:848px;height:14px">
+          <sc-for list="{{ ticks }}" as="k" hint-placeholder-count="5">
+            <div style="position:absolute;left:{{ k.left }}px;top:0;width:60px;text-align:{{ k.align }};font-family:'Lucida Console',monospace;font-size:10px;color:#8b8d9b">{{ k.text }}</div>
+          </sc-for>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:18px;margin:2px 12px 0 12px;height:18px">
+          <sc-for list="{{ legend }}" as="g" hint-placeholder-count="3">
+            <div onClick="{{ g.toggle }}" style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:10px;letter-spacing:.06em;color:{{ g.color }}">
+              <div style="width:8px;height:8px;background:{{ g.swatch }}"></div>
+              <div>{{ g.label }}</div>
+            </div>
+          </sc-for>
+          <div style="flex:1"></div>
+          <div style="font-family:'Lucida Console',monospace;font-size:10px;color:#8b8d9b">{{ peakLine }}</div>
+        </div>
+
+        <div style="margin:11px 12px 0 12px;width:848px;height:{{ tableH }}px;display:flex;flex-direction:column">
+          <div style="display:flex;height:22px;background:#20222f;align-items:center">
+            <sc-for list="{{ headers }}" as="h" hint-placeholder-count="7">
+              <div style="width:{{ h.w }}px;padding:0 8px;box-sizing:border-box;text-align:{{ h.align }};font-size:10px;letter-spacing:.1em;color:#8b8d9b">{{ h.label }}</div>
+            </sc-for>
+          </div>
+          <div style="flex:1;overflow:hidden">
+            <sc-for list="{{ rows }}" as="r" hint-placeholder-count="7">
+              <div style="position:relative;height:22px;border-bottom:1px solid #2a2c3a;box-sizing:border-box">
+                <div style="position:absolute;left:0;top:0;height:21px;width:{{ r.shareW }}px;background:{{ r.shareColor }}"></div>
+                <div style="position:relative;display:flex;height:21px;align-items:center">
+                  <sc-for list="{{ r.cells }}" as="c" hint-placeholder-count="7">
+                    <div style="width:{{ c.w }}px;padding:0 8px;box-sizing:border-box;text-align:{{ c.align }};font-family:{{ c.font }};font-size:12px;color:{{ c.color }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ c.text }}</div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:11px;margin:11px 12px 0 12px;width:848px">
+          <div style="width:604px;border-top:1px solid #2e3140">
+            <div onClick="{{ toggleBuffs }}" style="display:flex;align-items:center;gap:8px;height:26px;cursor:pointer;font-size:10px;letter-spacing:.12em;color:#a9abb8" style-hover="color:#e7e5fe">
+              <div style="color:#9184d9">{{ caret }}</div>
+              <div>SELF BUFFS</div>
+              <div style="color:#8b8d9b;letter-spacing:.04em">{{ buffSummary }}</div>
+            </div>
+            <sc-if value="{{ buffsOpen }}" hint-placeholder-val="{{ true }}">
+              <div>
+                <div style="display:flex;height:20px;background:#20222f;align-items:center">
+                  <sc-for list="{{ buffHeaders }}" as="h" hint-placeholder-count="6">
+                    <div style="width:{{ h.w }}px;padding:0 8px;box-sizing:border-box;text-align:{{ h.align }};font-size:10px;letter-spacing:.1em;color:#8b8d9b">{{ h.label }}</div>
+                  </sc-for>
+                </div>
+                <sc-for list="{{ buffRows }}" as="b" hint-placeholder-count="7">
+                  <div onClick="{{ b.toggle }}" style="position:relative;height:22px;border-bottom:1px solid #2a2c3a;box-sizing:border-box;cursor:pointer" style-hover="background:#2b2e3e">
+                    <div style="position:absolute;left:0;top:0;height:21px;width:{{ b.shareW }}px;background:{{ b.shareColor }}"></div>
+                    <div style="position:relative;display:flex;height:21px;align-items:center">
+                      <div style="width:22px;padding-left:8px;box-sizing:border-box">
+                        <div style="width:8px;height:8px;border:1px solid {{ b.boxBorder }};background:{{ b.boxFill }};box-sizing:border-box"></div>
+                      </div>
+                      <div style="width:24px;box-sizing:border-box">
+                        <div style="width:16px;height:16px;background:{{ b.iconBg }};border:1px solid {{ b.iconEdge }};box-sizing:border-box;display:flex;align-items:center;justify-content:center;font-size:8px;color:{{ b.iconText }}">{{ b.icon }}</div>
+                      </div>
+                      <div style="width:190px;padding:0 8px 0 0;box-sizing:border-box;font-size:12px;color:{{ b.nameColor }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ b.name }}</div>
+                      <div style="width:98px;padding:0 8px;box-sizing:border-box;text-align:right;font-family:'Lucida Console',monospace;font-size:12px;color:{{ b.pctColor }}">{{ b.pct }}</div>
+                      <div style="width:90px;padding:0 8px;box-sizing:border-box;text-align:right;font-family:'Lucida Console',monospace;font-size:12px;color:#a9abb8">{{ b.uptime }}</div>
+                      <div style="width:74px;padding:0 8px;box-sizing:border-box;text-align:right;font-family:'Lucida Console',monospace;font-size:12px;color:#a9abb8">{{ b.apps }}</div>
+                      <div style="width:106px;padding:0 8px;box-sizing:border-box;text-align:right;font-family:'Lucida Console',monospace;font-size:12px;color:{{ b.gapColor }}">{{ b.gap }}</div>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+          </div>
+
+          <div style="flex:1;display:flex;flex-direction:column;gap:11px;padding-top:6px">
+            <sc-for list="{{ panels }}" as="p" hint-placeholder-count="2">
+              <div style="flex:1">
+                <div style="font-size:10px;letter-spacing:.12em;color:#8b8d9b;height:14px">{{ p.title }}</div>
+                <sc-for list="{{ p.items }}" as="it" hint-placeholder-count="4">
+                  <div style="padding-top:3px">
+                    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+                      <div style="font-size:10px;color:#e9e9ed;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ it.name }}</div>
+                      <div style="font-family:'Lucida Console',monospace;font-size:11px;color:#a9abb8">{{ it.value }}</div>
+                    </div>
+                    <div style="height:3px;background:#2a2c3a;margin-top:2px">
+                      <div style="height:3px;width:{{ it.pct }}%;background:{{ it.color }}"></div>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:20px;flex-wrap:wrap">
+    <div id="1b" style="display:flex;flex-direction:column;gap:10px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="font-size:10px;letter-spacing:.14em;color:#e7e5fe;border:1px solid #5d5294;padding:3px 7px">1b</div>
+        <div style="font-size:12px;color:#a9abb8">Live meter — 260×186, unchanged footprint</div>
+      </div>
+      <div style="position:relative;width:260px;height:186px;background:#212433;border:1px solid #2e3140;box-sizing:border-box">
+        <div style="height:26px;background:#20222f;border-bottom:1px solid #2e3140;box-sizing:border-box;display:flex;align-items:center;padding:0 10px;gap:8px">
+          <div style="width:4px;height:10px;background:#9184d9"></div>
+          <div style="font-size:10px;letter-spacing:.1em;color:#8b8d9b">IN COMBAT</div>
+          <div style="flex:1"></div>
+          <div style="font-size:10px;letter-spacing:.06em;color:#8b8d9b;cursor:pointer" style-hover="color:#e7e5fe">DETAILS</div>
+          <div style="font-family:'Lucida Console',monospace;font-size:12px;color:#d2cefd">02:12</div>
+        </div>
+        <div style="display:flex;height:22px">
+          <div style="flex:1;display:flex;align-items:center;justify-content:center;font-size:10px;letter-spacing:.08em;color:#e7e5fe;border-bottom:2px solid #9184d9;box-sizing:border-box">DONE</div>
+          <div style="flex:1;display:flex;align-items:center;justify-content:center;font-size:10px;letter-spacing:.08em;color:#8b8d9b;border-bottom:1px solid #2e3140;box-sizing:border-box">TAKEN</div>
+          <div style="flex:1;display:flex;align-items:center;justify-content:center;font-size:10px;letter-spacing:.08em;color:#8b8d9b;border-bottom:1px solid #2e3140;box-sizing:border-box">HEAL OUT</div>
+          <div style="flex:1;display:flex;align-items:center;justify-content:center;font-size:10px;letter-spacing:.08em;color:#8b8d9b;border-bottom:1px solid #2e3140;box-sizing:border-box">HEAL IN</div>
+        </div>
+        <div style="padding:6px 10px 0 10px">
+          <div style="font-size:10px;line-height:12px;letter-spacing:.12em;color:#8b8d9b">DAMAGE DONE</div>
+          <div style="display:flex;align-items:baseline;gap:6px;height:24px">
+            <div style="font-size:21px;line-height:24px;color:#e9e9ed">1,284,912</div>
+            <div style="flex:1"></div>
+            <div style="font-family:'Lucida Console',monospace;font-size:12px;color:#d2cefd">21,415/s</div>
+          </div>
+          <div style="position:relative;height:16px">
+            <sc-for list="{{ meterSpark }}" as="s" hint-placeholder-count="30">
+              <div style="position:absolute;left:{{ s.left }}px;bottom:0;width:{{ s.w }}px;height:{{ s.h }}px;background:#9184d9"></div>
+            </sc-for>
+            <div style="position:absolute;right:0;bottom:0;font-size:9px;letter-spacing:.08em;color:#5c5f70;background:#212433;padding-left:4px">LAST 30s</div>
+          </div>
+          <div style="height:1px;background:#33364a;margin:3px 0"></div>
+          <div style="display:flex;justify-content:space-between;align-items:center;height:16px">
+            <div style="font-size:10px;letter-spacing:.08em;color:#8b8d9b">TO KHARDÂMU</div>
+            <div style="font-family:'Lucida Console',monospace;font-size:12px">1,102,540</div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;height:16px">
+            <div style="font-size:10px;letter-spacing:.08em;color:#8b8d9b">CRIT / DEV</div>
+            <div style="font-family:'Lucida Console',monospace;font-size:12px">24% / 6%</div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;height:16px">
+            <div style="font-size:10px;letter-spacing:.08em;color:#8b8d9b">LARGEST HIT</div>
+            <div style="font-family:'Lucida Console',monospace;font-size:12px">36,978</div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;font-size:9px;line-height:10px;color:#8b8d9b">Backhand Clout</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="1c" style="display:flex;flex-direction:column;gap:10px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="font-size:10px;letter-spacing:.14em;color:#e7e5fe;border:1px solid #5d5294;padding:3px 7px">1c</div>
+        <div style="font-size:12px;color:#a9abb8">Death cause — morale as a descending trace, killing blow marked on the row</div>
+      </div>
+      <div style="position:relative;width:380px;height:200px;background:#251e2c;border:1px solid #4a3348;box-sizing:border-box">
+        <div style="height:28px;border-bottom:1px solid #453042;box-sizing:border-box;display:flex;align-items:center;padding:0 10px">
+          <div style="font-family:'Trajan Pro',Georgia,serif;font-size:13px">You were defeated</div>
+          <div style="flex:1"></div>
+          <div style="font-family:'Lucida Console',monospace;font-size:12px;color:#a9abb8">15s</div>
+        </div>
+        <div style="padding:0 10px">
+          <div style="display:flex;align-items:baseline;gap:8px;height:20px">
+            <div style="font-size:10px;letter-spacing:.12em;color:#8b8d9b">LAST HIT BY</div>
+            <div style="font-family:'Trajan Pro',Georgia,serif;font-size:15px">Khardâmu Blood-sworn</div>
+          </div>
+          <div style="font-size:12px;color:#a9abb8;height:16px">Lost 291,443 morale over the last 5 hits</div>
+          <div style="display:flex;align-items:center;gap:6px;height:14px">
+            <div style="width:6px;height:6px;background:#f0b7c9"></div>
+            <div style="font-size:10px;color:#f0b7c9">Killing blow</div>
+            <div style="width:6px;height:6px;background:#b5abfc;margin-left:8px"></div>
+            <div style="font-size:10px;color:#b5abfc">Biggest hit</div>
+          </div>
+          <sc-for list="{{ deathRows }}" as="d" hint-placeholder-count="5">
+            <div style="display:flex;align-items:center;height:24px;background:{{ d.bg }};border-left:2px solid {{ d.mark }};box-sizing:border-box">
+              <div style="width:44px;padding-left:6px;box-sizing:border-box;font-family:'Lucida Console',monospace;font-size:11px;color:#8b8d9b">{{ d.time }}</div>
+              <div style="width:186px;display:flex;align-items:center;gap:5px;min-width:0">
+                <div style="font-size:12px;color:{{ d.skillColor }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ d.skill }}</div>
+                <div style="font-size:8px;letter-spacing:.1em;color:{{ d.mark }}">{{ d.maxTag }}</div>
+              </div>
+              <div style="width:62px;text-align:right;font-family:'Lucida Console',monospace;font-size:12px;color:{{ d.amountColor }}">{{ d.amount }}</div>
+              <div style="flex:1;padding-left:8px;display:flex;align-items:center;gap:4px">
+                <div style="flex:1;height:5px;background:#3a2b3c">
+                  <div style="width:{{ d.pct }}%;height:5px;background:{{ d.moraleColor }}"></div>
+                </div>
+                <div style="width:26px;font-family:'Lucida Console',monospace;font-size:9px;color:#8b8d9b;text-align:right">{{ d.pctText }}</div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="position:absolute;left:0;bottom:0;width:100%;height:2px;background:#453042">
+          <div style="width:74%;height:2px;background:#968ae0"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section style="display:flex;flex-direction:column;gap:20px;padding:24px 56px 72px 56px;font-family:Verdana,'DejaVu Sans',sans-serif;color:#e9e9ed;border-top:1px solid #24263a">
+  <div style="display:flex;align-items:baseline;gap:14px">
+    <div style="font-family:'Trajan Pro',Georgia,serif;font-size:22px;letter-spacing:.06em">Current UI, recreated from source</div>
+    <div style="font-size:11px;color:#8b8d9b;letter-spacing:.08em">TURN 0 · geometry read out of UI/Analysis.lua, UI/AnalysisGraph.lua, UI/LiveMeter.lua, UI/DeathCause.lua</div>
+  </div>
+
+  <div id="0a" style="display:flex;flex-direction:column;gap:10px">
+    <div style="display:flex;align-items:center;gap:10px">
+      <div style="font-size:10px;letter-spacing:.14em;color:#a9abb8;border:1px solid #2e3140;padding:3px 7px">0a</div>
+      <div style="font-size:12px;color:#8b8d9b">Analysis 1080×600 · Damage taken · 48 area columns + 2px caps, morale dots in a 22px top lane, skill table clipped at 594px (columns total 620px)</div>
+    </div>
+    <div style="position:relative;width:1080px;height:600px;background:#212433;border:1px solid #2e3140;box-sizing:border-box;font-size:12px">
+      <div style="position:absolute;left:0;top:0;width:1078px;height:32px;background:#20222f;border-bottom:1px solid #2e3140;box-sizing:border-box">
+        <div style="position:absolute;left:10px;top:0;height:31px;display:flex;align-items:center;font-family:'Trajan Pro',Georgia,serif;font-size:13px">Reckoning</div>
+        <div style="position:absolute;left:1056px;top:0;width:20px;height:31px;display:flex;align-items:center;justify-content:center;font-size:10px;color:#a9abb8">x</div>
+      </div>
+
+      <div style="position:absolute;left:0;top:32px;width:207px;height:568px;background:#1e202d;border-right:1px solid #2e3140;box-sizing:border-box">
+        <sc-for list="{{ sessionsOld }}" as="s" hint-placeholder-count="6">
+          <div style="position:relative;height:34px;background:{{ s.bg }}">
+            <div style="position:absolute;left:0;top:0;width:{{ s.markW }}px;height:34px;background:{{ s.mark }}"></div>
+            <div style="position:absolute;left:9px;top:12px;width:8px;height:8px;background:{{ s.pin }}"></div>
+            <div style="position:absolute;left:24px;top:2px;width:176px;height:16px;display:flex;align-items:center;font-size:12px;white-space:nowrap;overflow:hidden">{{ s.name }}</div>
+            <div style="position:absolute;left:24px;top:18px;width:176px;height:14px;display:flex;align-items:center;font-family:'Lucida Console',monospace;font-size:12px;color:#8b8d9b;white-space:nowrap;overflow:hidden">{{ s.meta }}</div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="position:absolute;left:208px;top:32px;width:872px;height:568px">
+        <sc-for list="{{ tabsOld }}" as="t" hint-placeholder-count="4">
+          <div style="position:absolute;left:{{ t.left }}px;top:0;width:140px;height:30px;background:{{ t.bg }}">
+            <div style="position:absolute;left:0;top:0;width:140px;height:28px;display:flex;align-items:center;font-size:12px;color:{{ t.color }}">{{ t.label }}</div>
+            <div style="position:absolute;left:0;top:28px;width:140px;height:2px;background:{{ t.rule }}"></div>
+          </div>
+        </sc-for>
+
+        <div style="position:absolute;left:12px;top:41px;width:848px;height:16px;display:flex;align-items:center;font-size:12px;color:#8b8d9b">What hit you, what got through</div>
+
+        <sc-for list="{{ chipsOld }}" as="c" hint-placeholder-count="4">
+          <div style="position:absolute;left:{{ c.left }}px;top:68px;width:{{ c.w }}px;height:22px;border:1px solid {{ c.border }};background:{{ c.bg }};box-sizing:border-box;display:flex;align-items:center;justify-content:center;font-size:10px;color:{{ c.color }}">{{ c.label }}</div>
+        </sc-for>
+
+        <sc-for list="{{ kpisOld }}" as="k" hint-placeholder-count="5">
+          <div style="position:absolute;left:{{ k.left }}px;top:103px;width:163px;height:50px;background:#222534;border:1px solid #2e3140;box-sizing:border-box">
+            <div style="position:absolute;left:8px;top:6px;height:12px;display:flex;align-items:center;font-size:10px;color:#8b8d9b">{{ k.label }}</div>
+            <div style="position:absolute;left:8px;top:18px;height:24px;display:flex;align-items:center;font-size:20px">{{ k.value }}</div>
+            <div style="position:absolute;left:8px;top:36px;height:12px;display:flex;align-items:center;font-size:10px;color:{{ k.subColor }}">{{ k.sub }}</div>
+          </div>
+        </sc-for>
+
+        <div style="position:absolute;left:12px;top:164px;width:848px;height:186px">
+          <div style="position:absolute;left:0;top:30px;width:848px;height:1px;background:#26293a"></div>
+          <div style="position:absolute;left:0;top:60px;width:848px;height:1px;background:#26293a"></div>
+          <div style="position:absolute;left:0;top:90px;width:848px;height:1px;background:#26293a"></div>
+          <div style="position:absolute;left:0;top:120px;width:848px;height:1px;background:#26293a"></div>
+          <sc-for list="{{ oldColumns }}" as="c" hint-placeholder-count="48">
+            <div style="position:absolute;left:{{ c.left }}px;top:{{ c.aTop }}px;width:16px;height:{{ c.aH }}px;background:#2e2b3b"></div>
+          </sc-for>
+          <sc-for list="{{ oldColumns }}" as="c" hint-placeholder-count="48">
+            <div style="position:absolute;left:{{ c.left }}px;top:{{ c.aTop }}px;width:16px;height:2px;background:#c98fa8"></div>
+          </sc-for>
+          <sc-for list="{{ oldColumns }}" as="c" hint-placeholder-count="48">
+            <div style="position:absolute;left:{{ c.left }}px;top:{{ c.bTop }}px;width:16px;height:{{ c.bH }}px;background:#242f31"></div>
+          </sc-for>
+          <sc-for list="{{ oldColumns }}" as="c" hint-placeholder-count="48">
+            <div style="position:absolute;left:{{ c.left }}px;top:{{ c.bTop }}px;width:16px;height:2px;background:#9dc7bc"></div>
+          </sc-for>
+          <div style="position:absolute;left:0;top:22px;width:848px;height:1px;background:#33354a"></div>
+          <sc-for list="{{ oldColumns }}" as="c" hint-placeholder-count="48">
+            <div style="position:absolute;left:{{ c.dotLeft }}px;top:{{ c.dotTop }}px;width:3px;height:3px;background:#e6d98f"></div>
+          </sc-for>
+          <div style="position:absolute;left:758px;top:2px;width:90px;height:12px;display:flex;align-items:center;justify-content:flex-end;font-size:10px;color:#e6d98f;white-space:nowrap;overflow:hidden">MORALE (peak 100%)</div>
+          <sc-for list="{{ ticks }}" as="k" hint-placeholder-count="5">
+            <div style="position:absolute;left:{{ k.oldLeft }}px;top:152px;width:40px;height:14px;display:flex;align-items:center;justify-content:{{ k.justify }};font-size:10px;color:#8b8d9b">{{ k.oldText }}</div>
+          </sc-for>
+          <div style="position:absolute;left:0;top:168px;width:848px;height:18px">
+            <div style="position:absolute;left:0;top:5px;width:8px;height:8px;background:#c98fa8"></div>
+            <div style="position:absolute;left:12px;top:0;height:18px;display:flex;align-items:center;font-size:10px;color:#c98fa8">Damage taken</div>
+            <div style="position:absolute;left:122px;top:5px;width:8px;height:8px;background:#9dc7bc"></div>
+            <div style="position:absolute;left:134px;top:0;height:18px;display:flex;align-items:center;font-size:10px;color:#9dc7bc">Healing in</div>
+          </div>
+        </div>
+
+        <div style="position:absolute;left:12px;top:361px;width:604px;height:195px">
+          <div style="position:absolute;left:0;top:0;width:594px;height:22px;background:#20222f;overflow:hidden">
+            <sc-for list="{{ oldHeaders }}" as="h" hint-placeholder-count="8">
+              <div style="position:absolute;left:{{ h.left }}px;top:0;width:{{ h.w }}px;height:22px;display:flex;align-items:center;justify-content:{{ h.justify }};font-size:10px;color:#8b8d9b">{{ h.label }}</div>
+            </sc-for>
+          </div>
+          <div style="position:absolute;left:0;top:22px;width:594px;height:173px;overflow:hidden">
+            <sc-for list="{{ oldRows }}" as="r" hint-placeholder-count="7">
+              <div style="position:relative;width:620px;height:22px">
+                <div style="position:absolute;left:0;top:0;width:{{ r.shareW }}px;height:21px;background:#292a3b"></div>
+                <div style="position:absolute;left:0;top:21px;width:620px;height:1px;background:#2a2c3a"></div>
+                <sc-for list="{{ r.cells }}" as="c" hint-placeholder-count="8">
+                  <div style="position:absolute;left:{{ c.left }}px;top:0;width:{{ c.w }}px;height:21px;display:flex;align-items:center;justify-content:{{ c.justify }};font-family:{{ c.font }};font-size:12px;white-space:nowrap;overflow:hidden">{{ c.text }}</div>
+                </sc-for>
+              </div>
+            </sc-for>
+          </div>
+          <div style="position:absolute;left:594px;top:22px;width:10px;height:173px;background:#1b1d29;border-left:1px solid #2e3140;box-sizing:border-box"></div>
+        </div>
+
+        <div style="position:absolute;left:627px;top:361px;width:233px;height:195px">
+          <sc-for list="{{ panelsOld }}" as="p" hint-placeholder-count="2">
+            <div style="position:relative;height:92px;margin-bottom:11px">
+              <div style="position:absolute;left:0;top:0;width:233px;height:14px;display:flex;align-items:center;font-size:10px;color:#8b8d9b">{{ p.title }}</div>
+              <sc-for list="{{ p.items }}" as="it" hint-placeholder-count="4">
+                <div style="position:absolute;left:0;top:{{ it.top }}px;width:233px;height:16px">
+                  <div style="position:absolute;left:0;top:0;width:163px;height:12px;display:flex;align-items:center;font-size:10px;white-space:nowrap;overflow:hidden">{{ it.name }}</div>
+                  <div style="position:absolute;left:173px;top:0;width:60px;height:12px;display:flex;align-items:center;justify-content:flex-end;font-family:'Lucida Console',monospace;font-size:12px">{{ it.value }}</div>
+                  <div style="position:absolute;left:0;top:13px;width:233px;height:3px;background:#25283a"></div>
+                  <div style="position:absolute;left:0;top:13px;width:{{ it.barW }}px;height:3px;background:#9184d9"></div>
+                </div>
+              </sc-for>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+      <div style="position:absolute;left:1068px;top:588px;width:12px;height:12px;background:#292c3c"></div>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:20px;flex-wrap:wrap">
+    <div id="0b" style="display:flex;flex-direction:column;gap:10px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="font-size:10px;letter-spacing:.14em;color:#a9abb8;border:1px solid #2e3140;padding:3px 7px">0b</div>
+        <div style="font-size:12px;color:#8b8d9b">Live meter 260×186</div>
+      </div>
+      <div style="position:relative;width:260px;height:186px;background:#212433;border:1px solid #2e3140;box-sizing:border-box">
+        <div style="position:absolute;left:0;top:0;width:258px;height:26px;background:#20222f;border-bottom:1px solid #2e3140;box-sizing:border-box">
+          <div style="position:absolute;left:10px;top:8px;width:4px;height:10px;background:#9184d9"></div>
+          <div style="position:absolute;left:20px;top:0;width:70px;height:25px;display:flex;align-items:center;font-size:10px;color:#8b8d9b">IN COMBAT</div>
+          <div style="position:absolute;left:95px;top:0;width:55px;height:25px;display:flex;align-items:center;justify-content:center;font-size:10px;color:#8b8d9b">Details</div>
+          <div style="position:absolute;left:160px;top:0;width:90px;height:25px;display:flex;align-items:center;justify-content:flex-end;font-family:'Lucida Console',monospace;font-size:12px;color:#d2cefd">02:12</div>
+        </div>
+        <sc-for list="{{ meterTabsOld }}" as="t" hint-placeholder-count="4">
+          <div style="position:absolute;left:{{ t.left }}px;top:26px;width:65px;height:24px;background:{{ t.bg }};display:flex;align-items:center;justify-content:center;font-size:10px;color:{{ t.color }}">{{ t.label }}</div>
+        </sc-for>
+        <div style="position:absolute;left:0;top:50px;width:260px;height:136px">
+          <div style="position:absolute;left:10px;top:0;width:160px;height:14px;display:flex;align-items:flex-end;font-size:10px;color:#8b8d9b">DAMAGE DONE</div>
+          <div style="position:absolute;left:10px;top:8px;width:150px;height:27px;display:flex;align-items:flex-end;font-size:22px">1,284,912</div>
+          <div style="position:absolute;left:160px;top:18px;width:90px;height:17px;display:flex;align-items:flex-end;justify-content:flex-end;font-size:12px;color:#d2cefd">21,415/s</div>
+          <div style="position:absolute;left:10px;top:42px;width:240px;height:1px;background:#33364a"></div>
+          <div style="position:absolute;left:10px;top:50px;width:120px;height:24px;display:flex;align-items:center;font-size:10px;color:#8b8d9b">TO KHARDÂMU BLOOD-SWORN</div>
+          <div style="position:absolute;left:130px;top:50px;width:120px;height:24px;display:flex;align-items:center;justify-content:flex-end;font-family:'Lucida Console',monospace;font-size:12px">1,102,540</div>
+          <div style="position:absolute;left:10px;top:81px;width:120px;height:24px;display:flex;align-items:center;font-size:10px;color:#8b8d9b">CRIT / DEV</div>
+          <div style="position:absolute;left:130px;top:81px;width:120px;height:24px;display:flex;align-items:center;justify-content:flex-end;font-family:'Lucida Console',monospace;font-size:12px">24% / 6%</div>
+          <div style="position:absolute;left:10px;top:112px;width:120px;height:24px;display:flex;align-items:center;font-size:10px;color:#8b8d9b">LARGEST HIT</div>
+          <div style="position:absolute;left:130px;top:112px;width:120px;height:13px;display:flex;align-items:flex-end;justify-content:flex-end;font-family:'Lucida Console',monospace;font-size:12px">36,978</div>
+          <div style="position:absolute;left:130px;top:125px;width:120px;height:11px;display:flex;align-items:flex-start;justify-content:flex-end;font-size:10px;color:#8b8d9b">Backhand Clout</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="0c" style="display:flex;flex-direction:column;gap:10px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="font-size:10px;letter-spacing:.14em;color:#a9abb8;border:1px solid #2e3140;padding:3px 7px">0c</div>
+        <div style="font-size:12px;color:#8b8d9b">Death cause 380×200</div>
+      </div>
+      <div style="position:relative;width:380px;height:200px;background:#251e2c;border:1px solid #4a3348;box-sizing:border-box">
+        <div style="position:absolute;left:0;top:0;width:378px;height:28px;border-bottom:1px solid #453042;box-sizing:border-box">
+          <div style="position:absolute;left:10px;top:0;width:230px;height:27px;display:flex;align-items:center;font-family:'Trajan Pro',Georgia,serif;font-size:13px">You were defeated</div>
+          <div style="position:absolute;left:250px;top:0;width:100px;height:27px;display:flex;align-items:center;justify-content:flex-end;font-family:'Lucida Console',monospace;font-size:12px;color:#a9abb8">15s</div>
+        </div>
+        <div style="position:absolute;left:0;top:28px;width:378px;height:170px">
+          <div style="position:absolute;left:10px;top:0;width:90px;height:20px;display:flex;align-items:center;font-size:10px;color:#8b8d9b">LAST HIT BY</div>
+          <div style="position:absolute;left:100px;top:0;width:270px;height:20px;display:flex;align-items:center;font-family:'Trajan Pro',Georgia,serif;font-size:16px;white-space:nowrap;overflow:hidden">Khardâmu Blood-sworn</div>
+          <div style="position:absolute;left:10px;top:20px;width:360px;height:16px;display:flex;align-items:center;font-size:12px;color:#a9abb8">Lost 291,443 morale over the last 5 hits</div>
+          <div style="position:absolute;left:10px;top:39px;width:6px;height:6px;background:#f0b7c9"></div>
+          <div style="position:absolute;left:22px;top:36px;width:150px;height:14px;display:flex;align-items:center;font-size:10px;color:#f0b7c9">Killing blow</div>
+          <sc-for list="{{ deathRows }}" as="d" hint-placeholder-count="5">
+            <div style="position:absolute;left:0;top:{{ d.oldTop }}px;width:380px;height:24px">
+              <div style="position:absolute;left:10px;top:0;width:46px;height:24px;display:flex;align-items:center;font-family:'Lucida Console',monospace;font-size:12px;color:#8b8d9b">{{ d.time }}</div>
+              <div style="position:absolute;left:56px;top:0;width:206px;height:24px;display:flex;align-items:center;font-size:12px;color:{{ d.skillColor }};white-space:nowrap;overflow:hidden">{{ d.skill }}</div>
+              <div style="position:absolute;left:262px;top:0;width:62px;height:24px;display:flex;align-items:center;justify-content:flex-end;font-family:'Lucida Console',monospace;font-size:12px;color:{{ d.amountColor }}">{{ d.amount }}</div>
+              <div style="position:absolute;left:324px;top:9px;width:38px;height:6px;background:#2a2c3a"></div>
+              <div style="position:absolute;left:324px;top:9px;width:{{ d.oldBarW }}px;height:6px;background:#e6d98f"></div>
+            </div>
+          </sc-for>
+          <div style="position:absolute;left:0;top:168px;width:380px;height:2px;background:#453042"></div>
+          <div style="position:absolute;left:0;top:168px;width:281px;height:2px;background:#968ae0"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1240,&quot;height&quot;:900}}">
+class Component extends DCLogic {
+  state = {
+    view: "taken",
+    a: 0, b: 1,
+    buffsOpen: true,
+    charted: { "Writ of Health": true, "Bracing Guard": true },
+    hidden: {},
+  };
+
+  // ---------- static-ish mock data, grounded in reference/Enemy_20260819_1.txt + Combat_20260819_1.txt
+  data() {
+    if (this._d) return this._d;
+    const N = 48, DUR = 132;
+    let seed = 20260819;
+    const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+    const shape = (peakAt, spread, base) => {
+      const out = [];
+      for (let i = 0; i < N; i++) {
+        const x = i / (N - 1);
+        const g = Math.exp(-Math.pow((x - peakAt) / spread, 2));
+        out.push(base + g + rnd() * 0.55);
+      }
+      return out;
+    };
+    const scale = (arr, total) => {
+      const s = arr.reduce((a, b) => a + b, 0);
+      return arr.map(v => v / s * total);
+    };
+    const series = {
+      taken: scale(shape(0.72, 0.3, 0.35), 3120000),
+      healIn: scale(shape(0.66, 0.34, 0.4), 2760000),
+      done: scale(shape(0.45, 0.4, 0.5), 1284912),
+      healOut: scale(shape(0.6, 0.45, 0.3), 324974),
+    };
+    // morale simulated from the two incoming series against a 900k pool
+    const pool = 900000;
+    let m = 1; const morale = [];
+    for (let i = 0; i < N; i++) {
+      m = m - series.taken[i] / pool + series.healIn[i] / pool * 0.93;
+      m = Math.max(0.06, Math.min(1, m));
+      morale.push(m);
+    }
+    morale[N - 1] = 0.02;
+
+    const mkRows = (defs) => defs.map(d => ({ ...d, profile: scale(shape(rnd(), 0.3 + rnd() * 0.3, 0.5), 1) }));
+    const rows = {
+      taken: mkRows([
+        { skill: "Serrated Slash", type: "Common", who: "Khardâmu Blood-sworn", hits: 21, crit: 3, dev: 0, avoided: 3, max: 89709, total: 1043000 },
+        { skill: "Wail of the Fallen", type: "Shadow", who: "Blood-sworn Guard", hits: 7, crit: 0, dev: 0, avoided: 0, max: 118319, total: 623000 },
+        { skill: "Deadly Presence - 7", type: "Shadow", who: "attacker", hits: 8, crit: 0, dev: 0, avoided: 0, max: 36518, total: 291000 },
+        { skill: "Heavy Cleave", type: "Common", who: "Khardâmu Blood-sworn", hits: 3, crit: 0, dev: 0, avoided: 0, max: 103931, total: 296275 },
+        { skill: "Harrowing Slash", type: "Shadow", who: "Khardâmu Blood-sworn", hits: 2, crit: 0, dev: 0, avoided: 0, max: 201386, total: 348491 },
+        { skill: "Lingering Pain", type: "Shadow", who: "Khardâmu Blood-sworn", hits: 11, crit: 0, dev: 0, avoided: 0, max: 36518, total: 273000 },
+        { skill: "a mighty melee attack", type: "Common", who: "Khardâmu Blood-sworn", hits: 6, crit: 1, dev: 1, avoided: 4, max: 93028, total: 245234 },
+      ]),
+      done: mkRows([
+        { skill: "Backhand Clout", type: "Beleriand", who: "Khardâmu Blood-sworn", hits: 9, crit: 4, dev: 1, avoided: 0, max: 36978, total: 421900 },
+        { skill: "Low Strike", type: "Beleriand", who: "Khardâmu Blood-sworn", hits: 14, crit: 2, dev: 0, avoided: 1, max: 11341, total: 318700 },
+        { skill: "Dextrous Hook", type: "Beleriand", who: "Khardâmu Blood-sworn", hits: 12, crit: 3, dev: 0, avoided: 0, max: 11055, total: 264120 },
+        { skill: "a melee attack", type: "Beleriand", who: "Khardâmu Blood-sworn", hits: 33, crit: 6, dev: 1, avoided: 5, max: 4057, total: 205342 },
+        { skill: "Reflect", type: "Fire", who: "Khardâmu Blood-sworn", hits: 19, crit: 0, dev: 0, avoided: 0, max: 1891, total: 35929 },
+        { skill: "Direct Damage", type: "Unknown", who: "Blood-sworn Guard", hits: 5, crit: 0, dev: 0, avoided: 0, max: 9427, total: 38921 },
+      ]),
+      healIn: mkRows([
+        { skill: "Writ of Health - Tier 2", type: "", who: "Silthelion", hits: 11, crit: 3, dev: 0, avoided: 0, max: 57400, total: 401000 },
+        { skill: "Mending Verse", type: "", who: "Silthelion", hits: 16, crit: 5, dev: 0, avoided: 0, max: 50270, total: 296000 },
+        { skill: "Prelude to Hope", type: "", who: "Silthelion", hits: 27, crit: 9, dev: 0, avoided: 0, max: 33162, total: 268000 },
+        { skill: "Epic for the Ages", type: "", who: "Silthelion", hits: 1, crit: 1, dev: 0, avoided: 0, max: 249505, total: 249505 },
+        { skill: "Bombastic Inspiration - Tier 2", type: "", who: "Silthelion", hits: 8, crit: 5, dev: 0, avoided: 0, max: 70720, total: 202000 },
+        { skill: "Bracing Guard", type: "", who: "Luxtheninth", hits: 1, crit: 0, dev: 0, avoided: 0, max: 324974, total: 324974 },
+        { skill: "Rune of Restoration", type: "", who: "Silthelion", hits: 12, crit: 0, dev: 0, avoided: 0, max: 6847, total: 76000 },
+      ]),
+      healOut: mkRows([
+        { skill: "Bracing Guard", type: "", who: "Luxtheninth", hits: 1, crit: 0, dev: 0, avoided: 0, max: 324974, total: 324974 },
+      ]),
+    };
+
+    // self buffs: uptime windows in seconds
+    const mkBuff = (name, color, target, len) => {
+      const iv = []; let t = rnd() * 4;
+      while (t < DUR) {
+        const on = len * (0.7 + rnd() * 0.6);
+        iv.push([t, Math.min(DUR, t + on)]);
+        t += on + on * (1 / target - 1) * (0.6 + rnd() * 0.9);
+      }
+      return { name, color, intervals: iv };
+    };
+    const buffs = [
+      mkBuff("Writ of Health", "#9184d9", 0.82, 10),
+      mkBuff("Mending Verse", "#b5abfc", 0.61, 8),
+      mkBuff("Bracing Guard", "#7fb3a6", 0.34, 20),
+      mkBuff("Quick Feint", "#e6d98f", 0.22, 8),
+      mkBuff("Do Not Fall This Day", "#9dc7bc", 0.47, 12),
+      mkBuff("Rune-sign of Winter", "#c98fa8", 0.55, 9),
+      mkBuff("Word of Exaltation", "#d2cefd", 0.71, 14),
+    ];
+
+    this._d = { N, DUR, series, morale, rows, buffs, pool };
+    return this._d;
+  }
+
+  num(v) {
+    const n = Math.round(v || 0);
+    return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  }
+  clock(s) {
+    s = Math.max(0, Math.round(s || 0));
+    return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+  }
+  pct(f) { return Math.round((f || 0) * 100) + "%"; }
+
+  viewMeta(v) {
+    return {
+      taken: { label: "Damage taken", goal: "What hit you, what got through", color: "#c98fa8", second: "healIn", secondColor: "#9dc7bc", secondLabel: "Healing in", hitWord: "hits", picker: "sources" },
+      done: { label: "Damage done", goal: "Which skills carried it, against whom", color: "#9184d9", second: null, hitWord: "hits", picker: "targets" },
+      healOut: { label: "Healing done", goal: "Self-sustain and group contribution", color: "#7fb3a6", second: null, hitWord: "heals", picker: "recipients" },
+      healIn: { label: "Healing taken", goal: "Did healers keep pace", color: "#9dc7bc", second: "taken", secondColor: "#c98fa8", secondLabel: "Damage taken", hitWord: "heals", picker: "casters" },
+    }[v];
+  }
+
+  // range in bucket indices
+  bucketRange() {
+    const { N } = this.data();
+    const a = Math.round(this.state.a * (N - 1));
+    const b = Math.round(this.state.b * (N - 1));
+    return [Math.min(a, b), Math.max(a, b)];
+  }
+
+  startDrag(which) {
+    return (e) => {
+      e.preventDefault();
+      const track = e.currentTarget.parentElement;
+      const rect = track.getBoundingClientRect();
+      const move = (ev) => {
+        let f = (ev.clientX - rect.left) / rect.width;
+        f = Math.max(0, Math.min(1, f));
+        if (which === "a") this.setState({ a: Math.min(f, this.state.b - 0.04) });
+        else this.setState({ b: Math.max(f, this.state.a + 0.04) });
+      };
+      const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    };
+  }
+
+  renderVals() {
+    const d = this.data();
+    const { N, DUR } = d;
+    const view = this.state.view;
+    const meta = this.viewMeta(view);
+    const [i0, i1] = this.bucketRange();
+    const W = 848, PLOT = 150, bw = W / N;
+    const full = i0 === 0 && i1 === N - 1;
+    const t0 = i0 / (N - 1) * DUR, t1 = i1 / (N - 1) * DUR;
+
+    // ---- series values for the two plotted keys
+    const keys = [view === "taken" ? "taken" : view === "healIn" ? "healIn" : view, meta.second].filter(Boolean);
+    const colors = [meta.color, meta.secondColor];
+    const labels = [meta.label, meta.secondLabel];
+    const vis = keys.map(k => !this.state.hidden[k]);
+    let max = 0;
+    keys.forEach((k, s) => { if (vis[s]) d.series[k].forEach(v => { if (v > max) max = v; }); });
+    if (max <= 0) max = 1;
+    const y = (v) => PLOT - 4 - (v / max) * (PLOT - 26);
+    const xs = (i) => i * bw + bw / 2;
+
+    const lines = keys.map((k, s) => vis[s] ? d.series[k].map((v, i) => xs(i).toFixed(1) + "," + y(v).toFixed(1)).join(" ") : "");
+    const dots = [];
+    keys.forEach((k, s) => {
+      if (!vis[s]) return;
+      d.series[k].forEach((v, i) => {
+        if (i % 2) return;
+        dots.push({ left: (xs(i) - 2.5).toFixed(1), top: (y(v) - 2.5).toFixed(1), color: colors[s] });
+      });
+    });
+
+    // Morale is incoming context: only the views that read your own vitals carry it.
+    const showMorale = view === "taken" || view === "healIn";
+    const moraleBars = (showMorale ? d.morale : []).map((m, i) => ({
+      left: (i * bw + 1).toFixed(1), w: (bw - 2).toFixed(1),
+      h: Math.max(1, Math.round(m * (PLOT - 2))),
+      color: m < 0.3 ? "#3f2a30" : "#302e21",
+      edge: m < 0.3 ? "#7d5563" : "#5f5936",
+    }));
+
+    // ---- range-scoped aggregates
+    const sumRange = (arr) => arr.slice(i0, i1 + 1).reduce((a, b) => a + b, 0);
+    const frac = (i1 - i0 + 1) / N;
+    const key = view;
+    const total = sumRange(d.series[key]);
+    const activeSec = Math.max(1, Math.round((t1 - t0) * 0.82)) || 1;
+    const rowDefs = d.rows[key];
+    const rowsScoped = rowDefs.map(r => {
+      const f = r.profile.slice(i0, i1 + 1).reduce((a, b) => a + b, 0);
+      return {
+        ...r, rTotal: r.total * f, rHits: Math.max(f > 0.02 ? 1 : 0, Math.round(r.hits * f)),
+        rCrit: Math.round(r.crit * f), rDev: Math.round(r.dev * f), rAvoid: Math.round(r.avoided * f),
+      };
+    }).filter(r => r.rTotal > 0).sort((x, z) => z.rTotal - x.rTotal);
+    const rowMax = rowsScoped.reduce((m, r) => Math.max(m, r.rTotal), 0) || 1;
+    const hits = rowsScoped.reduce((a, r) => a + r.rHits, 0);
+    const crits = rowsScoped.reduce((a, r) => a + r.rCrit, 0);
+    const devs = rowsScoped.reduce((a, r) => a + r.rDev, 0);
+    const biggest = rowsScoped.reduce((b, r) => (r.max > (b ? b.max : 0) ? r : b), null);
+
+    const isDmg = view === "taken" || view === "done";
+    const colW = isDmg
+      ? [{ k: "skill", w: 306, a: "left" }, { k: "type", w: 110, a: "left" }, { k: "hits", w: 58, a: "right" }, { k: "critdev", w: 106, a: "right" }, { k: "avoid", w: 68, a: "right" }, { k: "max", w: 88, a: "right" }, { k: "total", w: 104, a: "right" }]
+      : [{ k: "skill", w: 336, a: "left" }, { k: "type", w: 156, a: "left" }, { k: "hits", w: 58, a: "right" }, { k: "critdev", w: 106, a: "right" }, { k: "max", w: 88, a: "right" }, { k: "total", w: 104, a: "right" }];
+    const headLabel = { skill: "SKILL", type: view === "healIn" ? "FROM" : view === "healOut" ? "TO" : "TYPE", hits: meta.hitWord.toUpperCase(), critdev: "CRIT / DEV", avoid: "AVOID", max: "MAX", total: "TOTAL" };
+    const headers = colW.map(c => ({ label: headLabel[c.k], w: c.w, align: c.a }));
+    const rows = rowsScoped.map(r => {
+      const cellText = {
+        skill: r.skill, type: isDmg ? r.type : r.who,
+        hits: this.num(r.rHits),
+        critdev: this.pct(r.rHits ? r.rCrit / r.rHits : 0) + " / " + this.pct(r.rHits ? r.rDev / r.rHits : 0),
+        avoid: this.pct((r.rAvoid) / Math.max(1, r.rHits + r.rAvoid)),
+        max: this.num(r.max), total: this.num(r.rTotal),
+      };
+      return {
+        shareW: Math.round(r.rTotal / rowMax * 848),
+        shareColor: view === "taken" ? "#2e2830" : view === "done" ? "#282a3c" : "#252f32",
+        cells: colW.map(c => ({
+          text: cellText[c.k], w: c.w, align: c.a,
+          font: c.k === "skill" || c.k === "type" ? "Verdana,sans-serif" : "'Lucida Console',monospace",
+          color: c.k === "total" ? meta.color : c.k === "skill" ? "#e9e9ed" : "#a9abb8",
+        })),
+      };
+    });
+
+    const kpis = [
+      { label: "TOTAL", value: this.num(total), sub: this.num(total / activeSec) + "/s", subColor: "#d2cefd" },
+      { label: meta.hitWord.toUpperCase(), value: this.num(hits), sub: rowsScoped.length + " skills", subColor: "#8b8d9b" },
+      { label: "CRIT / DEV", value: this.pct(hits ? crits / hits : 0) + " / " + this.pct(hits ? devs / hits : 0), sub: "of " + meta.hitWord, subColor: "#8b8d9b" },
+      { label: "LARGEST", value: biggest ? this.num(biggest.max) : "--", sub: biggest ? biggest.skill : "--", subColor: "#8b8d9b" },
+      { label: full ? "ACTIVE" : "RANGE", value: this.clock(t1 - t0), sub: full ? "of " + this.clock(DUR) : this.clock(t0) + "–" + this.clock(t1), subColor: full ? "#8b8d9b" : "#d2cefd" },
+    ];
+
+    // ---- side panels
+    const byWho = {}, byType = {};
+    rowsScoped.forEach(r => { byWho[r.who] = (byWho[r.who] || 0) + r.rTotal; byType[isDmg ? r.type : r.skill] = (byType[isDmg ? r.type : r.skill] || 0) + r.rTotal; });
+    const toItems = (obj, color) => {
+      const arr = Object.keys(obj).map(k => ({ name: k, v: obj[k] })).sort((a, b) => b.v - a.v).slice(0, 5);
+      const m = arr.length ? arr[0].v : 1;
+      return arr.map(it => ({ name: it.name, value: this.num(it.v), pct: Math.round(it.v / m * 100), color }));
+    };
+    const panels = [
+      { title: meta.picker.toUpperCase(), items: toItems(byWho, meta.color) },
+      { title: isDmg ? "BY TYPE" : "BY SKILL", items: toItems(byType, "#9184d9") },
+    ];
+
+    // ---- buffs, scoped to range
+    const rangeDur = Math.max(0.5, t1 - t0);
+    const buffRows = d.buffs.map(b => {
+      let cov = 0, apps = 0, gap = 0, cursor = t0;
+      b.intervals.forEach(([s, e]) => {
+        const s2 = Math.max(s, t0), e2 = Math.min(e, t1);
+        if (e2 > s2) {
+          cov += e2 - s2;
+          if (s2 - cursor > gap) gap = s2 - cursor;
+          cursor = Math.max(cursor, e2);
+        }
+        if (s >= t0 && s <= t1) apps++;
+      });
+      if (t1 - cursor > gap) gap = t1 - cursor;
+      const up = cov / rangeDur;
+      const charted = !!this.state.charted[b.name];
+      const initials = b.name.split(/[\s-]+/).filter(w => /^[A-Za-z]/.test(w)).slice(0, 2).map(w => w[0].toUpperCase()).join("");
+      return {
+        name: b.name, color: b.color, up, charted,
+        icon: initials, iconBg: charted ? "#272a3d" : "#1e202d",
+        iconEdge: charted ? b.color : "#3a3d4e", iconText: charted ? b.color : "#8b8d9b",
+        pct: this.pct(up), uptime: this.clock(cov), apps: String(apps),
+        gap: Math.round(gap) + "s",
+        gapColor: gap > 12 ? "#e3a3ba" : "#a9abb8",
+        pctColor: up > 0.75 ? "#7fb3a6" : up < 0.35 ? "#e3a3ba" : "#e9e9ed",
+        nameColor: charted ? "#e7e5fe" : "#e9e9ed",
+        boxBorder: charted ? b.color : "#5c5f70",
+        boxFill: charted ? b.color : "transparent",
+        shareW: Math.round(up * 604),
+        shareColor: charted ? "#272a3d" : "#23253300",
+        toggle: () => this.setState({ charted: { ...this.state.charted, [b.name]: !charted } }),
+      };
+    }).sort((a, b) => b.up - a.up);
+
+    const chartedBuffs = d.buffs.filter(b => this.state.charted[b.name]).slice(0, 3);
+    const laneRows = chartedBuffs.map(b => ({
+      color: b.color, label: b.name, iconBg: "#272a3d",
+      icon: b.name.split(/[\s-]+/).filter(w => /^[A-Za-z]/.test(w)).slice(0, 2).map(w => w[0].toUpperCase()).join(""),
+      segs: b.intervals.map(([s, e]) => ({
+        left: (s / DUR * 826).toFixed(1), w: Math.max(2, (e - s) / DUR * 826).toFixed(1), color: b.color,
+      })),
+    }));
+
+    const ticks = [0, 1, 2, 3, 4].map(i => {
+      const f = i / 4;
+      return {
+        left: (f * W - (i === 0 ? 0 : i === 4 ? 60 : 30)).toFixed(1),
+        align: i === 0 ? "left" : i === 4 ? "right" : "center",
+        text: this.clock(f * DUR),
+        oldLeft: Math.floor(f * W) - (i === 0 ? 0 : i === 4 ? 40 : 20),
+        justify: i === 0 ? "flex-start" : i === 4 ? "flex-end" : "center",
+        oldText: Math.round(f * DUR) + "s",
+      };
+    });
+
+    const chipNames = view === "taken" ? ["Khardâmu Blood-sworn", "attacker", "Blood-sworn Guard"]
+      : view === "healIn" ? ["Silthelion", "Luxtheninth"]
+      : view === "healOut" ? ["Luxtheninth"] : ["Khardâmu Blood-sworn", "Blood-sworn Guard"];
+    const chips = [{ label: "All " + meta.picker, sel: true }].concat(chipNames.map(n => ({ label: n, sel: false }))).map(c => ({
+      label: c.label, color: c.sel ? "#e7e5fe" : "#8b8d9b",
+      bg: c.sel ? "#282a3d" : "#212433", border: c.sel ? "#5d5294" : "#2e3140", select: () => {},
+    }));
+
+    const sessionData = [
+      { name: "Khardâmu Blood-sworn · died", meta: "00:27 · 02:12 · 15.4k/s", sel: true, pinned: true },
+      { name: "Blood-sworn Guard", meta: "00:22 · 00:41 · 11.9k/s", sel: false, pinned: true },
+      { name: "Khardâmu Blood-sworn", meta: "00:14 · 01:38 · 13.1k/s", sel: false, pinned: false },
+      { name: "Training Snowman", meta: "00:09 · 00:22 · 8.7k/s", sel: false, pinned: false },
+      { name: "Blood-sworn Guard", meta: "00:04 · 00:35 · 12.4k/s", sel: false, pinned: false },
+      { name: "Training Snowman", meta: "23:58 · 00:18 · 7.2k/s", sel: false, pinned: false },
+    ];
+    const sessions = sessionData.map(s => ({
+      name: s.name, meta: s.meta,
+      bg: s.sel ? "#242438" : "#1e202d",
+      mark: s.sel ? "#9184d9" : s.pinned ? "#5d5294" : "transparent",
+      pin: s.pinned ? "#9184d9" : "#5c5f70",
+      nameColor: s.sel ? "#e7e5fe" : "#e9e9ed",
+    }));
+    const sessionsOld = sessionData.map(s => ({
+      name: s.name, meta: s.meta,
+      bg: s.sel ? "#242438" : "#1e202d",
+      mark: s.sel ? "#9184d9" : s.pinned ? "#5d5294" : "transparent",
+      markW: s.sel || s.pinned ? 2 : 0,
+      pin: s.pinned ? "#9184d9" : "#5c5f70",
+    }));
+
+    // damage pair first, healing pair second — the two you compare sit next to each other
+    const tabKeys = ["done", "taken", "healOut", "healIn"];
+    const tabs = tabKeys.map(k => ({
+      label: this.viewMeta(k).label, color: k === view ? "#e7e5fe" : "#8b8d9b",
+      bg: k === view ? "#282a3d" : "#212433", rule: k === view ? "#9184d9" : "#2e3140",
+      select: () => this.setState({ view: k, hidden: {} }),
+    }));
+
+    // ---------- current-UI recreation values (fixed to the "taken" view, full fight)
+    const oldMax = Math.max(...d.series.taken, ...d.series.healIn);
+    const oldColumns = d.morale.map((m, i) => {
+      const left = Math.floor(i * bw);
+      const barArea = 128;
+      const hA = Math.max(1, Math.floor(d.series.taken[i] / oldMax * barArea));
+      const hB = Math.max(1, Math.floor(d.series.healIn[i] / oldMax * barArea));
+      return {
+        left, aH: hA, aTop: 150 - hA, bH: hB, bTop: 150 - hB,
+        dotLeft: Math.floor(i * bw + bw / 2), dotTop: Math.floor((1 - m) * 22),
+      };
+    });
+    const oldColSpec = [
+      { k: "skill", left: 0, w: 150, j: "flex-start", f: "Verdana,sans-serif" },
+      { k: "type", left: 150, w: 110, j: "flex-start", f: "Verdana,sans-serif" },
+      { k: "hits", left: 260, w: 60, j: "flex-end", f: "'Lucida Console',monospace" },
+      { k: "crit", left: 320, w: 60, j: "flex-end", f: "'Lucida Console',monospace" },
+      { k: "dev", left: 380, w: 60, j: "flex-end", f: "'Lucida Console',monospace" },
+      { k: "avoid", left: 440, w: 60, j: "flex-end", f: "'Lucida Console',monospace" },
+      { k: "max", left: 500, w: 60, j: "flex-end", f: "'Lucida Console',monospace" },
+      { k: "total", left: 560, w: 60, j: "flex-end", f: "'Lucida Console',monospace" },
+    ];
+    const oldHeaders = oldColSpec.map(c => ({
+      label: { skill: "SKILL", type: "TYPE", hits: "HITS", crit: "CRIT", dev: "DEV", avoid: "AVOIDED", max: "MAX", total: "TOTAL" }[c.k],
+      left: c.left + 8, w: c.w, justify: c.j,
+    }));
+    const fullRows = d.rows.taken.map(r => ({ ...r, rTotal: r.total })).sort((a, b) => b.rTotal - a.rTotal);
+    const fullMax = fullRows[0].rTotal;
+    const oldRows = fullRows.map(r => {
+      const txt = {
+        skill: r.skill, type: r.type, hits: this.num(r.hits), crit: this.num(r.crit), dev: this.num(r.dev),
+        avoid: this.pct(r.avoided / Math.max(1, r.hits + r.avoided)), max: this.num(r.max), total: this.num(r.total),
+      };
+      return {
+        shareW: Math.floor(620 * r.total / fullMax),
+        cells: oldColSpec.map(c => ({ text: txt[c.k], left: c.left, w: c.w, justify: c.j, font: c.f })),
+      };
+    });
+    const oldWho = {}, oldType = {};
+    fullRows.forEach(r => { oldWho[r.who] = (oldWho[r.who] || 0) + r.total; oldType[r.type] = (oldType[r.type] || 0) + r.total; });
+    const oldItems = (obj) => {
+      const arr = Object.keys(obj).map(k => ({ name: k, v: obj[k] })).sort((a, b) => b.v - a.v).slice(0, 4);
+      const m = arr[0].v;
+      return arr.map((it, i) => ({ name: it.name, value: this.num(it.v), top: 16 + i * 16, barW: Math.round(it.v / m * 233) }));
+    };
+    const kpisOldData = [
+      { label: "TOTAL", value: this.num(3120000), sub: "28,846/s", subColor: "#d2cefd" },
+      { label: "HITS", value: "58", sub: "3 sources", subColor: "#8b8d9b" },
+      { label: "CRIT / DEV", value: "7% / 2%", sub: "of hits", subColor: "#8b8d9b" },
+      { label: "LARGEST", value: "201,386", sub: "Harrowing Slash", subColor: "#8b8d9b" },
+      { label: "ACTIVE", value: "01:48", sub: "of 02:12", subColor: "#8b8d9b" },
+    ].map((k, i) => ({ ...k, left: 12 + i * 171 }));
+    const chipsOldData = [
+      { label: "All sources", sel: true }, { label: "Khardâmu Blood-sworn", sel: false },
+      { label: "attacker", sel: false }, { label: "Blood-sworn Guard", sel: false },
+    ];
+    let cx = 12;
+    const chipsOld = chipsOldData.map(c => {
+      const w = 16 + c.label.length * 7;
+      const out = { label: c.label, w, left: cx, color: c.sel ? "#e7e5fe" : "#8b8d9b", bg: c.sel ? "#282a3d" : "#212433", border: c.sel ? "#5d5294" : "#2e3140" };
+      cx += w + 6;
+      return out;
+    });
+    const tabsOld = tabKeys.map((k, i) => ({
+      label: this.viewMeta(k).label, left: 12 + i * 140,
+      color: k === "taken" ? "#e7e5fe" : "#8b8d9b",
+      bg: k === "taken" ? "#282a3d" : "#212433",
+      rule: k === "taken" ? "#9184d9" : "#212433",
+    }));
+    const meterTabsOld = ["DONE", "TAKEN", "HEAL OUT", "HEAL IN"].map((l, i) => ({
+      label: l, left: i * 65, color: i === 0 ? "#e7e5fe" : "#8b8d9b", bg: i === 0 ? "#282a3e" : "#212433",
+    }));
+    const deathData = [
+      { time: "-8s", skill: "Serrated Slash · Common", amount: "51,355", pct: 42, kill: false },
+      { time: "-6s", skill: "Lingering Pain · Shadow", amount: "17,919", pct: 30, kill: false },
+      { time: "-4s", skill: "Temporary morale", amount: "-178,749", pct: 18, temp: true },
+      { time: "-2s", skill: "Deadly Presence - 8 · Shadow", amount: "44,798", pct: 9, kill: false },
+      { time: "+0s", skill: "a minor melee attack · Common", amount: "15,482", pct: 0, kill: true },
+    ];
+    // biggest single incoming hit, temp-morale rows excluded (a popped bubble is not a hit)
+    const dmgAmounts = deathData.filter(r => !r.temp).map(r => +r.amount.replace(/,/g, ""));
+    const worst = Math.max(...dmgAmounts);
+    const deathRows = deathData.map((r, i) => {
+      const isMax = !r.temp && +r.amount.replace(/,/g, "") === worst;
+      return {
+        ...r, oldTop: 50 + i * 24, oldBarW: Math.round(38 * r.pct / 100),
+        pctText: r.pct + "%",
+        isMax, maxTag: isMax ? "MAX" : "",
+        bg: r.kill ? "#33222e" : isMax ? "#2b2438" : "transparent",
+        mark: r.kill ? "#f0b7c9" : isMax ? "#b5abfc" : "transparent",
+        skillColor: r.temp ? "#a9abb8" : "#e9e9ed",
+        amountColor: r.kill ? "#f0b7c9" : r.temp ? "#a9abb8" : isMax ? "#b5abfc" : r.pct < 15 ? "#e3a3ba" : "#c98fa8",
+        moraleColor: r.pct < 20 ? "#e3a3ba" : "#e6d98f",
+      };
+    });
+    const meterSpark = Array.from({ length: 30 }, (_, i) => ({
+      left: (i * 8).toFixed(1), w: 6,
+      h: Math.max(1, Math.round(d.series.done[i + 12] / Math.max(...d.series.done) * 20)),
+    }));
+
+    const chartedCount = laneRows.length;
+    const tableH = 22 + Math.max(9, rows.length) * 22;
+    const laneBlock = chartedCount > 0 ? 4 + chartedCount * 20 : 0;
+    const buffBlock = this.state.buffsOpen ? 20 + buffRows.length * 22 : 0;
+    const winHeight = 32 + 30 + 32 + 60 + 161 + laneBlock + 22 + 16 + 20 + 11 + tableH + 11 + 26 + buffBlock + 12;
+    return {
+      winHeight, tableH,
+      resetColor: full ? "#5c5f70" : "#e7e5fe",
+      resetBorder: full ? "#2e3140" : "#5d5294",
+      tabs, goalLine: meta.goal, chips, kpis, sessions, ticks,
+      lineA: lines[0] || "", lineB: lines[1] || "", colorA: colors[0], colorB: colors[1] || "transparent",
+      dots, moraleBars,
+      legend: keys.map((k, s) => ({
+        label: labels[s], swatch: vis[s] ? colors[s] : "#3a3d4e", color: vis[s] ? colors[s] : "#5c5f70",
+        toggle: () => this.setState({ hidden: { ...this.state.hidden, [k]: vis[s] } }),
+      })).concat(showMorale ? [{ label: "MORALE (background)", swatch: "#3d3a26", color: "#8a8468", toggle: () => {} }] : []),
+      showMorale,
+      // top of the morale axis, labelled with the session's own peak morale in points
+      moraleAxisLabel: "MORALE " + this.num(Math.max(...d.morale) * d.pool),
+      peakLine: showMorale
+        ? "peak morale " + this.pct(Math.max(...d.morale.slice(i0, i1 + 1))) + " · low " + this.pct(Math.min(...d.morale.slice(i0, i1 + 1)))
+        : "",
+      headers, rows, panels,
+      hasLanes: chartedCount > 0, laneStripH: chartedCount * 20, laneRows,
+      handleAX: (i0 / (N - 1) * W).toFixed(1), handleBX: (i1 / (N - 1) * W).toFixed(1),
+      rangeW: Math.max(0, (i1 - i0) / (N - 1) * W).toFixed(1),
+      dimLeftW: (i0 / (N - 1) * W).toFixed(1),
+      dimRightX: (i1 / (N - 1) * W).toFixed(1),
+      dimRightW: (W - i1 / (N - 1) * W).toFixed(1),
+      dragA: this.startDrag("a"), dragB: this.startDrag("b"),
+      resetRange: () => this.setState({ a: 0, b: 1 }),
+      rangeChipText: full ? "FULL FIGHT · 02:12" : "RANGE " + this.clock(t0) + " – " + this.clock(t1) + " · " + Math.round(t1 - t0) + "s",
+      rangeChipColor: full ? "#8b8d9b" : "#d2cefd",
+      buffsOpen: this.state.buffsOpen,
+      caret: this.state.buffsOpen ? "▾" : "▸",
+      toggleBuffs: () => this.setState({ buffsOpen: !this.state.buffsOpen }),
+      buffSummary: "· " + buffRows.length + " tracked · " + chartedCount + " charted · " + (full ? "full fight" : this.clock(t0) + "–" + this.clock(t1)),
+      buffHeaders: [
+        { label: "", w: 22, align: "left" }, { label: "BUFF", w: 214, align: "left" },
+        { label: "UPTIME %", w: 98, align: "right" }, { label: "UPTIME", w: 90, align: "right" },
+        { label: "APPS", w: 74, align: "right" }, { label: "LONGEST GAP", w: 106, align: "right" },
+      ],
+      buffRows,
+      // recreation
+      sessionsOld, tabsOld, chipsOld, kpisOld: kpisOldData, oldColumns, oldHeaders, oldRows,
+      panelsOld: [{ title: "SOURCES", items: oldItems(oldWho) }, { title: "BY TYPE", items: oldItems(oldType) }],
+      meterTabsOld, deathRows, meterSpark,
+    };
+  }
+}
+
+</script>
+</body>
+</html>

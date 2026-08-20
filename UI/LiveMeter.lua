@@ -12,9 +12,23 @@ LiveMeter = class(Frame)
 
 local TABS = { "done", "taken", "healOut", "healIn" }
 local TAB_LABELS = { done = "Done", taken = "Taken", healOut = "Heal out", healIn = "Heal in" }
+-- The sparkline takes the active tab's own series colour, so the band and the headline number
+-- below it are obviously about the same thing.
+local TAB_COLORS = {
+	done = Theme.Hex.DamageDone, taken = Theme.Hex.DamageTaken,
+	healOut = Theme.Hex.HealingDone, healIn = Theme.Hex.HealingTaken,
+}
 
 -- docs/IMPLEMENTATION_PLAN.md suggested ~5Hz (0.2s); bumped to 0.1s (10Hz) per direct feedback.
 local REFRESH_INTERVAL = 0.1
+
+-- Redesign geometry (REDESIGN_SPEC.md section 8). The tab row loses 2px and the sparkline is
+-- paid for out of the body's existing height -- the window's 260x186 footprint does not change.
+local TAB_ROW_HEIGHT = 22
+local SPARK_SECONDS = 30 -- one column per second of the last half-minute
+local SPARK_HEIGHT = 16
+local SPARK_COLUMN = 8   -- 30 columns x 8px = the body's full 240px content width
+local SPARK_BAR = 6      -- leaving 2px of air between columns
 
 ---------------------------------------------------------------------------------------------------
 -- Per-tab data providers -- one function per tab, all returning the same
@@ -118,11 +132,11 @@ function LiveMeter:Constructor()
 		width = 260, height = 186, headerHeight = 26,
 	})
 
-	-- tab row (24px) sits directly under the header; body (136px) below that.
+	-- tab row (22px) sits directly under the header; body fills the rest of the client.
 	self.body = Turbine.UI.Control()
 	self.body:SetParent(self.client)
-	self.body:SetPosition(0, 24)
-	self.body:SetSize(260, 136)
+	self.body:SetPosition(0, TAB_ROW_HEIGHT)
+	self.body:SetSize(260, 160 - TAB_ROW_HEIGHT)
 	self.body:SetMouseVisible(false)
 
 	self.lastRefresh = 0
@@ -207,7 +221,7 @@ function LiveMeter:BuildTabs()
 		local tab = Turbine.UI.Control()
 		tab:SetParent(self.client)
 		tab:SetPosition((i - 1) * tabWidth, 0)
-		tab:SetSize(tabWidth, 24)
+		tab:SetSize(tabWidth, TAB_ROW_HEIGHT)
 		tab:SetBackColor(Theme.Color(Theme.Hex.WindowFill))
 
 		local label = Turbine.UI.Label()
@@ -216,15 +230,24 @@ function LiveMeter:BuildTabs()
 		label:SetText(string.upper(TAB_LABELS[key]))
 		label:SetForeColor(Theme.Color(Theme.Hex.DimText))
 		label:SetPosition(0, 0)
-		label:SetSize(tabWidth, 24)
+		label:SetSize(tabWidth, TAB_ROW_HEIGHT - 2)
 		label:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleCenter)
 		label:SetMouseVisible(false)
+
+		-- Underline instead of a filled block: at 65px per tab a solid fill is a heavy mark
+		-- for what is only a mode switch, and a 2px rule reads the way the analysis window's
+		-- own tabs do.
+		local underline = Turbine.UI.Control()
+		underline:SetParent(tab)
+		underline:SetPosition(0, TAB_ROW_HEIGHT - 2)
+		underline:SetSize(tabWidth, 2)
+		underline:SetMouseVisible(false)
 
 		tab.MouseClick = function() meter:SelectTab(key) end
 		tab.MouseEnter = function() meter:TabHover(key, true) end
 		tab.MouseLeave = function() meter:TabHover(key, false) end
 
-		self.tabControls[key] = { control = tab, label = label }
+		self.tabControls[key] = { control = tab, label = label, underline = underline }
 	end
 
 	self:SelectTab(TABS[_G.settings.liveTab] or "done", true)
@@ -233,33 +256,108 @@ end
 function LiveMeter:BuildBody()
 	local x, w = 10, 240
 
-	self.captionLabel = self:BodyLabel(x, 0, 160, 14, Font.Verdana10, Theme.Hex.DimText, Turbine.UI.ContentAlignment.BottomLeft)
-	self.valueLabel = self:BodyLabel(x, 8, 150, 27, Font.Verdana22, Theme.Hex.Text, Turbine.UI.ContentAlignment.BottomLeft)
-	self.rateLabel = self:BodyLabel(x + 150, 18, 90, 17, Font.Verdana12, Theme.Hex.Accent300, Turbine.UI.ContentAlignment.BottomRight)
+	-- caption 12 / headline 24 / sparkline 16 / divider 1 / three stat rows 16 / sub-line 10,
+	-- all inside the body the window already had. The headline number is Verdana20 rather than
+	-- Verdana22 so it sits on a 24px line without the sparkline having to steal from it.
+	self.captionLabel = self:BodyLabel(x, 6, 160, 12, Font.Verdana10, Theme.Hex.DimText, Turbine.UI.ContentAlignment.MiddleLeft)
+	self.valueLabel = self:BodyLabel(x, 18, 150, 24, Font.Verdana20, Theme.Hex.Text, Turbine.UI.ContentAlignment.BottomLeft)
+	self.rateLabel = self:BodyLabel(x + 150, 18, 90, 24, Font.LucidaConsole12, Theme.Hex.Accent300, Turbine.UI.ContentAlignment.BottomRight)
+
+	self:BuildSparkline(x, 42, w)
 
 	local divider = Turbine.UI.Control()
 	divider:SetParent(self.body)
-	divider:SetPosition(x, 42)
+	divider:SetPosition(x, 61)
 	divider:SetSize(w, 1)
 	divider:SetBackColor(Theme.Color(Theme.Hex.MeterDivider))
 	divider:SetMouseVisible(false)
 
 	self.lineLabels = {}
-	local ys = { 50, 81 }
-	for i = 1, 2 do
-		local labelL = self:BodyLabel(x, ys[i], 120, 24, Font.Verdana10, Theme.Hex.DimText, Turbine.UI.ContentAlignment.MiddleLeft)
-		local valueL = self:BodyLabel(x + 120, ys[i], 120, 24, Font.LucidaConsole12, Theme.Hex.Text, Turbine.UI.ContentAlignment.MiddleRight)
+	local ys = { 65, 81, 97 }
+	for i = 1, 3 do
+		local labelL = self:BodyLabel(x, ys[i], 120, 16, Font.Verdana10, Theme.Hex.DimText, Turbine.UI.ContentAlignment.MiddleLeft)
+		local valueL = self:BodyLabel(x + 120, ys[i], 120, 16, Font.LucidaConsole12, Theme.Hex.Text, Turbine.UI.ContentAlignment.MiddleRight)
 		self.lineLabels[i] = { label = labelL, value = valueL }
 	end
 
-	-- The 3rd line ("max") is a real two-line value cell instead of one cramped line: the
-	-- number on top (same LucidaConsole12 as every other value), the skill name smaller and
-	-- dimmer directly below it -- per feedback, not squeezed onto the number's own line.
-	local maxY = 112
-	local maxLabel = self:BodyLabel(x, maxY, 120, 24, Font.Verdana10, Theme.Hex.DimText, Turbine.UI.ContentAlignment.MiddleLeft)
-	local maxValue = self:BodyLabel(x + 120, maxY, 120, 13, Font.LucidaConsole12, Theme.Hex.Text, Turbine.UI.ContentAlignment.BottomRight)
-	local maxSub = self:BodyLabel(x + 120, maxY + 13, 120, 11, Font.Verdana10, Theme.Hex.DimText, Turbine.UI.ContentAlignment.TopRight)
-	self.lineLabels[3] = { label = maxLabel, value = maxValue, sub = maxSub }
+	-- The max-hit row keeps its skill name on its own line under the number rather than crammed
+	-- onto it -- a long skill name overflowed badly when the two shared one LucidaConsole12 cell.
+	self.lineLabels[3].sub = self:BodyLabel(x, 113, w, 10, Font.Verdana10, Theme.Hex.DimText, Turbine.UI.ContentAlignment.TopRight)
+end
+
+-- 30 pooled columns, one per second of the last half-minute, drawn as a filled band rather than
+-- a line: 16px of height cannot express a polyline, and the shape of the last 30 seconds is all
+-- this is for. The "LAST 30s" tag sits on its own WindowFill ground so a tall column behind it
+-- cannot make it unreadable.
+function LiveMeter:BuildSparkline(x, y, width)
+	self.sparkColumns = {}
+	for i = 1, SPARK_SECONDS do
+		local column = Turbine.UI.Control()
+		column:SetParent(self.body)
+		column:SetPosition(x + (i - 1) * SPARK_COLUMN, y + SPARK_HEIGHT)
+		column:SetSize(SPARK_BAR, 0)
+		column:SetVisible(false)
+		column:SetMouseVisible(false)
+		self.sparkColumns[i] = column
+	end
+
+	self.sparkTagGround = Turbine.UI.Control()
+	self.sparkTagGround:SetParent(self.body)
+	self.sparkTagGround:SetPosition(x + width - 52, y + SPARK_HEIGHT - 10)
+	self.sparkTagGround:SetSize(52, 10)
+	self.sparkTagGround:SetBackColor(Theme.Color(Theme.Hex.WindowFill))
+	self.sparkTagGround:SetMouseVisible(false)
+	self.sparkTagGround:SetZOrder(1)
+
+	self.sparkTag = Turbine.UI.Label()
+	self.sparkTag:SetParent(self.sparkTagGround)
+	self.sparkTag:SetFont(Font.Verdana10)
+	self.sparkTag:SetText("LAST 30s")
+	self.sparkTag:SetForeColor(Theme.Color(Theme.Hex.Disabled))
+	self.sparkTag:SetPosition(0, 0)
+	self.sparkTag:SetSize(52, 10)
+	self.sparkTag:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleRight)
+	self.sparkTag:SetMouseVisible(false)
+
+	self.sparkX, self.sparkY = x, y
+end
+
+-- One column per whole second, read straight off session.buckets for the ACTIVE TAB's category,
+-- ending at the fight's most recent second. Seconds before the fight started, and seconds with
+-- no events, are simply absent -- a gap in the band is a real lull, not missing data.
+function LiveMeter:RefreshSparkline(session)
+	local key = self.activeTab
+	local lastSecond = math.floor(session:Duration())
+
+	local values, maxValue = {}, 0
+	for i = 1, SPARK_SECONDS do
+		local second = lastSecond - SPARK_SECONDS + i
+		local bucket = (second >= 0) and session.buckets[second] or nil
+		local value = bucket and (bucket[key] or 0) or 0
+		values[i] = value
+		if value > maxValue then
+			maxValue = value
+		end
+	end
+
+	local colorHex = TAB_COLORS[key]
+	for i = 1, SPARK_SECONDS do
+		local column = self.sparkColumns[i]
+		local height = 0
+		if values[i] > 0 and maxValue > 0 then
+			-- at least 1px, so a small second next to a huge one still shows something
+			height = math.max(1, math.floor(values[i] / maxValue * SPARK_HEIGHT))
+		end
+
+		if height > 0 then
+			column:SetPosition(self.sparkX + (i - 1) * SPARK_COLUMN, self.sparkY + SPARK_HEIGHT - height)
+			column:SetSize(SPARK_BAR, height)
+			column:SetBackColor(Theme.Color(colorHex))
+			column:SetVisible(true)
+		else
+			column:SetVisible(false)
+		end
+	end
 end
 
 function LiveMeter:BodyLabel(x, y, w, h, font, colorHex, align)
@@ -286,7 +384,8 @@ function LiveMeter:SelectTab(key, skipSave)
 		local t = self.tabControls[k]
 		local selected = (k == key)
 		t.label:SetForeColor(Theme.Color(selected and Theme.Hex.Accent200 or Theme.Hex.DimText))
-		t.control:SetBackColor(selected and Theme.Mix(Theme.Hex.Accent, Theme.Hex.WindowFill, 0.13) or Theme.Color(Theme.Hex.WindowFill))
+		t.underline:SetBackColor(Theme.Color(selected and Theme.Hex.Accent or Theme.Hex.Border))
+		t.control:SetBackColor(Theme.Color(Theme.Hex.WindowFill))
 	end
 
 	if not skipSave then
@@ -347,6 +446,8 @@ function LiveMeter:Refresh()
 		self.lineLabels[i].value:SetText(rows[i].value)
 	end
 	self.lineLabels[3].sub:SetText(lines.max.sub or "")
+
+	self:RefreshSparkline(session)
 
 	-- Just two states, not three -- per feedback, "LAST FIGHT" is gone; the header space it used
 	-- is the analysis-window button instead (BuildAnalysisButton). The tick still distinguishes

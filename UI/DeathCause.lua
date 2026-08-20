@@ -17,10 +17,15 @@ local RULE_HEIGHT = 2
 -- gives up the same 8px. MORALE keeps its 46px but now holds a Bar (see BuildMoraleBars), not
 -- a percentage Label -- direct feedback: match the analysis window's own bar style instead of
 -- printing a number.
-local COL_TIME = { x = 10, width = 46 }
-local COL_SKILL = { x = 56, width = 206 }
-local COL_AMOUNT = { x = 262, width = 62 }
-local COL_MORALE = { x = 324, width = 46 }
+-- The morale column now holds a bar AND its percentage -- the bar alone doesn't say how close
+-- you actually were -- so the columns shift left to make room, and the skill column gives up the
+-- width. A MAX tag sits between the skill name and the amount for the biggest single hit.
+local COL_TIME   = { x = 10,  width = 44 }
+local COL_SKILL  = { x = 54,  width = 160 }
+local COL_MAXTAG = { x = 214, width = 28 }
+local COL_AMOUNT = { x = 242, width = 62 }
+local COL_BAR    = { x = 308, width = 32 }
+local COL_PCT    = { x = 344, width = 26 }
 
 local function DamageTypeName(dmgType)
 	return DamageType.Names[dmgType] or "Unknown"
@@ -38,6 +43,22 @@ local function FindKillingBlow(session)
 	end
 	return nil, nil
 end
+
+-- The biggest single incoming hit, which is very often NOT the killing blow -- the last hit is
+-- just the one that happened to land when your morale was already gone. Telling those two apart
+-- is the whole point of this window, so both get marked. Temp-morale rows are excluded: a popped
+-- bubble is not a hit, and it would win this comparison almost every time if it counted.
+local function FindBiggestHit(session)
+	local bestIndex, best = nil, 0
+	for i = 1, table.getn(session.lastTaken) do
+		local entry = session.lastTaken[i]
+		if entry.kind == "damage" and entry.amount > best then
+			bestIndex, best = i, entry.amount
+		end
+	end
+	return bestIndex
+end
+
 
 function DeathCause:Constructor()
 	Frame.Constructor(self, {
@@ -123,28 +144,38 @@ function DeathCause:BuildCauseBlock()
 	self.moraleLostLabel:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
 	self.moraleLostLabel:SetMouseVisible(false)
 
-	-- Legend for the killing-blow row's tint -- a colour swatch plus label, not a "killing
-	-- blow" suffix on the row itself (docs/DESIGN.md: that would truncate the skill/type text).
-	local swatch = Turbine.UI.Control()
-	swatch:SetParent(self.client)
-	swatch:SetPosition(x, 39)
-	swatch:SetSize(6, 6)
-	swatch:SetBackColor(Theme.Color(Theme.Hex.DamageFatal))
-	swatch:SetMouseVisible(false)
+	-- Legend for the two marked rows -- colour swatches plus labels, not a "killing blow" suffix
+	-- on the row itself (docs/DESIGN.md: that would truncate the skill/type text). Two entries,
+	-- not one, because the killing blow and the biggest hit are usually different rows and the
+	-- distinction is the reason this window exists.
+	local function LegendEntry(left, colorHex, text, width)
+		local swatch = Turbine.UI.Control()
+		swatch:SetParent(self.client)
+		swatch:SetPosition(left, 39)
+		swatch:SetSize(6, 6)
+		swatch:SetBackColor(Theme.Color(colorHex))
+		swatch:SetMouseVisible(false)
 
-	local legend = Turbine.UI.Label()
-	legend:SetParent(self.client)
-	legend:SetFont(Font.Verdana10)
-	legend:SetText("Killing blow")
-	legend:SetForeColor(Theme.Color(Theme.Hex.DamageFatal))
-	legend:SetPosition(x + 12, 36)
-	legend:SetSize(150, 14)
-	legend:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
-	legend:SetMouseVisible(false)
+		local legend = Turbine.UI.Label()
+		legend:SetParent(self.client)
+		legend:SetFont(Font.Verdana10)
+		legend:SetText(text)
+		legend:SetForeColor(Theme.Color(colorHex))
+		legend:SetPosition(left + 12, 36)
+		legend:SetSize(width, 14)
+		legend:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
+		legend:SetMouseVisible(false)
+	end
+
+	LegendEntry(x, Theme.Hex.DamageFatal, "Killing blow", 80)
+	LegendEntry(x + 100, Theme.Hex.AccentLight, "Biggest hit", 80)
 end
 
+-- Each row is a container holding, back to front: a tint (only on the killing blow and the
+-- biggest hit), a 2px left border in that row's mark colour, the three text columns, the morale
+-- bar and its percentage. The tint and border are what make the two marked rows findable at a
+-- glance -- a coloured number alone was too quiet for the one line this window exists to show.
 function DeathCause:BuildRows()
-	-- Only 3 text columns -- the morale column is a Bar (below), not a Label.
 	local columns = {
 		{ x = COL_TIME.x, width = COL_TIME.width, font = Font.LucidaConsole12, colorHex = Theme.Hex.DimText },
 		{ x = COL_SKILL.x, width = COL_SKILL.width, font = Font.Verdana12, colorHex = Theme.Hex.Text },
@@ -152,20 +183,64 @@ function DeathCause:BuildRows()
 	}
 
 	self.rows = {}
-	self.moraleBars = {}
 	for i = 1, ROW_COUNT do
-		local row = Row(380, ROW_HEIGHT, columns)
-		row:SetParent(self.client)
-		row:SetPosition(0, CAUSE_BLOCK_HEIGHT + (i - 1) * ROW_HEIGHT)
-		row:SetVisible(false)
-		self.rows[i] = row
+		local container = Turbine.UI.Control()
+		container:SetParent(self.client)
+		container:SetPosition(0, CAUSE_BLOCK_HEIGHT + (i - 1) * ROW_HEIGHT)
+		container:SetSize(378, ROW_HEIGHT)
+		container:SetVisible(false)
+		container:SetMouseVisible(false)
 
-		-- Current morale pool as a bar, matching the analysis window's skill/side-panel bars,
-		-- per direct feedback -- not a raw percentage number.
-		local bar = Bar(COL_MORALE.width - 8, 6, Theme.Hex.Morale, Theme.Hex.RowBorder)
-		bar:SetParent(row)
-		bar:SetPosition(COL_MORALE.x, math.floor((ROW_HEIGHT - 6) / 2))
-		self.moraleBars[i] = bar
+		local tint = Turbine.UI.Control()
+		tint:SetParent(container)
+		tint:SetPosition(1, 0)
+		tint:SetSize(377, ROW_HEIGHT)
+		tint:SetVisible(false)
+		tint:SetMouseVisible(false)
+
+		local mark = Turbine.UI.Control()
+		mark:SetParent(container)
+		mark:SetPosition(1, 0)
+		mark:SetSize(2, ROW_HEIGHT)
+		mark:SetVisible(false)
+		mark:SetMouseVisible(false)
+
+		local row = Row(378, ROW_HEIGHT, columns)
+		row:SetParent(container)
+		row:SetPosition(0, 0)
+
+		-- An 8px-equivalent tag is not available (the client has no face below Verdana10), so
+		-- MAX sits at Verdana10 in the mark colour, in its own column rather than appended to
+		-- the skill name -- appending it would push long skill names into the amount column.
+		local maxTag = Turbine.UI.Label()
+		maxTag:SetParent(container)
+		maxTag:SetFont(Font.Verdana10)
+		maxTag:SetForeColor(Theme.Color(Theme.Hex.AccentLight))
+		maxTag:SetPosition(COL_MAXTAG.x, 0)
+		maxTag:SetSize(COL_MAXTAG.width, ROW_HEIGHT)
+		maxTag:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
+		maxTag:SetMouseVisible(false)
+
+		-- Current morale pool as a bar, matching the analysis window's own bars, per direct
+		-- feedback -- but now with the number beside it, since a bar alone doesn't say how close
+		-- to dead you actually were.
+		local bar = Bar(COL_BAR.width, 5, Theme.Hex.Morale, Theme.Hex.DeathMoraleTrack)
+		bar:SetParent(container)
+		bar:SetPosition(COL_BAR.x, math.floor((ROW_HEIGHT - 5) / 2))
+
+		local pct = Turbine.UI.Label()
+		pct:SetParent(container)
+		pct:SetFont(Font.Verdana10)
+		pct:SetForeColor(Theme.Color(Theme.Hex.DimText))
+		pct:SetPosition(COL_PCT.x, 0)
+		pct:SetSize(COL_PCT.width, ROW_HEIGHT)
+		pct:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleRight)
+		pct:SetMouseVisible(false)
+
+		self.rows[i] = {
+			container = container, tint = tint, mark = mark, row = row,
+			maxTag = maxTag, bar = bar, pct = pct,
+		}
 	end
 end
 
@@ -190,6 +265,7 @@ function DeathCause:Show(session)
 	self.deathTime = session.endTime
 
 	local killIndex, killEntry = FindKillingBlow(session)
+	local maxIndex = FindBiggestHit(session)
 	self.killIndex = killIndex
 	self.bossLabel:SetText(killEntry and killEntry.initiator or "Unknown")
 
@@ -202,44 +278,14 @@ function DeathCause:Show(session)
 		"Lost " .. Format.Number(lostTotal) .. " morale over the last " .. n .. (n == 1 and " hit" or " hits"))
 
 	for i = 1, ROW_COUNT do
-		local row = self.rows[i]
-		local bar = self.moraleBars[i]
+		local widgets = self.rows[i]
 		local entry = session.lastTaken[i]
 
 		if entry == nil then
-			row:SetVisible(false)
-			bar:SetVisible(false)
+			widgets.container:SetVisible(false)
 		else
-			row:SetVisible(true)
-			bar:SetVisible(true)
-			bar:SetPercent(entry.moralePct or 0)
-
-			-- Whole seconds, not one decimal -- "-3.7s" was reportedly unreadable/overflowing
-			-- at this column's width; "-4s" is shorter regardless of how wide the column ends
-			-- up being, and sub-second precision doesn't add anything readers need here.
-			local relTime = string.format("%+ds", math.floor(entry.time - self.deathTime + 0.5))
-
-			if entry.kind == "tempMorale" then
-				-- Its own row so a popped temp-morale bubble never reads as mitigated damage.
-				row:SetValues({ relTime, "Temporary morale", "-" .. Format.Number(entry.amount) })
-				row:SetColumnColor(2, Theme.Hex.MutedText)
-				row:SetColumnColor(3, Theme.Hex.MutedText)
-			else
-				row:SetValues({
-					relTime,
-					entry.skill .. " · " .. DamageTypeName(entry.dmgType),
-					Format.Number(entry.amount),
-				})
-				row:SetColumnColor(2, Theme.Hex.Text)
-
-				if i == killIndex then
-					row:SetColumnColor(3, Theme.Hex.DamageFatal)
-				elseif entry.moralePct ~= nil and entry.moralePct < 0.15 then
-					row:SetColumnColor(3, Theme.Hex.DamageSevere)
-				else
-					row:SetColumnColor(3, Theme.Hex.DamageTaken)
-				end
-			end
+			widgets.container:SetVisible(true)
+			self:FillRow(widgets, entry, i == killIndex, i == maxIndex)
 		end
 	end
 
@@ -251,6 +297,57 @@ function DeathCause:Show(session)
 
 	self:SetVisible(true)
 	self:Activate()
+end
+
+-- The killing blow wins the marking when a row is both: it is the row the window's headline is
+-- already about, and double-marking one row in two colours would just read as a rendering fault.
+function DeathCause:FillRow(widgets, entry, isKill, isMax)
+	local row = widgets.row
+
+	-- Whole seconds, not one decimal -- "-3.7s" was reportedly unreadable/overflowing at this
+	-- column's width, and sub-second precision adds nothing a reader needs here.
+	local relTime = string.format("%+ds", math.floor(entry.time - self.deathTime + 0.5))
+
+	if isKill then
+		widgets.tint:SetBackColor(Theme.Color(Theme.Hex.DeathKillFill))
+		widgets.mark:SetBackColor(Theme.Color(Theme.Hex.DamageFatal))
+	elseif isMax then
+		widgets.tint:SetBackColor(Theme.Color(Theme.Hex.DeathMaxFill))
+		widgets.mark:SetBackColor(Theme.Color(Theme.Hex.AccentLight))
+	end
+	widgets.tint:SetVisible(isKill or isMax)
+	widgets.mark:SetVisible(isKill or isMax)
+
+	widgets.maxTag:SetText((isMax and not isKill) and "MAX" or "")
+
+	if entry.kind == "tempMorale" then
+		-- Its own row so a popped temp-morale bubble never reads as mitigated damage.
+		row:SetValues({ relTime, "Temporary morale", "-" .. Format.Number(entry.amount) })
+		row:SetColumnColor(2, Theme.Hex.MutedText)
+		row:SetColumnColor(3, Theme.Hex.MutedText)
+	else
+		row:SetValues({
+			relTime,
+			entry.skill .. " · " .. DamageTypeName(entry.dmgType),
+			Format.Number(entry.amount),
+		})
+		row:SetColumnColor(2, Theme.Hex.Text)
+
+		if isKill then
+			row:SetColumnColor(3, Theme.Hex.DamageFatal)
+		elseif isMax then
+			row:SetColumnColor(3, Theme.Hex.AccentLight)
+		elseif entry.moralePct ~= nil and entry.moralePct < 0.15 then
+			row:SetColumnColor(3, Theme.Hex.DamageSevere)
+		else
+			row:SetColumnColor(3, Theme.Hex.DamageTaken)
+		end
+	end
+
+	local pct = entry.moralePct or 0
+	widgets.bar:SetPercent(pct)
+	widgets.bar:SetFillColor(pct < 0.20 and Theme.Hex.DamageSevere or Theme.Hex.Morale)
+	widgets.pct:SetText(Format.Percent(pct))
 end
 
 -- Delta-time based (not an absolute target timestamp) specifically so pausing is just "skip

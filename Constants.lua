@@ -3,7 +3,7 @@
 --=================================================================================================
 
 Reckoning = Reckoning or {}
-Reckoning.Version = "0.1.0"
+Reckoning.Version = "0.2.0"
 
 ---------------------------------------------------------------------------------------------------
 -- Localisation
@@ -159,6 +159,11 @@ Theme.Hex = {
 	DeathFill    = "#251e2c",
 	DeathBorder  = "#4a3348",
 	DeathRule    = "#453042",
+	-- Death window row marks: the killing blow and the biggest single hit are the two rows
+	-- worth calling out, and they are often not the same row -- see UI/DeathCause.lua.
+	DeathKillFill  = "#33222e",
+	DeathMaxFill   = "#2b2438",
+	DeathMoraleTrack = "#3a2b3c",
 	-- damage-type colours
 	TypeCommon   = "#9184d9",
 	TypeBeleriand= "#b5abfc",
@@ -168,7 +173,36 @@ Theme.Hex = {
 	-- shared interaction/role tokens named directly in docs/DESIGN.md prose
 	Hover        = "#2b2e3e", -- "Hover on any clickable row/chip/tab" (docs/DESIGN.md "Interactions")
 	MeterDivider = "#33364a", -- live meter's own divider, distinct from the generic Border token
+	ActiveTab    = "#282a3d", -- selected tab / selected chip fill
+	KpiFill      = "#222534", -- KPI card ground, one step up from WindowFill
+	Disabled     = "#5c5f70", -- inert control text (an unpinned pin, a spent RESET RANGE)
+
+	-- The plot gets its own recessed ground, so the line and the morale bars read against
+	-- something darker than the window fill rather than floating on it.
+	PlotFill     = "#1d1f2d",
+	PlotBorder   = "#262939", -- also the buff lanes' rail colour
+	RangeDim     = "#161826", -- out-of-range plot wash, mixed at ~0.72 over PlotFill
+
+	-- Morale as a background bar graph (UI/AnalysisGraph.lua): a fill plus a brighter 1px top
+	-- edge, so a bar reads as a bar and not as a flat wash. Two pairs -- normal, and below the
+	-- MORALE_DANGER threshold -- plus the two guide lines at 100% and 50%.
+	MoraleBg        = "#302e21",
+	MoraleBgEdge    = "#5f5936",
+	MoraleBgLow     = "#3f2a30",
+	MoraleBgLowEdge = "#7d5563",
+	MoraleGuide     = "#3b3722", -- 100% guide line
+	MoraleGuideMid  = "#302f26", -- 50% guide line
+	MoraleLegend    = "#3d3a26", -- the legend's non-interactive morale swatch
+	MoraleLegendText = "#8a8468",
 }
+
+-- Morale fraction below which a bucket's background bar switches to the "low" pair above.
+MORALE_DANGER = 0.30
+
+-- Buff lane colours, in pick order -- a charted self-buff takes the next free one for its lane,
+-- its row checkbox, its icon border and its name (UI/Analysis.lua's buff table). Max 3 charted
+-- at once, which is exactly why this list has three entries.
+Theme.BuffLane = { "#9184d9", "#b5abfc", "#7fb3a6" }
 
 ---------------------------------------------------------------------------------------------------
 -- Formatting -- shared across every window that prints a number to a Label.

@@ -84,6 +84,14 @@ end
 -- Heartbeat -- Sessions.Tick() has to run even when chat is silent, to close a session after
 -- CLOSE_AFTER seconds of no own events. A bare Turbine.UI.Window (not parented to anything) can
 -- still receive per-frame Update() once shown, so it doubles as a free timer host.
+--
+-- It also drives Buffs.Poll(). The redesign spec suggested polling from the live meter's own
+-- Update() throttle, but that meter can be switched off in the options panel -- and buff uptime
+-- has to keep being recorded either way, since the analysis window reads it afterwards. The
+-- heartbeat is the one timer that always runs, so the poll lives here instead, and the tick
+-- rate drops from 0.5s to Buffs.PollInterval (0.25s / 4 Hz) to match what that poll needs.
+-- Sessions.Tick is unaffected by ticking twice as often: it only compares against a 5s silence
+-- window.
 ---------------------------------------------------------------------------------------------------
 
 Events.heartbeat = Turbine.UI.Window()
@@ -96,10 +104,14 @@ local lastTick = 0
 
 function Events.heartbeat:Update()
 	local now = Turbine.Engine.GetGameTime()
-	if now - lastTick < 0.5 then
+	if now - lastTick < Buffs.PollInterval then
 		return
 	end
 	lastTick = now
+
+	-- Poll before Tick: Tick can close the session, and a poll afterwards would then have
+	-- nothing to attribute the last quarter-second of uptime to.
+	Buffs.Poll(now)
 	Sessions.Tick(now)
 end
 

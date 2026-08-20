@@ -15,6 +15,13 @@ DEFAULTS = {
 	liveMeterEnabled  = true,  -- Phase 6 options panel
 	deathCauseEnabled = true,  -- Phase 6 options panel
 	windows           = {},    -- [windowKey] = { left, top, width?, height? } -- persisted window geometry
+	-- Analysis window's SELF BUFFS section. Strings only, never a Turbine.UI.Color: chartedBuffs
+	-- is an ordered list of at most 3 buff NAMES (the lane colour is derived from its position
+	-- in that list at render time, so no colour is ever serialised), and buffIgnore is a
+	-- [name] = true set extended by `/reck buffs ignore <name>`.
+	buffsOpen         = true,
+	chartedBuffs      = {},
+	buffIgnore        = {},
 }
 
 -- Every colour setting must be listed here. Turbine.UI.Color objects do not survive
