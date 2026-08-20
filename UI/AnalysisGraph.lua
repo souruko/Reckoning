@@ -185,15 +185,22 @@ end
 -- One invisible, mouse-visible Control per bucket, spanning the bar area's full height
 -- (regardless of that bucket's own bar height, so hovering anywhere in the column shows the
 -- tooltip, not just the thin sliver a small bar actually draws). Per direct feedback: "hovering
--- over columns in the graph should show the details."
+-- over columns in the graph should show the details." Built at the full PLOT_HEIGHT here;
+-- Redraw() shrinks each zone to sit *below* the morale lane whenever a view has one, since a
+-- morale-carrying view's zones covering y=[0, PLOT_HEIGHT] visibly hid the morale dots/lane
+-- line underneath them -- confirmed in-game (morale worked before hover zones existed). Whether
+-- that's because SetMouseVisible(true) forces some default fill even with no SetBackColor
+-- ever called, or something else, wasn't chased down; not overlapping the lane at all sidesteps
+-- the question entirely rather than depending on an unconfirmed "invisible by default" claim.
 function Graph:BuildHoverZones()
 	self.hoverZones = {}
 	for i = 1, BUCKET_COUNT do
-		-- No SetBackColor -- a Control with no fill ever set renders invisible (confirmed
-		-- elsewhere in this codebase: contentArea/graphHolder/tableHolder/etc. are all plain
-		-- unfilled Controls and never obscure their children). SetOpacity is deliberately not
-		-- used here either -- it does not blend in this engine (see Constants.lua's Theme.Mix
-		-- comment) and isn't needed anyway since there's no fill to hide in the first place.
+		-- No SetBackColor, and no SetOpacity either (it does not work as a hide/blend
+		-- mechanism in this engine regardless -- see Constants.lua's Theme.Mix comment). Every
+		-- *mouse-invisible* plain Control elsewhere in this codebase (contentArea/graphHolder/
+		-- tableHolder/etc.) renders invisible with no fill ever set, but that's not proof this
+		-- *mouse-visible* one does too -- see BuildHoverZones' header comment; Redraw() avoids
+		-- the question by keeping this zone's bounds off the morale lane entirely.
 		local zone = Turbine.UI.Control()
 		zone:SetParent(self)
 		zone:SetPosition(math.floor((i - 1) * self.bucketWidth), 0)
@@ -456,7 +463,16 @@ function Graph:Redraw()
 	-- Bars are scaled against the space below the morale lane, never drawn into it, so the two
 	-- traces can never visually collide -- the lane only exists (and only reserves height) on
 	-- views that actually carry a morale series.
-	local barAreaHeight = self.showMorale and (PLOT_HEIGHT - MORALE_LANE_HEIGHT) or PLOT_HEIGHT
+	local laneTop = self.showMorale and MORALE_LANE_HEIGHT or 0
+	local barAreaHeight = PLOT_HEIGHT - laneTop
+
+	-- Hover zones move with the same boundary, per view, so they never sit over the morale
+	-- lane -- see BuildHoverZones' comment for why that matters (it hid the morale trace).
+	for i = 1, BUCKET_COUNT do
+		local zone = self.hoverZones[i]
+		zone:SetPosition(math.floor((i - 1) * self.bucketWidth), laneTop)
+		zone:SetSize(math.max(1, math.floor(self.bucketWidth)), barAreaHeight)
+	end
 
 	for slot = 1, MAX_REGULAR_SERIES do
 		local series = self.seriesList[slot]
