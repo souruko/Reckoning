@@ -293,6 +293,7 @@ function DeathCause:Show(session)
 	self.remaining = self.countdownTotal
 	self.paused = false
 	self.lastTick = Turbine.Engine.GetGameTime()
+	self.lastShownSeconds = nil -- force Update()'s first tick to set the label, see below
 	self.countdownBar:SetPercent(1)
 
 	self:SetVisible(true)
@@ -373,7 +374,16 @@ function DeathCause:Update()
 	end
 
 	self.countdownBar:SetPercent(self.remaining / self.countdownTotal)
-	self.countdownLabel:SetText(string.format("%ds", math.ceil(self.remaining)))
+
+	-- The bar animates every frame (SetWantsUpdates(true), unthrottled) so its motion stays
+	-- smooth, but the label only ever shows whole seconds -- reformatting and re-setting its text
+	-- every single rendered frame for a value that visibly changes once a second is wasted work
+	-- for the ~15s this window is up. Only touch it when the displayed integer actually changes.
+	local shown = math.ceil(self.remaining)
+	if shown ~= self.lastShownSeconds then
+		self.lastShownSeconds = shown
+		self.countdownLabel:SetText(string.format("%ds", shown))
+	end
 end
 
 function DeathCause:Close()

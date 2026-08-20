@@ -17,14 +17,21 @@
 --
 -- A DIAGONAL IS NOT DRAWABLE HERE. Turbine.UI has no canvas, no line primitive and no per-pixel
 -- access -- a Control is an axis-aligned rectangle with a back colour, and that is the whole
--- toolbox. So each step of the polyline is drawn as an L: a horizontal run at the *midpoint*
--- height between the two values, plus a vertical riser at the run's right end. At 48 buckets
--- over 640-1200px that is 13-25px per step, which at a 2px stroke reads as a line rather than a
--- staircase. This is Option A from the bundle's GRAPH_RESEARCH.md -- deliberately the one with
--- no unknowns. Option B (the undocumented SetRotation, which Gibberish3 does use in production
--- but only ever at 0/90/180/270) would halve the Control count and give true diagonals, but it
--- needs a seven-item in-game probe first; the pooling shape here is identical either way, so
--- switching later is a local change to DrawStep and nothing else.
+-- toolbox. So each step of the polyline is drawn as an L: a horizontal run at the *left* value's
+-- own height, plus a vertical riser at the run's right end spanning the full gap to the next
+-- value (a standard step-after chart). This is Option A from the bundle's GRAPH_RESEARCH.md --
+-- deliberately the one with no unknowns. An earlier draft put the run at the *midpoint* height
+-- between the two values instead -- it reads as more line-like on gentle data, but on any run of
+-- three-plus monotonic points (a damage ramp climbing several seconds straight, which real combat
+-- logs do constantly) the next run's start height falls outside the previous riser's span,
+-- leaving a real gap -- confirmed by tracing the geometry against a user-reported screenshot
+-- showing exactly that disconnected, spiky look instead of a continuous line. Anchoring the run
+-- at its own left value guarantees the riser always brackets the next run's start (the riser's
+-- span is, by construction, exactly [min, max] of the two values on either side of it), so every
+-- joint connects for any data shape. Option B (the undocumented SetRotation, which Gibberish3
+-- does use in production but only ever at 0/90/180/270) would halve the Control count and give
+-- true diagonals, but it needs a seven-item in-game probe first; the pooling shape here is
+-- identical either way, so switching later is a local change to DrawStep and nothing else.
 --
 -- Everything is pooled once in the constructor and only ever repositioned/recoloured -- never
 -- rebuilt per refresh, never reparented, never detached (Turbine has no confirmed-safe
@@ -62,6 +69,8 @@ local TIMELINE_LABEL_WIDTH = 60
 
 local TOOLTIP_WIDTH = 160
 local TOOLTIP_LINES = 4 -- time + up to 2 series + morale
+local MAX_TOOLTIP_SKILLS = 4 -- skill-breakdown rows appended below the fixed lines; the last
+                              -- slot becomes a "+N more" line instead of a row if there's overflow
 
 -- Explicit z-order per pool. Creation order decides this by default, but pools are reused
 -- across views and sessions for the life of the window, so nothing may depend on the order they
@@ -355,8 +364,9 @@ function Graph:BuildLanes()
 		iconInset:SetParent(icon)
 		iconInset:SetPosition(1, 1)
 		iconInset:SetSize(LANE_ICON_SIZE - 2, LANE_ICON_SIZE - 2)
-		iconInset:SetBackColor(Theme.Color(Theme.Hex.RailFill))
 		iconInset:SetMouseVisible(false)
+		-- Real art is applied by Icon.Apply (Constants.lua) at fill time -- see
+		-- UI/Analysis.lua's matching buff-row iconInset comment.
 
 		local iconLabel = Turbine.UI.Label()
 		iconLabel:SetParent(icon)
@@ -418,7 +428,7 @@ end
 function Graph:BuildTooltip()
 	local box = Turbine.UI.Control()
 	box:SetParent(self)
-	box:SetSize(TOOLTIP_WIDTH, TOOLTIP_LINES * 14 + 8)
+	box:SetSize(TOOLTIP_WIDTH, (TOOLTIP_LINES + MAX_TOOLTIP_SKILLS) * 14 + 8)
 	box:SetBackColor(Theme.Color(Theme.Hex.RailFill))
 	box:SetVisible(false)
 	box:SetMouseVisible(false)
@@ -443,7 +453,22 @@ function Graph:BuildTooltip()
 		lines[i] = label
 	end
 
-	self.tooltip = { box = box, lines = lines }
+	-- Per-skill breakdown rows, appended below the fixed lines in ShowTooltip. Pooled separately
+	-- since their count varies per bucket (0 skills in a quiet second, up to MAX_TOOLTIP_SKILLS+
+	-- in a busy one) -- positioned dynamically each show, hidden when unused.
+	local skillLines = {}
+	for i = 1, MAX_TOOLTIP_SKILLS do
+		local label = Turbine.UI.Label()
+		label:SetParent(box)
+		label:SetFont(Font.Verdana10)
+		label:SetSize(TOOLTIP_WIDTH - 12, 14)
+		label:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
+		label:SetMouseVisible(false)
+		label:SetVisible(false)
+		skillLines[i] = label
+	end
+
+	self.tooltip = { box = box, lines = lines, skillLines = skillLines }
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -757,13 +782,14 @@ end
 -- Drawing
 ---------------------------------------------------------------------------------------------------
 
--- One step of the polyline, as an L: the horizontal run sits at the midpoint height between the
--- two values, the riser closes the gap at the run's right end. The riser is a z-order below the
--- runs so the joint has no visible seam where the two strokes overlap.
+-- One step of the polyline, as an L: the horizontal run sits at the *left* value's own height,
+-- the riser closes the full gap to the next value at the run's right end. Anchoring the run on
+-- y0 (not the two values' midpoint) is what guarantees every joint connects -- the riser's span
+-- is exactly [min(y0,y1), max(y0,y1)], which by construction always contains y1, the height the
+-- next run starts at. The riser is a z-order below the runs so the joint has no visible seam
+-- where the two strokes overlap.
 local function DrawStep(run, riser, x0, y0, x1, y1, color)
-	local yMid = math.floor((y0 + y1) / 2)
-
-	run:SetPosition(math.floor(x0), yMid)
+	run:SetPosition(math.floor(x0), y0)
 	run:SetSize(math.max(1, math.floor(x1 - x0)), STROKE)
 	run:SetBackColor(color)
 	run:SetVisible(true)
@@ -826,9 +852,16 @@ function Graph:DrawMorale()
 			end
 		end
 
+		-- The existence check above (nil/method-presence) doesn't guarantee the call itself won't
+		-- throw against a native handle mid-transition -- same reasoning as LiveMeter's
+		-- CurrentTargetName() and Session:MoralePct(). This one fires far less often (only on a
+		-- real Redraw(), not continuously), but it's the same category of read.
 		local maxMorale = nil
 		if _G.lp ~= nil and _G.lp.GetMaxMorale ~= nil then
-			maxMorale = _G.lp:GetMaxMorale()
+			local ok, result = pcall(function() return _G.lp:GetMaxMorale() end)
+			if ok then
+				maxMorale = result
+			end
 		end
 
 		if maxMorale ~= nil and maxMorale > 0 then
@@ -840,6 +873,12 @@ function Graph:DrawMorale()
 	end
 
 	local barWidth = math.max(1, math.floor(self.bucketWidth) - 2)
+
+	-- Only two colour pairs ever appear across all 48 buckets (normal / below MORALE_DANGER) --
+	-- resolved once outside the loop instead of once per bucket (up to 96 Theme.Color calls per
+	-- Redraw() otherwise).
+	local normalFill, lowFill = Theme.Color(Theme.Hex.MoraleBg), Theme.Color(Theme.Hex.MoraleBgLow)
+	local normalEdge, lowEdge = Theme.Color(Theme.Hex.MoraleBgEdge), Theme.Color(Theme.Hex.MoraleBgLowEdge)
 
 	for i = 1, BUCKET_COUNT do
 		local bar = self.moraleBars[i]
@@ -859,12 +898,12 @@ function Graph:DrawMorale()
 
 			bar:SetPosition(x, y)
 			bar:SetSize(barWidth, height)
-			bar:SetBackColor(Theme.Color(low and Theme.Hex.MoraleBgLow or Theme.Hex.MoraleBg))
+			bar:SetBackColor(low and lowFill or normalFill)
 			bar:SetVisible(true)
 
 			edge:SetPosition(x, y)
 			edge:SetSize(barWidth, 1)
-			edge:SetBackColor(Theme.Color(low and Theme.Hex.MoraleBgLowEdge or Theme.Hex.MoraleBgEdge))
+			edge:SetBackColor(low and lowEdge or normalEdge)
 			edge:SetVisible(true)
 		end
 	end
@@ -999,9 +1038,16 @@ function Graph:DrawLanes()
 			-- initials in the lane colour -- the same stand-in the design mock draws, at the
 			-- same size, so nothing shifts when the art does resolve.
 			if data.icon ~= nil then
-				lane.iconInset:SetBackground(data.icon)
+				-- See UI/Analysis.lua's FillBuffRow comment: clears whatever the initials
+				-- fallback left behind.
+				lane.iconInset:SetBackColor(Turbine.UI.Color(0, 0, 0, 0))
+				-- No stretch, native size -- see UI/Analysis.lua's FillBuffRow comment.
+				Icon.Apply(lane.iconInset, data.icon)
+				lane.iconInset:SetPosition(1, 1)
 				lane.iconLabel:SetText("")
 			else
+				lane.iconInset:SetBackColor(Theme.Color(Theme.Hex.RailFill))
+				lane.iconInset:SetVisible(true)
 				lane.iconLabel:SetText(data.initials or "")
 			end
 
@@ -1036,6 +1082,59 @@ end
 ---------------------------------------------------------------------------------------------------
 -- Tooltip
 ---------------------------------------------------------------------------------------------------
+
+-- The integer-second range [fromSec, toSec] that maps to bucket i under SetData's own
+-- `slice = math.floor(second / duration * BUCKET_COUNT) + 1` -- this is that formula's exact
+-- inverse, kept in sync with it by hand since there's no single shared expression for both
+-- directions. Used to ask Session:Slice for exactly the events that landed in this bucket.
+function Graph:SliceSecondRange(i)
+	local duration = self.duration
+	local fromSec = math.ceil((i - 1) * duration / BUCKET_COUNT)
+	local toSec = math.ceil(i * duration / BUCKET_COUNT) - 1
+	if toSec < fromSec then
+		toSec = fromSec
+	end
+	return fromSec, toSec
+end
+
+-- Skills that landed a hit within bucket i, summed across whichever series are currently shown
+-- (and un-hidden) and respecting the picker's filterWho -- the same rows Session:Slice already
+-- backs the KPI row and skill table with, just re-scoped to one bucket's second range. Avoided-
+-- only rows (hits == 0) are dropped: this answers "what hit here", not "what was attempted".
+-- Sorted by total descending.
+function Graph:SkillsAt(bucketIndex)
+	if self.session == nil then
+		return {}
+	end
+
+	local fromSec, toSec = self:SliceSecondRange(bucketIndex)
+	local totals = {}
+	local order = {}
+
+	for slot = 1, table.getn(self.seriesList) do
+		local series = self.seriesList[slot]
+		local key = series.key
+		if key ~= nil and not self.hidden[key] then
+			local rows = self.session:Slice(key, fromSec, toSec, self.filterWho)
+			for i = 1, table.getn(rows) do
+				local row = rows[i]
+				if row.hits > 0 then
+					local entry = totals[row.skill]
+					if entry == nil then
+						entry = { skill = row.skill, hits = 0, total = 0 }
+						totals[row.skill] = entry
+						order[table.getn(order) + 1] = entry
+					end
+					entry.hits = entry.hits + row.hits
+					entry.total = entry.total + row.total
+				end
+			end
+		end
+	end
+
+	table.sort(order, function(a, b) return a.total > b.total end)
+	return order
+end
 
 function Graph:ShowTooltip(bucketIndex)
 	if self.session == nil or self.slices[bucketIndex] == nil then
@@ -1075,6 +1174,41 @@ function Graph:ShowTooltip(bucketIndex)
 	for i = row, TOOLTIP_LINES do
 		lines[i]:SetText("")
 	end
+	local used = row - 1
+
+	-- Skill breakdown, appended right after whichever fixed lines were actually used.
+	local skills = self:SkillsAt(bucketIndex)
+	local skillLines = self.tooltip.skillLines
+	local totalSkills = table.getn(skills)
+	local shown = totalSkills
+	local overflow = 0
+	if shown > MAX_TOOLTIP_SKILLS then
+		shown = MAX_TOOLTIP_SKILLS - 1
+		overflow = totalSkills - shown
+	end
+
+	for i = 1, MAX_TOOLTIP_SKILLS do
+		local label = skillLines[i]
+		if i <= shown then
+			local entry = skills[i]
+			label:SetPosition(6, 4 + used * 14)
+			label:SetText("  " .. entry.skill .. "  " .. Format.Number(entry.total) .. " x" .. entry.hits)
+			label:SetForeColor(Theme.Color(Theme.Hex.DimText))
+			label:SetVisible(true)
+			used = used + 1
+		elseif overflow > 0 and i == shown + 1 then
+			label:SetPosition(6, 4 + used * 14)
+			label:SetText("  +" .. overflow .. " more")
+			label:SetForeColor(Theme.Color(Theme.Hex.Disabled))
+			label:SetVisible(true)
+			used = used + 1
+			overflow = 0
+		else
+			label:SetVisible(false)
+		end
+	end
+
+	self.tooltip.box:SetSize(TOOLTIP_WIDTH, used * 14 + 8)
 
 	local x = math.floor((bucketIndex - 1) * self.bucketWidth) + 8
 	if x > self.plotWidth - TOOLTIP_WIDTH then

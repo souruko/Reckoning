@@ -102,6 +102,13 @@ local function EffectName(effect)
 	return effect:GetName()
 end
 
+-- Reverted the Turbine.UI.Graphic(id) wrap tried in an earlier round: Gibberish3's own
+-- ResolveTimerIcon (UTILS/Functions.lua) -- the function the exact icon id this codebase reads
+-- would pass through in Gibberish3 itself -- returns a plain effect-icon id completely unchanged
+-- (it only rewrites string paths, for its unrelated external-image-file feature). Real, constantly
+-- -exercised code hands SetBackground the bare number; wrapping it was an unproven guess that did
+-- not fix anything in-game, so this goes back to the bare id -- see Constants.lua's Icon module,
+-- which now matches Gibberish3's actual control setup instead.
 local function EffectIcon(effect)
 	if effect.GetIcon == nil then
 		return nil

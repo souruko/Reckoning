@@ -20,11 +20,10 @@ end
 -- plugin's chat handling.
 local previousChatReceived = Turbine.Chat.Received
 
-function Turbine.Chat.Received(sender, args)
-	if previousChatReceived ~= nil then
-		previousChatReceived(sender, args)
-	end
-
+-- Reckoning's own dispatch, split out so it can be pcall-wrapped below without also swallowing
+-- errors from previousChatReceived (another plugin's handler) -- those are not this plugin's to
+-- catch or hide.
+local function Dispatch(args)
 	-- The field is `args.ChatType`, not `args.Type` -- confirmed against Gibberish3
 	-- (TRIGGER/CHAT/Functions.lua), CombatAnalysis (Parser/Parser.lua), and LootLogs
 	-- (ChatParsing.lua), all three of which also guard a nil Message before using it (some
@@ -78,6 +77,25 @@ function Turbine.Chat.Received(sender, args)
 	elseif code == EventCode.Revive then
 		Sessions.OnRevive(initiator, t)
 	end
+end
+
+function Turbine.Chat.Received(sender, args)
+	if previousChatReceived ~= nil then
+		previousChatReceived(sender, args)
+	end
+
+	-- pcall-wrapped: this fires on every single combat chat line, including bursts of them, so a
+	-- thrown error here is not a one-off -- it's every subsequent line for as long as whatever
+	-- caused it keeps being true. This codebase already has three documented bugs from a wrong
+	-- assumption about a Turbine-supplied object's shape (see CLAUDE.md "Build status"), and the
+	-- one path found so far that reads the live player object with no guard at all
+	-- (`_G.lp:GetTarget()` in `UI/LiveMeter.lua`, and `_G.lp:GetMorale()`/`GetMaxMorale()` in
+	-- `Session.lua`, both now pcall-wrapped at their own call sites) is exactly the shape of bug
+	-- that would land here too if it ever recurred somewhere not yet found. This is the backstop,
+	-- not the fix -- an error swallowed here means a dropped combat line, not a crash, which is
+	-- the same trade this codebase already makes everywhere else defensive (Buffs.lua: "a failed
+	-- read is a no-op, never mistaken for real data").
+	pcall(Dispatch, args)
 end
 
 ---------------------------------------------------------------------------------------------------

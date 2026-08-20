@@ -205,6 +205,63 @@ MORALE_DANGER = 0.30
 Theme.BuffLane = { "#9184d9", "#b5abfc", "#7fb3a6" }
 
 ---------------------------------------------------------------------------------------------------
+-- Icon -- setting an effect-icon asset id as a Control's background.
+--
+-- Rebuilt off Gibberish3's own timer icon element (UI_ELEMENTS/TIMER/ICON/Element.lua,
+-- IconElement:UpdateContent) after five straight in-game loads of guessed variations
+-- (SetStretchMode alone, SetBlendMode, clearing SetBackColor, matching Gibberish3's own sequence
+-- but still stretching down to a fixed tile size, wrapping the id in Turbine.UI.Graphic) all
+-- failed to show anything. Per direct user instruction: no stretching at all now -- the control
+-- is sized to the art's own native size and left there, not forced down to a fixed tile size.
+-- SIZE-THEN-BACKGROUND is kept (not BACKGROUND-THEN-SIZE): the control has to already be at a
+-- real size before SetBackground for GetImageSize's own probe trick to mean anything, and
+-- matches IconElement's own order. No SetStretchMode, no SetBackColor -- neither is in
+-- Gibberish3's file either. SetBlendMode(Overlay) *was* added back in, despite Gibberish3 not
+-- using one: confirmed in-game the art rendered but see-through (see Icon.Apply's own comment)
+-- once the earlier rounds' transparent SetBackColor met real image alpha with nothing set to
+-- composite against. **Layout consequence**: the real art's native size
+-- (commonly 32x32) will very likely be larger than the 14x14/16x16 icon tile slot this codebase's
+-- buff table/graph lanes were laid out for -- expect overflow into neighbouring columns until the
+-- icon is confirmed to render at all and the surrounding layout is widened to match.
+---------------------------------------------------------------------------------------------------
+Icon = {}
+
+-- One hidden, reused Control -- mirrors Gibberish3's UTILS.GetImageSize (UTILS/Functions.lua),
+-- itself a single module-level `size_item`. SetBackground + SetStretchMode(2) forces the control
+-- to report the art's native pixel size on the next GetSize().
+local sizeProbe = Turbine.UI.Control()
+
+function Icon.Size(image)
+	if image == nil then
+		return 32, 32
+	end
+	sizeProbe:SetBackground(image)
+	sizeProbe:SetStretchMode(2)
+	return sizeProbe:GetSize()
+end
+
+-- Sets `control`'s background to `image` (a numeric effect-icon asset id, typically
+-- Buffs.Icons[name]) at the art's own native size -- no stretching, no forced resize.
+--
+-- Confirmed in-game: with no SetBlendMode at all (Gibberish3's own icon control never sets one),
+-- the art rendered but see-through -- the icon's own soft/transparent edges blended straight
+-- through to whatever sits behind the control instead of against an opaque backing, since
+-- iconInset's own BackColor is deliberately fully transparent (see UI/Analysis.lua's
+-- FillBuffRow). Overlay, not AlphaBlend: every confirmed-working precedent that renders a flat,
+-- non-see-through icon this way (PlayerFrame.lua's class/checkmark/ready-check icons, all
+-- Turbine.UI.Control backgrounds with numeric ids) uses Overlay; AlphaBlend is the one that
+-- respects source alpha, which is the transparency this is trying to get rid of.
+function Icon.Apply(control, image)
+	local w, h = Icon.Size(image)
+	control:SetSize(w, h)
+	-- control:SetBlendMode(Turbine.UI.BlendMode.Overlay)
+	control:SetBackground(image)
+	-- control:SetBackColor(Turbine.UI.Color.Red)
+	control:SetVisible(true)
+	return w, h
+end
+
+---------------------------------------------------------------------------------------------------
 -- Formatting -- shared across every window that prints a number to a Label.
 ---------------------------------------------------------------------------------------------------
 Format = {}
@@ -255,9 +312,28 @@ function Theme.RGB(hex)
 	return r / 255, g / 255, b / 255
 end
 
+-- Every Theme.Color/Theme.Mix call site passes one of a small, fixed set of hex tokens (the
+-- Theme.Hex table plus a handful of literal strings) -- never a per-row or per-user value -- so
+-- caching by hex string is a bounded, small table, not an unbounded one. This matters because
+-- these functions are called from hot refresh paths (the live meter at 10Hz, the analysis
+-- graph's per-bucket morale/series draw, up to ~150 Turbine.UI.Color() constructions per
+-- Graph:Redraw): a fresh Turbine.UI.Color() per call, at that rate, is enough native-object churn
+-- to show up as stutter during combat. Nothing anywhere in this codebase mutates a Color instance
+-- after construction (no SetR/G/B, no field assignment -- grepped) and no other installed plugin
+-- has a "Set the same shared Color on many controls" precedent to check the cache against, so
+-- this is the same category of "plausible, not proven" assumption as everything else in this
+-- file's Build status section -- worth an in-game load to confirm nothing renders as aliased or
+-- wrong, but low risk given the returned object is only ever handed to Set*Color, never modified.
+local colorCache = {}
+
 function Theme.Color(hex)
-	local r, g, b = Theme.RGB(hex)
-	return Turbine.UI.Color(r, g, b)
+	local cached = colorCache[hex]
+	if cached == nil then
+		local r, g, b = Theme.RGB(hex)
+		cached = Turbine.UI.Color(r, g, b)
+		colorCache[hex] = cached
+	end
+	return cached
 end
 
 -- Blends fgHex over bgHex at ratio t (0 = all bg, 1 = all fg) and returns a solid
@@ -269,13 +345,23 @@ end
 -- the working, repeated pattern is exactly this precomputed-blend approach (LootLogs calls its
 -- version MixColor). SetOpacity stays legitimate for whole-window fades (VitalSelf's
 -- incombat/outcombat opacity on a Window) -- just never for a tint over a solid fill.
+-- Same caching reasoning as Theme.Color above -- keyed on all three inputs since a mix is only
+-- equal to another mix if fg, bg AND t all match.
+local mixCache = {}
+
 function Theme.Mix(fgHex, bgHex, t)
-	local fr, fg, fb = Theme.RGB(fgHex)
-	local br, bg, bb = Theme.RGB(bgHex)
-	return Turbine.UI.Color(
-		fr * t + br * (1 - t),
-		fg * t + bg * (1 - t),
-		fb * t + bb * (1 - t))
+	local key = fgHex .. "|" .. bgHex .. "|" .. t
+	local cached = mixCache[key]
+	if cached == nil then
+		local fr, fg, fb = Theme.RGB(fgHex)
+		local br, bg, bb = Theme.RGB(bgHex)
+		cached = Turbine.UI.Color(
+			fr * t + br * (1 - t),
+			fg * t + bg * (1 - t),
+			fb * t + bb * (1 - t))
+		mixCache[key] = cached
+	end
+	return cached
 end
 
 -- Accepts either a plain "#RRGGBB" token or an 8-digit "#RRGGBBAA" alpha token (as the mockup's

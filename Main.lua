@@ -108,6 +108,11 @@ local function DumpCategory(label, agg)
 end
 
 local function DumpSession(s)
+	-- Memory readout first, session data or not -- lets a lag report be checked against real
+	-- numbers ("does Lua-side memory climb fight over fight?") instead of just going by feel.
+	-- collectgarbage("count") returns KB and is cheap enough to call from a shell command.
+	Turbine.Shell.WriteLine(string.format("Reckoning: Lua memory in use: %.0f KB", collectgarbage("count")))
+
 	if s == nil then
 		Turbine.Shell.WriteLine("Reckoning: no session data yet.")
 		return
@@ -224,9 +229,10 @@ local function BuffsCommand(action, name)
 			Turbine.Shell.WriteLine("Reckoning: self-buffs in the most recent fight --")
 			for i = 1, table.getn(rows) do
 				local row = rows[i]
-				Turbine.Shell.WriteLine(string.format("  %s: %s uptime (%s), %d applied, longest gap %ds",
+				Turbine.Shell.WriteLine(string.format("  %s: %s uptime (%s), %d applied, longest gap %ds, icon=%s(%s)",
 					row.name, Format.Percent(row.uptimePct), Format.Clock(row.uptime),
-					row.apps, math.floor(row.longestGap + 0.5)))
+					row.apps, math.floor(row.longestGap + 0.5),
+					tostring(row.icon), type(row.icon)))
 			end
 		end
 

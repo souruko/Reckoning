@@ -37,10 +37,25 @@ local SPARK_BAR = 6      -- leaving 2px of air between columns
 -- (docs/DESIGN.md's table has a different second/stat/max meaning per tab, not a uniform one).
 ---------------------------------------------------------------------------------------------------
 
+-- The one continuously-firing (10Hz, unconditional on combat state -- the live meter is
+-- permanently on) call anywhere in this codebase that reads the live Turbine.Gameplay player
+-- object with no pcall around it. Every other read of it either goes through Buffs.Read()'s
+-- pcall (deliberate, see that file's header) or only fires rarely on a real combat/UI event.
+-- `_G.lp` is captured once at plugin load (Main.lua) and never re-validated -- death -> release
+-- spirit -> the zone-load transition is exactly the kind of moment a captured native handle is
+-- most likely to be temporarily invalid or mid-transition, and this is the one call still firing
+-- unthrottled straight through it. Wrapped the same way Buffs.lua already treats this exact risk:
+-- fail safe to "no target" rather than let a thrown error propagate out of Refresh().
 local function CurrentTargetName()
-	local target = _G.lp:GetTarget()
-	if target ~= nil and target.GetName ~= nil then
-		return Session.StripThe(target:GetName())
+	local ok, name = pcall(function()
+		local target = _G.lp:GetTarget()
+		if target ~= nil and target.GetName ~= nil then
+			return Session.StripThe(target:GetName())
+		end
+		return nil
+	end)
+	if ok then
+		return name
 	end
 	return nil
 end
@@ -340,7 +355,10 @@ function LiveMeter:RefreshSparkline(session)
 		end
 	end
 
-	local colorHex = TAB_COLORS[key]
+	-- Every visible column this refresh is the same colour (the active tab never changes mid-loop)
+	-- -- resolved once outside the loop rather than once per column (up to 30 calls/refresh at
+	-- 10Hz otherwise).
+	local color = Theme.Color(TAB_COLORS[key])
 	for i = 1, SPARK_SECONDS do
 		local column = self.sparkColumns[i]
 		local height = 0
@@ -352,7 +370,7 @@ function LiveMeter:RefreshSparkline(session)
 		if height > 0 then
 			column:SetPosition(self.sparkX + (i - 1) * SPARK_COLUMN, self.sparkY + SPARK_HEIGHT - height)
 			column:SetSize(SPARK_BAR, height)
-			column:SetBackColor(Theme.Color(colorHex))
+			column:SetBackColor(color)
 			column:SetVisible(true)
 		else
 			column:SetVisible(false)

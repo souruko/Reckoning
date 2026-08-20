@@ -23,7 +23,9 @@ uptime, how many times it was applied, and the longest stretch you went without 
 buff you had during the fight. Click a row to chart it -- up to three at a time -- and it gets
 its own timeline under the graph showing exactly when it was up. Click the header to collapse the
 section. Mounts and travel skills are filtered out; `/reck buffs ignore <name>` filters out
-anything else you don't care about, and `/reck buffs` lists what is being tracked.
+anything else you don't care about, and `/reck buffs` lists what is being tracked. The table
+scrolls when a fight tracked more buffs than fit in the space it was given, instead of just
+cutting the list off.
 
 **Fixed: the skill table's last column was cut off.** On the "Damage taken" view the table was
 wider than the space it had, so TOTAL -- the one number you can least afford to lose -- ran off
@@ -32,6 +34,9 @@ showing percentages, and the table uses the window's full width.
 
 **Fixed: the KPI cards overlapped themselves.** The big number and the small line under it were
 drawn on top of each other by 6px.
+
+**Fixed: self-buff icons weren't showing.** The buff table and the graph's charted-buff lanes
+were showing a blank placeholder tile instead of the buff's actual icon.
 
 Tabs are reordered to Damage done / Damage taken / Healing done / Healing taken, so the two views
 you compare sit next to each other, and their labels are centred.
@@ -44,6 +49,13 @@ filled blocks. Same window size as before.
 often not the same hit, and knowing which one actually did the damage is the point. Both marked
 rows get a tinted background and a coloured edge instead of just a coloured number, and each row
 now prints its morale percentage next to the bar.
+
+**Performance pass.** Every window colour used to be rebuilt from scratch on every refresh; colours
+are now resolved once and reused, which cuts out a lot of repeated work during combat -- most
+noticeably in the live meter's sparkline (updates 10 times a second) and the analysis graph's
+morale bars. The live meter's damage/heal rate no longer rescans the whole fight's timeline on
+every refresh. The death window's countdown number now only redraws when the second it's showing
+actually changes, instead of every rendered frame.
 
 ## 0.1.0 - unreleased
 

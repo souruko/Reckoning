@@ -114,7 +114,7 @@ Turbine = {
 		Window = Window,
 		Label = Label,
 		ListBox = ListBox,
-		Color = function(r, g, b) return { R = r, G = g, B = b } end,
+		Color = function(r, g, b, a) return { R = r, G = g, B = b, A = a } end,
 		ContentAlignment = {
 			TopLeft = 1, TopCenter = 2, TopRight = 3,
 			MiddleLeft = 4, MiddleCenter = 5, MiddleRight = 6,
@@ -122,7 +122,7 @@ Turbine = {
 		},
 		MouseButton = { Left = 1, Right = 2, Middle = 3 },
 		Orientation = { Horizontal = 1, Vertical = 2 },
-		BlendMode = { Overlay = 5 },
+		BlendMode = { Overlay = 5, AlphaBlend = 1 },
 		Lotro = {
 			Font = {
 				Verdana10 = "Verdana10", Verdana12 = "Verdana12", Verdana20 = "Verdana20",

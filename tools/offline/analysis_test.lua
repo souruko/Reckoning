@@ -184,15 +184,15 @@ w.resetButton.MouseClick()
 -- 11. buff section
 local stats = Buffs.Stats(session, nil, nil)
 check("buffs were tracked through the real poll path", #stats == 3, "#stats=" .. #stats)
-check("buff table shows a row per tracked buff",
-  (function() local n = 0
-     for i = 1, 12 do if w.buffRows[i].container:IsVisible() then n = n + 1 end end
-     return n end)() == 3)
+check("buff table shows a row per tracked buff -- as ListBox items, not just pooled Controls",
+  w.buffScrollView:GetItemCount() == 3, tostring(w.buffScrollView:GetItemCount()))
 check("buff summary names the count and scope",
   w.buffHeader.summary:GetText():find("3 tracked", 1, true) ~= nil,
   w.buffHeader.summary:GetText())
-check("buff table is 604px wide next to the 233px panels",
-  w.buffWidth == 604, tostring(w.buffWidth))
+check("buff section is 604px wide next to the 233px panels",
+  select(1, w.buffHolder:GetSize()) == 604, tostring(select(1, w.buffHolder:GetSize())))
+check("buff row content is narrower than the section -- SCROLLBAR_WIDTH reserved for the scrollbar",
+  w.buffWidth == 594, tostring(w.buffWidth))
 check("buff caret is ASCII, not a Unicode triangle",
   w.buffHeader.caret:GetText() == "v", w.buffHeader.caret:GetText())
 
@@ -218,9 +218,8 @@ check("the re-charted buff is the newest entry", w.charted[3] == first)
 w:ToggleBuffSection()
 check("collapsing hides the buff table header", not w.buffTableHeader:IsVisible())
 check("collapse persisted", _G.settings.buffsOpen == false)
-check("collapsing hides every buff row",
-  (function() for i = 1, 12 do if w.buffRows[i].container:IsVisible() then return false end end
-     return true end)())
+check("collapsing empties the buff ListBox",
+  w.buffScrollView:GetItemCount() == 0, tostring(w.buffScrollView:GetItemCount()))
 w:ToggleBuffSection()
 check("re-opening brings the rows back", w.buffTableHeader:IsVisible())
 

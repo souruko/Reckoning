@@ -1143,6 +1143,19 @@ function Analysis:BuildBuffSection()
 		self.buffHeaderLabels[i] = label
 	end
 
+	-- Same ListBox + Lotro.ScrollBar host as the skill table (see BuildTable's comment) -- rows
+	-- are pooled Controls added via AddItem, not manually positioned/parented, so overflow past
+	-- whatever height Layout() gives the buff section scrolls instead of being silently dropped.
+	self.buffScrollView = Turbine.UI.ListBox()
+	self.buffScrollView:SetParent(self.buffHolder)
+	self.buffScrollView:SetBackColor(Theme.Color(Theme.Hex.WindowFill))
+
+	self.buffScrollBar = Turbine.UI.Lotro.ScrollBar()
+	self.buffScrollBar:SetParent(self.buffHolder)
+	self.buffScrollBar:SetOrientation(Turbine.UI.Orientation.Vertical)
+	self.buffScrollBar:SetWidth(SCROLLBAR_WIDTH)
+	self.buffScrollView:SetVerticalScrollBar(self.buffScrollBar)
+
 	self.buffRows = {}
 	for i = 1, BUFF_POOL do
 		self.buffRows[i] = self:BuildBuffRow()
@@ -1151,11 +1164,12 @@ function Analysis:BuildBuffSection()
 	self:LayoutBuffColumns(604)
 end
 
+-- Not parented here -- AddItem (called from RefreshBuffSection, every data refresh) does that,
+-- matching BuildTableRowSlot's own comment: a row never sits in the ListBox until it actually
+-- has data for the current session/range.
 function Analysis:BuildBuffRow()
 	local container = Turbine.UI.Control()
-	container:SetParent(self.buffHolder)
 	container:SetSize(1, BUFF_ROW_HEIGHT)
-	container:SetVisible(false)
 
 	local shareBar = Turbine.UI.Control()
 	shareBar:SetParent(container)
@@ -1194,8 +1208,9 @@ function Analysis:BuildBuffRow()
 	iconInset:SetParent(icon)
 	iconInset:SetPosition(1, 1)
 	iconInset:SetSize(14, 14)
-	iconInset:SetBackColor(Theme.Color(Theme.Hex.RailFill))
 	iconInset:SetMouseVisible(false)
+	-- Real art is applied by Icon.Apply (Constants.lua) at fill time, following Gibberish3's own
+	-- timer icon element's exact call sequence -- nothing else is set here at construction.
 
 	local iconLabel = Turbine.UI.Label()
 	iconLabel:SetParent(icon)
@@ -1346,25 +1361,24 @@ function Analysis:RefreshBuffSection(stats, fromSec, toSec)
 		"· " .. tracked .. " tracked · " .. table.getn(self.charted) .. " charted · " .. scope)
 
 	self.buffTableHeader:SetVisible(open)
+	self.buffScrollView:SetVisible(open)
+	self.buffScrollBar:SetVisible(open)
 
-	local shown = 0
-	if open then
-		shown = math.min(tracked, BUFF_POOL, self.buffRowsAllowed or BUFF_POOL)
-	end
+	-- ListBox is item-list based, not freeform positioning: clear and re-add each refresh, but
+	-- reuse the same pooled container/Row objects every time -- only the ListBox's membership
+	-- list is rebuilt, never the Controls themselves (matching RefreshTable's own comment).
+	self.buffScrollView:ClearItems()
 
-	for i = 1, BUFF_POOL do
+	local shown = open and math.min(tracked, BUFF_POOL) or 0
+	for i = 1, shown do
 		local widgets = self.buffRows[i]
-		local row = (i <= shown) and stats[i] or nil
+		local row = stats[i]
 
-		if row == nil then
-			widgets.container:SetVisible(false)
-			widgets.name = nil
-		else
-			widgets.name = row.name
-			widgets.container:SetVisible(true)
-			widgets.container:SetBackColor(Theme.Color(Theme.Hex.WindowFill))
-			self:FillBuffRow(widgets, row)
-		end
+		widgets.name = row.name
+		widgets.container:SetBackColor(Theme.Color(Theme.Hex.WindowFill))
+		self:FillBuffRow(widgets, row)
+
+		self.buffScrollView:AddItem(widgets.container)
 	end
 end
 
@@ -1381,9 +1395,19 @@ function Analysis:FillBuffRow(widgets, row)
 
 	widgets.icon:SetBackColor(Theme.Color(laneHex or "#3a3d4e"))
 	if row.icon ~= nil and row.icon ~= false then
-		widgets.iconInset:SetBackground(row.icon)
+		-- Clears whatever the initials-fallback branch left behind (a pooled row can flip
+		-- between the two across refreshes) -- Icon.Apply itself never touches BackColor, and a
+		-- leftover opaque one is a real, previously-confirmed way to hide the art underneath.
+		-- widgets.iconInset:SetBackColor(Turbine.UI.Color(0, 0, 0, 0))
+		-- No stretch, native size -- per direct instruction after stretching to a fixed tile
+		-- also failed to show anything. May overflow the 14x14 slot; that's expected for now.
+
+		Icon.Apply(widgets.iconInset, row.icon)
+		widgets.iconInset:SetPosition(1, 1)
 		widgets.iconLabel:SetText("")
 	else
+		-- widgets.iconInset:SetBackColor(Theme.Color(Theme.Hex.RailFill))
+		widgets.iconInset:SetVisible(true)
 		widgets.iconLabel:SetText(row.initials or "")
 		widgets.iconLabel:SetForeColor(Theme.Color(laneHex or Theme.Hex.DimText))
 	end
@@ -1867,8 +1891,10 @@ function Analysis:Layout()
 
 	-- The bottom row (buff table on the left, side panels on the right) claims what its content
 	-- needs; the skill table takes everything that is left and scrolls. When the window is too
-	-- short for both, the skill table shrinks to its floor first and the buff list gets capped
-	-- second -- in that order, because the skill table is the block a reader came for.
+	-- short for both, the skill table shrinks to its floor first and the buff list scrolls
+	-- second -- in that order, because the skill table is the block a reader came for. Either
+	-- way the buff list itself now scrolls (REDESIGN_SPEC.md section 7) rather than silently
+	-- dropping rows past whatever height it was given.
 	local available = math.max(0, contentHeight - tableY - PAD)
 	local buffRows = self.buffRowsWanted or 0
 	local bottomHeight = BUFF_HEADER_HEIGHT + 1
@@ -1884,10 +1910,6 @@ function Analysis:Layout()
 	if bottomHeight < BUFF_HEADER_HEIGHT + 1 then
 		bottomHeight = BUFF_HEADER_HEIGHT + 1
 	end
-
-	-- How many buff rows actually fit in whatever the bottom row ended up with.
-	local rowSpace = bottomHeight - BUFF_HEADER_HEIGHT - 1 - BUFF_TABLE_HEADER_HEIGHT
-	self.buffRowsAllowed = self.buffsOpen and math.max(0, math.floor(rowSpace / BUFF_ROW_HEIGHT)) or 0
 
 	local tableHeight = available - GAP - bottomHeight
 	if tableHeight < ROW_HEIGHT * 2 then
@@ -1915,12 +1937,16 @@ function Analysis:Layout()
 	self.buffHeader.control:SetSize(buffWidth, BUFF_HEADER_HEIGHT)
 	self.buffHeader.summary:SetSize(math.max(0, buffWidth - 100), BUFF_HEADER_HEIGHT)
 	self.buffTableHeader:SetPosition(0, BUFF_HEADER_HEIGHT + 1)
-	self:LayoutBuffColumns(buffWidth)
 
-	for i = 1, BUFF_POOL do
-		self.buffRows[i].container:SetPosition(
-			0, BUFF_HEADER_HEIGHT + 1 + BUFF_TABLE_HEADER_HEIGHT + (i - 1) * BUFF_ROW_HEIGHT)
-	end
+	local buffListWidth = math.max(0, buffWidth - SCROLLBAR_WIDTH)
+	self:LayoutBuffColumns(buffListWidth)
+
+	local buffListY = BUFF_HEADER_HEIGHT + 1 + BUFF_TABLE_HEADER_HEIGHT
+	local buffListHeight = math.max(0, bottomHeight - buffListY)
+	self.buffScrollView:SetPosition(0, buffListY)
+	self.buffScrollView:SetSize(buffListWidth, buffListHeight)
+	self.buffScrollBar:SetPosition(buffListWidth, buffListY)
+	self.buffScrollBar:SetHeight(buffListHeight)
 
 	self.panelsHolder:SetPosition(innerX + buffWidth + GAP, bottomY)
 	self.panelsHolder:SetSize(panelsWidth, bottomHeight)

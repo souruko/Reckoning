@@ -174,11 +174,207 @@ be wrong:
   (middle dot, U+00B7) used elsewhere as a separator has not been reported broken and is a much
   more commonly-embedded character (Latin-1 vs. Geometric Shapes) -- left as is, but if it turns
   out broken too, the fix is the same: swap for an ASCII-safe separator.
+- **Self-buff icon tiles have never rendered art in-game, across five separate fix rounds and
+  in-game loads** (`UI/Analysis.lua`'s buff table, `UI/AnalysisGraph.lua`'s charted-lane icons) --
+  always a plain, empty tile, no art and no initials fallback either (confirming `row.icon` *was*
+  a real, truthy value the whole time; the `SetBackground` branch was always the one running).
+  Tried and abandoned, each disproven by a real in-game load before moving to the next: (1)
+  `SetStretchMode(2)` alone; (2) adding `SetBlendMode(AlphaBlend)` before `SetBackground`,
+  reasoned from menu/list-icon precedents (`CombatAnalysisIcon.lua`, `EffectOverview.lua`) that
+  turned out not to be the same situation (icons layered over other content, not a bare tile);
+  (3) clearing `SetBackColor` to transparent on the icon-branch, reasoned from noticing no
+  confirmed precedent combines an opaque `BackColor` with a `SetBackground` image on the same
+  Control; (4) matching `Turbine.UI.BlendMode`/`SetVisible` exactly to Gibberish3's own timer
+  icon element while still keeping the transparent-`BackColor` fix layered on top; (5) wrapping
+  the raw icon id through `Turbine.UI.Graphic(id)` before `SetBackground`, reasoned from several
+  *other* plugins doing this (Thurallor, Darf, PrimePlugins' `BackgroundHandler`, `Arebel`) --
+  contradicted by Gibberish3's own code, which the round-5 grep had missed: its
+  `ResolveTimerIcon` (`UTILS/Functions.lua`) returns a plain effect-icon id completely unwrapped,
+  only ever rewriting *string* paths, for an unrelated external-image feature. Round 4's own
+  diagnostic (`/reck buffs`, still in `Main.lua`, prints each tracked buff's `row.icon` value and
+  Lua type) confirmed real data was never the problem: every tracked buff's icon is a real number
+  in the `0x41000000`-`0x42000000` range, the same "0x41-prefixed" asset-id format used
+  everywhere else in this environment that a bare `SetBackground(numericId)` is confirmed
+  working -- so every round correctly stayed focused on the rendering side, it just kept guessing
+  at *which* property was missing rather than rebuilding from a single working reference in full.
+  **Current approach (round six): reset to a clean rebuild off Gibberish3's `IconElement`
+  (`UI_ELEMENTS/TIMER/ICON/Element.lua`, `IconElement:UpdateContent`) line for line**, per direct
+  user instruction after round five also failed, instead of layering another guessed property on
+  top. That element is real, constantly-exercised code (Gibberish3's whole timer feature runs
+  every rendered timer icon through it) and its exact sequence is: size the control to the art's
+  own *native* size first (via a hidden probe Control backgrounded with the same image at
+  `SetStretchMode(2)`, then `GetSize()` -- Gibberish3's own `UTILS.GetImageSize`), `SetStretchMode(1)`,
+  *then* `SetBackground`, *then* resize down to the real target size, then `SetPosition` and an
+  explicit `SetVisible(true)` -- never `SetBlendMode`, never `SetBackColor`, on that Control,
+  anywhere in the file. Extracted as `Icon.Size`/`Icon.Apply` in `Constants.lua` (shared by both
+  `UI/Analysis.lua` and `UI/AnalysisGraph.lua`, since it's root-level and both are siblings in
+  `UI/`) so both call sites use the identical sequence rather than two hand-copies drifting apart.
+  The `Turbine.UI.Graphic` wrap (round 5) was reverted in `Buffs.lua` -- `EffectIcon` is back to
+  a bare `effect:GetIcon()` -- since Gibberish3's own code proves it isn't needed. The
+  transparent-`SetBackColor` clear (round 3) is kept in both files' fill functions, since
+  Gibberish3's icon control simply never has a competing `BackColor` in the first place (starts
+  unset, stays unset) -- consistent with, not contradicted by, dropping it entirely would only
+  matter for a pooled row that previously showed the initials fallback and now needs to show
+  real art, a case Gibberish3's own single-purpose icon element never has to handle. **Round six
+  also did not fix it**, confirmed by a sixth in-game load. **Round seven, per direct user
+  instruction**: stop stretching entirely -- `Icon.Apply` (`Constants.lua`) no longer resizes
+  down to a fixed tile size at all. It still sizes the control to the art's own native size first
+  (`Icon.Size`'s probe-control trick) and calls `SetBackground`, but that native size is now the
+  *final* size -- no `SetStretchMode` call anywhere in the function, matching "use them in
+  default size" literally. `Icon.Apply(control, image)` dropped its `width`/`height` parameters
+  entirely (previously `Icon.Apply(control, image, width, height)`); both call sites
+  (`UI/Analysis.lua`'s `FillBuffRow`, `UI/AnalysisGraph.lua`'s `DrawLanes`) updated to match. This
+  will very likely make the art larger than the 14x14/16x16 tile slot it sits in -- expected and
+  accepted for now, per the same instruction; layout can be widened to fit once the art is
+  confirmed to render at all. **Round seven was the first one to actually show art**, confirmed
+  by a seventh in-game load -- progress, not a repeat failure, but the art rendered see-through:
+  the icon's own soft/transparent edges blended straight through to whatever sits behind the
+  control instead of compositing against anything opaque, since `iconInset`'s `BackColor` is
+  deliberately fully transparent (round 3's fix, kept through every round since). **Round eight**:
+  added `SetBlendMode(Turbine.UI.BlendMode.Overlay)` back into `Icon.Apply`, deliberately not
+  `AlphaBlend` (round two's value) -- every confirmed-working precedent that renders a flat,
+  non-see-through icon this way (`PlayerFrame.lua`'s class/checkmark/ready-check icons) uses
+  `Overlay`; `AlphaBlend` is specifically the one that respects source alpha, which is the exact
+  transparency this round is trying to eliminate. **Not yet confirmed in-game** (round eight).
+  **`Turbine.UI.Lotro.EffectDisplay` was considered and rejected for this table**: every confirmed
+  working use of it anywhere in ~1MB of real plugin code (`VitalSelf/UI/EffectIcon.lua`,
+  `PrimePlugins/Vitals/EffectBox.lua`, `PrimePlugins/PartyVitals/EffectBox.lua`,
+  `PrimePlugins/RaidTools/Counter.lua`, `PrimeUITools/EffectBoxes.lua`'s non-`Simple` branch) calls
+  `:SetEffect(effect)` with a live `Turbine.Gameplay.Effect` object -- there is no icon-id-only
+  entry point anywhere. The buff table and lane icons need to render buffs from **closed**
+  sessions, often long after the underlying effect has faded and is no longer in
+  `_G.lp:GetEffects()` -- `Buffs.lua` deliberately caches only the numeric icon id
+  (`Buffs.Icons[name]`), not the effect object, for exactly this reason. `EffectDisplay` cannot
+  serve that case at all, so the fix stays on the plain-`Control`+`SetBackground` path this
+  codebase already uses elsewhere. If a future change wants richer icon art (native border/glow)
+  for buffs that are *still currently active*, that would need a separate live-effect lookup
+  (matching by name against `_G.lp:GetEffects()` at render time) with this fixed path kept as the
+  fallback for anything not currently live -- not a wholesale swap.
 
 Two Design-token values `docs/DESIGN.md` names but never gives hex for (`--color-accent-200`,
 `-300`, `-500`, `-700`) were pulled directly from the mockup's own CSS custom properties and
 added as `Theme.Hex.Accent200/300/500/700` in `Constants.lua` -- see that file's comment. If a
 future design revision changes the mockup's accent scale, re-check those four values there.
+
+**Performance pass, one new unverified-in-game assumption**: `Theme.Color`/`Theme.Mix`
+(`Constants.lua`) used to construct a fresh `Turbine.UI.Color` on every single call. That is
+called from genuinely hot paths -- the live meter's sparkline redraw (up to 30 calls/refresh at
+10Hz) and the analysis graph's per-bucket morale/series draw (~150 calls per `Graph:Redraw()`) --
+enough native-object churn per second of combat to plausibly be the "performance issues" felt
+in-game. Both functions now cache by hex string (`Theme.Mix` by `fg|bg|t`) and hand back the same
+`Turbine.UI.Color` instance to every caller that asks for that exact colour, rather than a fresh
+one each time. **The one thing this assumes and does not prove**: that a `Turbine.UI.Color`
+handed to many different controls' `Set*Color` behaves as a plain immutable value (copied into
+each control's own render state), not as a live reference multiple controls end up sharing. Every
+call site was grepped first and none of them ever mutates a `Color` after construction (no
+`SetR`/`SetG`/`SetB`, no field assignment) -- consistent with, but not proof of, value semantics
+-- and no other installed plugin (`VitalSelf`/`Gibberish3`/`CombatAnalysis`/`LootLogs`/etc.) has a
+"share one Color instance across controls" precedent to check this against either way, so this is
+the same category of educated-guess-pending-a-real-load as everything else in this section.
+Offline-verified: the cache does return the identical object for the identical hex/mix args and a
+different one for different args (`tools/offline` exercises `Theme.Color`/`Theme.Mix` and
+`Session:ActiveSeconds`' fast path below through the real classes). **If colours ever render
+wrong, shared, or flickering across multiple controls after this change, this caching is the
+first thing to suspect and revert** -- go back to a fresh `Turbine.UI.Color()` per call. Also in
+this pass: `Session:ActiveSeconds()` (`Session.lua`) used to rescan every active second in the
+fight on every call; the unscoped whole-fight case (what the live meter's rate calculation calls
+at 10Hz) now reads a running count `Touch()` already maintains, no rescan. The ranged-range case
+(the analysis window's slider) is untouched, since the range varies per call and there's nothing
+to cache. And the death window's countdown label (`UI/DeathCause.lua`) used to reformat and
+`SetText` every single rendered frame for a number that only visibly changes once a second; it now
+only touches the label when the displayed integer second actually changes -- the countdown bar
+itself is untouched and still updates every frame, since that one needs to look smooth.
+
+**Follow-up performance report, after the pass above, tried something and reverted it -- read
+this before ever calling `collectgarbage()` from this codebase again.** The game was still
+getting progressively laggier over several fights, which rules out steady-state allocation rate
+(already addressed above) as the sole cause. Audited every global table this codebase ever
+appends to (`Sessions.list`, `Buffs.Icons`, the two `On*` callback lists, every UI pool) for
+unbounded growth -- all capped or bounded, no reference leak found. That pointed at Lua 5.1's own
+collector instead: `Sessions.Close()` is the one moment a whole fight's tracking data turns to
+garbage at once, which its incremental collector (steps sized to *ongoing* allocation rate) is a
+poor match for. `CombatAnalysis` has the same "free state, then `collectgarbage()`" pattern, so
+that call was added to `Sessions.Close()`, right after `TrimRing()`, gated to the real-archive
+path only.
+
+**This was wrong, and made things measurably worse.** `/reck dump`'s new memory readout (added in
+the same pass) showed nothing alarming on its own -- 4192 KB in one session, 2710 KB fresh after a
+reload, not a runaway climb. What came back instead was a much more specific and much worse
+symptom: the death loading screen taking 2-3x longer than normal, then 5-10s of total
+unresponsiveness after it loaded. That is not what a slow-but-harmless GC pause in a 3-4MB heap
+would produce -- it is exactly what a **client-wide** GC pause would produce. LOTRO plugins share
+ONE Lua VM across every loaded addon, not one per plugin (this install has a lot of them --
+RaidTools, LootLogs, CombatAnalysis, Thurallor, Darf, TbdBars, and more). `collectgarbage()` with
+no arguments forces a full stop-the-world collection of *that whole shared heap*, not just
+Reckoning's own few MB -- and `Sessions.Close()` fires it ~5s after the last combat event, which
+for a death is often right around when the player releases spirit and the real zone-transition
+loading screen begins. A full sweep of a heap that likely spans tens of MB across every other
+addon, landing at exactly that moment, is sufficient on its own to explain both symptoms. Reverted
+in `Sessions.lua` (the call is left as a comment specifically so it doesn't get reintroduced the
+same way twice) -- this codebase does not call `collectgarbage()` anywhere as of now.
+**Lesson**: `CombatAnalysis`'s own `collectgarbage()` precedent is not actually a working
+counter-example to this -- nothing establishes that its call sites don't have the exact same
+shared-VM cost, only that nobody happened to report it. Precedent in a sibling plugin proves a
+call is *accepted syntax*, never that it is *cheap* -- that has to be checked against what the
+call actually does process-wide, not just against whether another plugin also calls it. If a
+future change wants to nudge GC at all, `collectgarbage("count")` (read-only, already used by
+`/reck dump`) is safe; anything that actually forces work (`collectgarbage()` bare or
+`"collect"`) needs to be weighed against the fact that it is never scoped to this plugin's own
+heap, no matter how it's justified.
+
+The `/reck dump` memory readout itself is not reverted -- it is read-only and the only real
+diagnostic available here (no profiler exists for this environment), and it's what caught this.
+If lag reports come in again, get a `/reck dump` reading at the start of a session and again after
+several fights before assuming growth is the shape of the problem -- the one data point gathered
+so far does not show it.
+
+**The actual reported symptom turned out to be older and more specific than general fight lag,
+and unrelated to `collectgarbage()`**: the death loading screen itself taking 2-3x longer than
+normal, then 5-10s of total unresponsiveness once it finishes loading -- present before any of the
+performance work above, i.e. the real motivating complaint. Re-grepped every direct read of the
+live `_G.lp` (`Turbine.Gameplay.LocalPlayer`) object across the whole codebase for whether it's
+guarded. Found one clear outlier: `UI/LiveMeter.lua`'s `CurrentTargetName()` (`_G.lp:GetTarget()`)
+is the *only* continuously-firing, unguarded read of it anywhere -- 10 times a second, unconditional
+on combat state, because the live meter is permanently visible whenever enabled (see its own file
+header). Every other read either already goes through `Buffs.Read()`'s deliberate `pcall`
+(`Buffs.lua`'s own header explains why) or only fires on a rare event. `_G.lp` is captured once at
+plugin load (`Main.lua`) and never re-validated -- death -> release spirit -> the zone-load
+transition to the graveyard is exactly the kind of moment a captured native handle is most likely
+to be temporarily invalid or mid-transition, and `CurrentTargetName()` is the one call still firing
+straight through it, unthrottled, the whole time. Wrapped it in a `pcall`, same pattern as
+`Buffs.Read()`: fail safe to "no target" rather than let a thrown error escape `LiveMeter:Refresh()`.
+While in there, hardened the other two unguarded direct reads found by the same grep for
+consistency and because one of them is a real correctness gap, not just a perf one:
+`Session:MoralePct()` (`_G.lp:GetMorale()`/`GetMaxMorale()`) runs from `AddTaken`/
+`AddTempMoraleLoss`, called directly from `Events.lua`'s chat dispatch with **no pcall anywhere in
+that call chain at the time** -- an uncaught throw there would have aborted the whole `AddTaken`
+call before the hit was ever logged to the row/bucket/event log (the damage silently vanishes from
+tracking, not just a stutter) and could have propagated out into the chat dispatch itself; and
+`UI/AnalysisGraph.lua`'s `GetMaxMorale()` read for the morale axis label, which only checked that
+the method existed, not that calling it wouldn't throw.
+
+**Also added a systemic backstop, not just the two/three found instances**: `Events.lua`'s entire
+`Turbine.Chat.Received` dispatch had no error handling at all before this. It runs on every single
+combat chat line, including bursts of them (exactly what a busy respawn/re-aggro produces), so an
+uncaught throw there is not a one-off cost -- it's every subsequent line for as long as whatever
+caused it stays true, which is a very plausible shape for "unresponsive for 5-10s." The dispatch
+body is now a separate `Dispatch(args)` local function called via `pcall(Dispatch, args)`,
+deliberately *not* wrapping the call to `previousChatReceived` (another plugin's own handler,
+chained ahead of ours) -- only Reckoning's own logic. This is meant as a backstop for whatever the
+next instance of this exact bug shape turns out to be, not a replacement for finding and fixing
+real instances when they're found, the same trade this codebase already makes everywhere else
+defensive (`Buffs.lua`: "a failed read is a no-op, never mistaken for real data").
+
+**Not yet confirmed in-game.** This is reasoned from the single clearest candidate a full grep
+turned up (the only continuously-firing unguarded native call in the codebase, correlated with
+exactly the kind of state transition death/respawn causes) plus this codebase's own three-strong
+history of bugs from the identical assumption (see the `args.ChatType`/`LocalPlayer.name`/
+`ChatType.Death` entries above) -- not from a captured stack trace or profiler output, since
+neither is available here. If the death loading screen is still long after this, the next thing to
+check is whatever chat/combat lines are actually arriving in the few seconds around a death and
+whether any of them hit a Turbine call this file doesn't yet guard -- the fix category (wrap the
+call, fail safe, never let it propagate) is established either way, only the specific call site
+would need to be found.
 
 Phase 2 (window chrome) has **not** been exercised even offline -- it is pure `Turbine.UI`
 (`Turbine.UI.Window`/`Control`/`Label`), which the offline harness described below cannot stub
@@ -283,7 +479,7 @@ inheritance + mixins). Treat them as vendored, not Reckoning-specific.
 | File | Role |
 |---|---|
 | `Main.lua` | Import order, `_G.lp` / `LocalPlayer` globals, settings load, `/reck` shell command, `plugin.Unload`. |
-| `Constants.lua` | `L` (localisation), `EventCode` / `AvoidType` / `CritType` / `DamageType` enums mirroring the parser's return codes, `Font` table (only the faces/sizes the design actually uses), `Theme` palette + `Theme.Color(hex)`. |
+| `Constants.lua` | `L` (localisation), `EventCode` / `AvoidType` / `CritType` / `DamageType` enums mirroring the parser's return codes, `Font` table (only the faces/sizes the design actually uses), `Theme` palette + `Theme.Color(hex)`, `Icon.Size`/`Icon.Apply` (setting a numeric effect-icon id as a Control's background, modelled on Gibberish3's `IconElement` -- see "Build status" below). |
 | `Settings.lua` | `Settings.Load()` / `Settings.Save()` / `Settings.FixColors()` via `Turbine.PluginData`, `DEFAULTS` as single source of truth, `COLOR_KEYS` for colour rebuild. |
 | `Parse/en.lua` | `Trigger.ParseCombatChat` -- ported **verbatim** from `souruko/Gibberish3` (`UTILS/COMBATCHATPARSE/en.lua`). Do not rewrite it; `de.lua` / `fr.lua` are later drop-ins with the same signature. |
 | `Session.lua` | The `Session` class -- one fight's aggregate (`agg.done/taken/healOut/healIn`, `buckets`, `lastTaken` ring). One `Add*`/`On*` method per event kind: `AddDone`, `AddTaken`, `AddHealOut`, `AddHealIn`, `AddTempMoraleLoss`, `OnDefeat`, `OnRevive`. Each `buckets[second]` entry also carries a `<field>ByWho[counterpartName] = amount` table alongside its pooled scalar (`done`/`taken`/`healOut`/`healIn`) -- added so the analysis window's graph can respect the target/source picker; the pooled scalar is always exactly the sum of its own `ByWho` table (`AddToBucket()` updates both together, in one place, so they can't drift apart). Verified offline (a synthetic multi-target fight, checked the per-target and pooled sums against hand-computed expectations). |
@@ -313,7 +509,7 @@ and can freely reference `Frame`/`Bar`/`Row` bare since they're siblings in the 
 
 | `UI/DeathCause.lua` | `DeathCause` (extends `Frame`, `key = "deathCause"`, death-specific fill/border/header-rule colours) -- window 2. Fires from `Sessions.OnSelfDefeat`. "Last hit by" resolved by scanning `session.lastTaken` backward for the last `kind == "damage"` entry (temp-morale-loss rows don't carry an attacker). 5 pooled `Row` instances (never rebuilt), tinted per row: the killing-blow row's amount goes `DamageFatal`, temp-morale rows go `MutedText` end to end, everything else scales `DamageTaken`/`DamageSevere` off post-hit `moralePct`. Countdown is a `Bar`, `_G.settings.deathAutoHide` seconds (default 15) -- tracked as `self.remaining` (seconds left, decremented by real elapsed `dt` each `Update()` tick) rather than an absolute target timestamp, specifically so **pausing is just "skip subtracting this tick"**: `self.MouseEnter`/`self.MouseLeave` toggle `self.paused`, per direct feedback that hovering the window to read it shouldn't race the auto-hide closing it. Row time column widened (38px -> 46px) and format changed from one decimal (`"-3.7s"`) to whole seconds (`"-4s"`) per feedback that the times "seemed broken" -- most likely a width/overflow problem given the format itself checked out fine standalone, but the exact in-game rendering was never confirmed, so this is a defensive fix (shorter string, wider column) rather than a diagnosed-and-proven one; if it's still wrong, the underlying `entry.time - self.deathTime` computation itself is the next thing to check with a real capture, the way the `ChatType.Death` bug was found. The morale column is now a `Bar` per row (`self.moraleBars`, pooled) instead of a `Format.Percent` Label, matching the analysis window's own bar style per feedback. Depends on `UI/Row.lua`'s rows being mouse-invisible (`SetMouseVisible(false)`, changed from `true` -- nothing in a `Row` was ever individually clickable) so a row sitting over the window doesn't swallow the hover before it reaches the window's own `MouseEnter`/`MouseLeave`. **Unverified**: whether `Turbine.UI.Window.MouseEnter`/`.MouseLeave` fire based on the window's own bounds regardless of mouse-invisible children on top (assumed, consistent with how mouse-invisible children behave for click-through elsewhere, but not confirmed for Enter/Leave specifically) -- if hover-pause doesn't trigger in-game, check this first. |
 
-| `UI/Analysis.lua` | `Analysis` (extends `Frame`, `key = "analysis"`, resizable 1080x820, min 1080x600, max 1440x880) -- window 3, redesigned in v0.2.0. Session rail (unchanged), 4 view tabs in **damage-pair-then-healing-pair** order (`done`/`taken`/`healOut`/`healIn`) with centred labels, picker chips, 5 KPI cards, the graph block, the skill table at **full content width**, then the SELF BUFFS table and the two 233px side panels sharing the bottom row. `RESET RANGE` and the range chip live in `Frame`'s own header. State: `viewTab`, `filter[view]`, `selectedSession`, `rangeFrom`/`rangeTo`, `charted` (ordered, max 3), `buffsOpen`. **Everything is range-scoped through one `Session:Slice` per refresh** -- KPIs, table, both panels and the buff table are all fed from that single result, never from their own separate passes. `Layout()` and `RefreshContent()` call each other exactly once each: `RefreshContent` detects that the charted-lane or buff-row count changed shape, sets `laneCountWanted`/`buffRowsWanted` and re-runs `Layout()`, which ends by calling back with `skipRelayout` set -- that flag is the only thing stopping an infinite bounce, so do not remove it. |
+| `UI/Analysis.lua` | `Analysis` (extends `Frame`, `key = "analysis"`, resizable 1080x820, min 1080x600, max 1440x880) -- window 3, redesigned in v0.2.0. Session rail (unchanged), 4 view tabs in **damage-pair-then-healing-pair** order (`done`/`taken`/`healOut`/`healIn`) with centred labels, picker chips, 5 KPI cards, the graph block, the skill table at **full content width**, then the SELF BUFFS table and the two 233px side panels sharing the bottom row. `RESET RANGE` and the range chip live in `Frame`'s own header. State: `viewTab`, `filter[view]`, `selectedSession`, `rangeFrom`/`rangeTo`, `charted` (ordered, max 3), `buffsOpen`. **Everything is range-scoped through one `Session:Slice` per refresh** -- KPIs, table, both panels and the buff table are all fed from that single result, never from their own separate passes. `Layout()` and `RefreshContent()` call each other exactly once each: `RefreshContent` detects that the charted-lane or buff-row count changed shape, sets `laneCountWanted`/`buffRowsWanted` and re-runs `Layout()`, which ends by calling back with `skipRelayout` set -- that flag is the only thing stopping an infinite bounce, so do not remove it. The SELF BUFFS table now scrolls (`self.buffScrollView`/`self.buffScrollBar`, the same `ListBox` + `Lotro.ScrollBar` host as the skill table's `scrollView`/`tableScrollBar` -- see `BuildTable`'s comment) instead of the section growing to fit every tracked buff and silently dropping whatever didn't fit past the `BUFF_POOL` pool size or the space the window had -- `REDESIGN_SPEC.md` section 7 already called for this ("let the skill table shrink to its 150px floor first and the buff table scroll second"), it just wasn't wired up. `BuildBuffRow`'s container is unparented until `RefreshBuffSection`'s `ClearItems`/`AddItem` loop, mirroring `BuildTableRowSlot`'s own comment. |
 | `UI/AnalysisGraph.lua` | `Graph` -- the time plot, rewritten in v0.2.0 as a **line-and-dot plot**. Owns four stacked rows: the 150px plot, 0-3 charted buff lanes, the range slider, and the timeline + legend; `GraphHeightFor(laneCount)` is a plain global so `Analysis:Layout` can ask for the total before a Graph exists. **A diagonal is not drawable here** -- Turbine has no canvas or line primitive -- so each polyline step is an L: a horizontal run at the *midpoint* height plus a vertical riser at its right end, risers z-ordered *under* the runs so the joint has no seam. This is Option A from `GRAPH_RESEARCH.md`, deliberately the one with no unknowns; Option B (the undocumented `SetRotation`, which Gibberish3 does use but only at 0/90/180/270) would halve the Control count and needs a 7-item in-game probe first, and `DrawStep` is the only function that would change. Morale is a **background bar graph** (48 bars + 48 brighter 1px top edges, low-morale pair below `MORALE_DANGER`, guide lines at 100%/50%), replacing the old 22px dot lane; unsampled buckets carry the last known value forward, because a second in which you took no damage is not a second at 0 morale. **Hovering is one mouse-visible Control -- the plot ground -- not 48 zones on top of the data**: the old per-bucket zones hid the morale trace underneath them (found in-game, mechanism never pinned down), and putting the hover surface *behind* everything sidesteps that question entirely while relying only on the click-through behaviour `UI/Row.lua` already depends on. Pools: 2x(48 dots + 47 runs + 47 risers) + 96 morale + 3x24 lane segments, all built once. |
 
 **Two documented deviations from the mockup's literal pixel values**, both explained in

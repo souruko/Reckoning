@@ -74,6 +74,25 @@ check("plot: both series drew their runs", visibleRuns == 2 * (N - 1), "runs=" .
 check("plot: dots on odd buckets only (+endpoints)", visibleDots > 0 and visibleDots <= 2 * N,
   "dots=" .. visibleDots)
 
+-- 1b. every joint actually connects: riser[i]'s vertical span must bracket run[i+1]'s own
+-- height, for any data shape (a real bug: an earlier midpoint-anchored run left a gap on any
+-- 3-point monotonic ramp -- common in real combat data -- because the next run's height fell
+-- outside the previous riser's span; found from a user-reported screenshot of a disconnected,
+-- spiky-looking plot)
+local gaps = 0
+for slot = 1, 2 do
+  for i = 1, N - 2 do
+    local riser = g.vSeg[slot][i]
+    local nextRun = g.hSeg[slot][i + 1]
+    if riser:IsVisible() and nextRun:IsVisible() then
+      local _, rTop = riser:GetPosition(); local _, rH = riser:GetSize()
+      local _, nY = nextRun:GetPosition()
+      if nY < rTop or nY > rTop + rH then gaps = gaps + 1 end
+    end
+  end
+end
+check("plot: no gap between a riser and the next run (joints connect)", gaps == 0, "gaps=" .. gaps)
+
 -- 2. morale bars fill the plot, never overflow, never fall below 1px
 local barsVisible, barBad = 0, 0
 for i = 1, N do
@@ -190,6 +209,78 @@ local tx2 = select(1, g.tooltip.box:GetPosition())
 check("tooltip: last bucket does not push it off the right edge", tx2 + 160 <= 1200, "x=" .. tx2)
 g:HideTooltip()
 check("tooltip: hides", not g.tooltip.box:IsVisible())
+
+-- 8b. SliceSecondRange (SetData's own slice-index formula, inverted) partitions the whole
+-- session contiguously and without overlap -- if these two formulas ever drift apart, a
+-- bucket's tooltip would show skills from the wrong seconds.
+do
+  local prevTo = -1
+  local partitionOk = true
+  for i = 1, N do
+    local from, to = g:SliceSecondRange(i)
+    if from ~= prevTo + 1 or to < from then
+      partitionOk = false
+    end
+    prevTo = to
+  end
+  check("skills: SliceSecondRange partitions seconds contiguously, no gaps/overlaps", partitionOk)
+end
+
+-- 8c. per-bucket skill breakdown backs the tooltip (the actual feature: hovering a bucket lists
+-- which skills hit inside its second range)
+g:SetSeriesWithMorale({
+  { key = "taken", label = "Damage taken", colorHex = Theme.Hex.DamageTaken },
+}, true)
+g:SetData(session, true, nil)
+
+local bucketWithHits, bucketNoHits = nil, nil
+for i = 1, N do
+  if (g.slices[i].taken or 0) > 0 and bucketWithHits == nil then
+    bucketWithHits = i
+  elseif (g.slices[i].taken or 0) == 0 and bucketNoHits == nil then
+    bucketNoHits = i
+  end
+end
+check("skills: found a bucket with damage taken to test against", bucketWithHits ~= nil)
+
+if bucketWithHits ~= nil then
+  local skills = g:SkillsAt(bucketWithHits)
+  local sum = 0
+  for i = 1, table.getn(skills) do sum = sum + skills[i].total end
+  check("skills: SkillsAt total matches the bucket's own pooled value",
+    math.abs(sum - g.slices[bucketWithHits].taken) < 1e-6,
+    sum .. " vs " .. g.slices[bucketWithHits].taken)
+
+  local allHits = true
+  for i = 1, table.getn(skills) do
+    if skills[i].hits <= 0 then allHits = false end
+  end
+  check("skills: every entry has at least one real hit (avoided-only rows dropped)", allHits)
+
+  g:ShowTooltip(bucketWithHits)
+  check("skills: tooltip shows at least one skill line", g.tooltip.skillLines[1]:IsVisible()
+    and g.tooltip.skillLines[1]:GetText() ~= "")
+  local _, hitHeight = g.tooltip.box:GetSize()
+
+  if bucketNoHits ~= nil then
+    g:ShowTooltip(bucketNoHits)
+    check("skills: a quiet bucket shows no skill lines", not g.tooltip.skillLines[1]:IsVisible())
+    local _, quietHeight = g.tooltip.box:GetSize()
+    check("skills: tooltip box grows to fit the skill lines", hitHeight > quietHeight,
+      hitHeight .. " vs " .. quietHeight)
+  end
+
+  -- filtered agrees with the filtered bucket value the same way the pooled case does
+  local who = session:TopCounterpart("taken")
+  g:SetData(session, true, who)
+  local filteredSkills = g:SkillsAt(bucketWithHits)
+  local filteredSum = 0
+  for i = 1, table.getn(filteredSkills) do filteredSum = filteredSum + filteredSkills[i].total end
+  check("skills: filtered SkillsAt matches the filtered bucket value",
+    math.abs(filteredSum - (g.slices[bucketWithHits].taken or 0)) < 1e-6,
+    filteredSum .. " vs " .. (g.slices[bucketWithHits].taken or 0))
+  g:SetData(session, true, nil)
+end
 
 -- 9. filtered graph agrees with the session's own per-counterpart totals
 local who = session:TopCounterpart("taken")

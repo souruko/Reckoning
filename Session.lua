@@ -41,6 +41,7 @@ function Session:Constructor(startTime, startClock)
 	self.lastTaken = {}
 
 	self._activeSeconds = {}  -- [second offset] = true; ActiveSeconds() counts the keys
+	self._activeSecondsCount = 0  -- running count of the above, kept by Touch() -- see ActiveSeconds()
 
 	-- Append-only log of every accepted event, one compact record each, so the analysis
 	-- window's range slider can ask for "only seconds 34-71" -- self.agg is aggregated at
@@ -72,7 +73,12 @@ function Session:Touch(t)
 	if t > self.endTime then
 		self.endTime = t
 	end
-	self._activeSeconds[math.floor(t - self.startTime)] = true
+
+	local second = math.floor(t - self.startTime)
+	if self._activeSeconds[second] == nil then
+		self._activeSeconds[second] = true
+		self._activeSecondsCount = self._activeSecondsCount + 1
+	end
 
 	-- Any cached range slice is stale the moment a new event lands. Only ever happens while
 	-- the session is live -- a closed session's cache is permanent, so re-selecting the same
@@ -184,12 +190,24 @@ function Session:PushLastTaken(entry)
 	end
 end
 
+-- Called from AddTaken/AddTempMoraleLoss, i.e. from inside Turbine.Chat.Received's own handler
+-- (Events.lua has no pcall around its dispatch). An uncaught error here would abort the whole
+-- AddTaken call before the hit is ever logged to the row/bucket/event log -- the damage would
+-- silently vanish from tracking -- and could propagate out into the chat dispatch itself. Wrapped
+-- for the same reason as LiveMeter's CurrentTargetName(): _G.lp is a native handle captured once
+-- at load and never re-validated, and this is a real (if rarer) path to reading it.
 function Session:MoralePct()
-	local morale, maxMorale = _G.lp:GetMorale(), _G.lp:GetMaxMorale()
-	if morale == nil or maxMorale == nil or maxMorale <= 0 then
-		return nil
+	local ok, pct = pcall(function()
+		local morale, maxMorale = _G.lp:GetMorale(), _G.lp:GetMaxMorale()
+		if morale == nil or maxMorale == nil or maxMorale <= 0 then
+			return nil
+		end
+		return morale / maxMorale
+	end)
+	if ok then
+		return pct
 	end
-	return morale / maxMorale
+	return nil
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -276,11 +294,18 @@ end
 
 -- Seconds in which the player was actually acting. With a range, only the ones inside it --
 -- so a rate computed over a slider selection is still "total divided by the seconds you were
--- doing something", not "divided by wall-clock".
+-- doing something", not "divided by wall-clock". The unscoped case (fromSec == nil) is the one
+-- the live meter calls on every throttled refresh (10Hz) for the whole-fight rate -- Touch()
+-- keeps a running count for exactly this, so it doesn't rescan every active second in the fight
+-- on every tick; a ranged call still needs the real scan since the range varies per call.
 function Session:ActiveSeconds(fromSec, toSec)
+	if fromSec == nil then
+		return self._activeSecondsCount
+	end
+
 	local n = 0
 	for second in pairs(self._activeSeconds) do
-		if fromSec == nil or (second >= fromSec and second <= toSec) then
+		if second >= fromSec and second <= toSec then
 			n = n + 1
 		end
 	end
