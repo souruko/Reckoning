@@ -53,8 +53,10 @@ check("body still fits the client", 22 + select(2, m.body:GetSize()) <= 186 - 26
   tostring(22 + select(2, m.body:GetSize())))
 
 m:Refresh()
-check("headline shows the fight's damage",
-  m.valueLabel:GetText() == Format.Number(session:Total("done")), m.valueLabel:GetText())
+check("headline shows the fight's dps (swapped with the total per feedback)",
+  m.valueLabel:GetText() == Format.Rate(session:Rate("done")), m.valueLabel:GetText())
+check("headline corner shows the fight's damage total",
+  m.rateLabel:GetText() == Format.Number(session:Total("done")), m.rateLabel:GetText())
 check("headline number dropped to Verdana20", m.valueLabel._font == "Verdana20")
 check("sparkline has 30 pooled columns", #m.sparkColumns == 30)
 local lit, tallest = 0, 0

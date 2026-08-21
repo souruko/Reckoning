@@ -326,4 +326,5 @@ plugin.Unload = function(self)
 	Turbine.Shell.RemoveCommand(command)
 	Events.Shutdown()
 	Session.ShutdownMorale()
+	UI.LiveMeter.ShutdownTarget()
 end

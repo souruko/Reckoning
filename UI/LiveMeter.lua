@@ -37,16 +37,36 @@ local SPARK_BAR = 6      -- leaving 2px of air between columns
 -- (docs/DESIGN.md's table has a different second/stat/max meaning per tab, not a uniform one).
 ---------------------------------------------------------------------------------------------------
 
--- The one continuously-firing (10Hz, unconditional on combat state -- the live meter is
--- permanently on) call anywhere in this codebase that reads the live Turbine.Gameplay player
--- object with no pcall around it. Every other read of it either goes through Buffs.Read()'s
--- pcall (deliberate, see that file's header) or only fires rarely on a real combat/UI event.
--- `_G.lp` is captured once at plugin load (Main.lua) and never re-validated -- death -> release
--- spirit -> the zone-load transition is exactly the kind of moment a captured native handle is
--- most likely to be temporarily invalid or mid-transition, and this is the one call still firing
--- unthrottled straight through it. Wrapped the same way Buffs.lua already treats this exact risk:
--- fail safe to "no target" rather than let a thrown error propagate out of Refresh().
-local function CurrentTargetName()
+-- Used to be the one continuously-firing (10Hz, unconditional on combat state) call anywhere in
+-- this codebase that read the live Turbine.Gameplay player object -- LotRO's target API is
+-- reportedly expensive, so this no longer touches it from Refresh()/Update() at all. Instead it
+-- mirrors Session.lua's MoralePct cache exactly: hook the real TargetChanged event on _G.lp
+-- (confirmed real and fired with no useful payload, callback has to re-query -- VitalSelf/UI/
+-- Vital.lua hooks it the identical way, `self:Hook(_G.lp, "TargetChanged", function() ...
+-- _G.lp:GetTarget() ... end)`), and only touch the target API -- one GetTarget() to get the
+-- object, one GetName() on it -- when that event actually fires. Between changes, DoneLine()
+-- just reads the cached name: zero native target calls per render, zero per Update() tick.
+--
+-- _G.lp.TargetChanged is a single field slot, not a real multi-subscriber event -- other
+-- installed plugins (VitalTarget, PrimePlugins) hook the same field on the same LocalPlayer
+-- instance, confirmed by grep. CallField() chains onto whatever's already sitting there instead
+-- of clobbering it, same reasoning as Session.lua's MoraleChanged hook and Events.lua's
+-- previousChatReceived.
+local CachedTargetName = nil
+
+local function CallField(field, ...)
+	if field == nil then
+		return
+	elseif type(field) == "table" then
+		for i = 1, table.getn(field) do
+			field[i](...)
+		end
+	else
+		field(...)
+	end
+end
+
+local function RefreshTargetName()
 	local ok, name = pcall(function()
 		local target = _G.lp:GetTarget()
 		if target ~= nil and target.GetName ~= nil then
@@ -54,10 +74,26 @@ local function CurrentTargetName()
 		end
 		return nil
 	end)
-	if ok then
-		return name
+	CachedTargetName = ok and name or nil
+end
+
+local previousTargetChanged = _G.lp ~= nil and _G.lp.TargetChanged or nil
+
+RefreshTargetName()
+if _G.lp ~= nil then
+	_G.lp.TargetChanged = function(...) CallField(previousTargetChanged, ...); RefreshTargetName() end
+end
+
+-- Restores whatever was in the field slot before this file hooked it -- called from Main.lua's
+-- plugin.Unload, mirroring Session.ShutdownMorale().
+function LiveMeter.ShutdownTarget()
+	if _G.lp ~= nil then
+		_G.lp.TargetChanged = previousTargetChanged
 	end
-	return nil
+end
+
+local function CurrentTargetName()
+	return CachedTargetName
 end
 
 -- The "max" line is the one line with a second piece of text (the skill name) alongside its
@@ -439,8 +475,11 @@ function LiveMeter:Refresh()
 	local lines = PROVIDERS[self.activeTab](session)
 
 	self.captionLabel:SetText(lines.headline.caption)
-	self.valueLabel:SetText(lines.headline.value)
-	self.rateLabel:SetText(lines.headline.rate)
+	-- Swapped per feedback: the rate (DPS/HPS) is the prominent Verdana20 number now, the raw
+	-- total moves to the small LucidaConsole12 corner -- same headline shape for every tab, so
+	-- this swap applies uniformly across done/taken/healOut/healIn.
+	self.valueLabel:SetText(lines.headline.rate)
+	self.rateLabel:SetText(lines.headline.value)
 
 	local rows = { lines.second, lines.stat, lines.max }
 	for i = 1, 3 do
