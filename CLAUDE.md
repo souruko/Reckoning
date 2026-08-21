@@ -51,7 +51,7 @@ the player-facing version and `REDESIGN_SPEC.md` for the spec each piece came fr
 **There is now a real offline test suite: `tools/offline/`.** Unlike the original scratch harness
 (described below), it runs the **real** classes and the **real** `Main.lua` under a **real Lua
 5.1** interpreter against a `Turbine` stub built on this repo's own `class()` shim. `sh
-tools/offline/run.sh` runs 246 checks in about a second. It caught three genuine bugs during the
+tools/offline/run.sh` runs 335 checks in about a second. It caught three genuine bugs during the
 redesign that `luac -p` could not have: an index-base probe that could not actually distinguish a
 0-based from a 1-based `EffectList`, a `nil` layout constant reaching `SetPosition`, and the
 analysis window failing to adopt an already-archived session. **Run it before every in-game
@@ -293,6 +293,88 @@ neither existed before because nothing in this codebase had touched a text-entry
 **Not yet confirmed in-game**: whether the box actually accepts keyboard focus/typing, whether
 `TextChanged` fires per-keystroke as assumed (bufferless filtering depends on it), and whether
 `FocusGained`/`FocusLost` fire in a game window the way they do in LootLogs' distributed one.
+
+**Both tables are also sortable by every one of their columns** -- click a heading to sort by it,
+click the same heading again to reverse. Each header column is now a mouse-visible `Control`
+(`self.tableHeaderCells` / `self.buffHeaderCells`) with the header `Label` parented *inside* it and
+left mouse-invisible, so the column's 8px padding is clickable too and the cell can carry the
+`Theme.Hex.Hover` fill on `MouseEnter` -- the same hover-wrapper-around-a-mouse-invisible-child
+shape as `Frame`'s close button and the search box's clear glyph. That these receive clicks at all
+inside a **mouse-invisible parent** (`tableHeaderRow`/`buffTableHeader`) is not a new assumption:
+the picker chips (inside `pickerRow`) and the session-rail rows (inside `rail`) already work
+exactly that way in-game. The direction marker appended to the sorted column's label is ASCII
+`" ^"`/`" v"` (`SORT_ASC`/`SORT_DESC`), not the mock's Unicode triangles -- same reason the buff
+section's own caret is `"v"`/`">"`. First click is descending for numeric columns and ascending for
+name columns; the two sort states (`self.tableSort`/`self.buffSort`) are ephemeral like the search
+text, and their defaults reproduce exactly what each table used to hardcode (skill table TOTAL
+descending, buff table UPTIME % ascending, which is `Buffs.Stats`' own worst-uptime-first order).
+Three things worth knowing before touching this: every sort **value** is the number the cell
+actually displays (`TableSortValue`/`BuffSortValue`), so the order always matches what's on screen
+-- CRIT / DEV is one column showing two percentages, so it sorts on the combined crit+dev rate;
+both comparators carry a name/total tiebreak because `table.sort` needs a strict weak ordering or
+it can raise "invalid order function for sorting", and AVOID/HITS/CRIT tie constantly; and
+`RefreshTableColumns` resets the sort to TOTAL descending when the active view's column set doesn't
+contain the current sort key (AVOID is damage-only), so a heal view is never silently ordered by a
+column it doesn't show. Only the skill table's *sorting* changed -- the share bar is still scaled
+against the largest total in the list, not against the top row. Offline-verified (`analysis_test.lua`
+drives real `MouseClick` on both tables' header cells and checks the rendered column order,
+the marker moving between columns, the row count surviving a re-sort, and the AVOID fallback).
+**Not yet confirmed in-game**: only that the click actually lands on the header cell rather than
+somewhere else -- the precedent above is strong but is the same category of pattern-matched-not-
+proven as everything else in this section.
+
+**The analysis window's height cap, the skill/buff split, and the buff collapse toggle**, all one
+change per direct user request. (1) **Height** was capped at a hardcoded 880 -- it is now
+`MaxHeight()` in `UI/Analysis.lua`: the display's own height (`Turbine.UI.Display.GetHeight`,
+confirmed-working precedent in `FervourFocus/UI/SettingsPanel.lua` and `Darf/UI/framework.lua`,
+read through a `pcall` like every other native read here) less a 40px margin, falling back to the
+old constant if the read fails. `MIN_HEIGHT` stays 600, `MAX_WIDTH` stays 1440 -- only height was
+asked for. A saved size is re-clamped on load rather than restored verbatim, so a geometry saved
+on a bigger screen cannot open taller than the display it lands on. (2) **The skill table and the
+bottom row (SELF BUFFS + the two side panels) are now separated by a draggable splitter**
+(`BuildSplitter`/`SnapSplit`/`DragSplit`), which occupies the gap that already sat between them
+and so costs no vertical space. Drag shape is `RangeSlider`'s exactly -- press offset stored on
+`MouseDown`, `args.Y` re-read on `MouseMove` (relative to the handle, so it stays correct as the
+handle moves under a still-pressed mouse), cleared on `MouseUp` -- and the split **snaps to whole
+buff rows**, for the same reason the slider snaps to bucket stops: it keeps the row grid aligned
+and bounds how many full `Layout()` passes one drag can trigger to one per row crossed. Two
+things here are load-bearing and were both found by an offline check rather than by reading:
+`self.splitBottom` is the user's **preference** and `self.splitEffective` is what the window could
+actually give it last pass -- `Layout()` must never write the preference back, or one pass at a
+short window height silently overwrites the split for good and growing the window again doesn't
+restore it; and the clamp inside `SnapSplit` works in **whole rows**, not pixels, because a clamp
+landing on an arbitrary pixel height doesn't survive being snapped again next pass (it rounds to
+a neighbouring row, so shrink-then-grow lands somewhere the user never dragged to). Persisted as
+`windows.analysis.split`. (3) **The SELF BUFFS collapse toggle is gone** -- caret, `ToggleBuffSection`,
+`self.buffsOpen` and the `buffsOpen` setting -- since dragging the splitter to the bottom does the
+same job and the two were redundant. The section header is a plain, non-clickable label now, and
+`RefreshBuffSection` always lists every matching buff: the `ListBox` scrolls, so a short bottom row
+means scrolling, never dropped rows. That also took the buff row count out of `RefreshContent`'s
+shape-change relayout check (`layoutBuffRows`/`buffRowsWanted`, both removed) -- the block's height
+is the splitter's now, not its content's, so listing more buffs can no longer trigger a re-layout.
+**Confirmed in-game**: the splitter works exactly as intended.
+
+**The resize gripper was "extremely sensitive" in that same load, and the cause is worth knowing
+before writing another drag handler here.** Its `MouseMove` did `w = currentWidth + (args.X -
+pressOffsetX)` -- which is only an *increment* if the gripper itself moves to keep up. It didn't:
+the gripper's position was set in `Layout()` only, and `Layout()` is deliberately deferred to
+`MouseUp` (see the comment in `BuildResizeGripper` about not rebuilding table rows and 48 graph
+buckets on every drag tick). Because `args.X`/`args.Y` are measured **relative to the control**,
+a mouse held 40px from the press point reported the same +40 on every single move event, and each
+one added another 40px to the window -- so the window ran away from the pointer, faster the more
+events the client delivered. Fixed by moving `self.gripper:SetPosition(width - 12, height - 12)`
+out of `Layout()` and into `Analysis:Resize`, so it now happens on every resize, including the
+per-tick ones during a drag; the arithmetic is then a true increment and a stationary mouse adds
+nothing. **The general rule this establishes**: any drag handler in this codebase that reads
+`args.X`/`args.Y` off the dragged control must move that control inside the same `MouseMove`, or
+its deltas double-count. `RangeSlider` and the splitter both do (their handles are repositioned by
+the very call that consumes the delta), which is exactly why those two always tracked the mouse
+one-to-one while the gripper did not. `tools/offline/analysis_test.lua` section 17 pins this with
+a mouse model that reproduces the client's control-relative coordinates: with the fix reverted,
+three move events with the pointer *held still* drive the window from 920px to the 1040px cap.
+
+**Not yet confirmed in-game**: that `Turbine.UI.Display.GetHeight` returns the usable client
+height rather than something larger, and the re-tuned gripper drag itself.
 
 Two Design-token values `docs/DESIGN.md` names but never gives hex for (`--color-accent-200`,
 `-300`, `-500`, `-700`) were pulled directly from the mockup's own CSS custom properties and
@@ -589,7 +671,7 @@ and can freely reference `Frame`/`Bar`/`Row` bare since they're siblings in the 
 
 | `UI/DeathCause.lua` | `DeathCause` (extends `Frame`, `key = "deathCause"`, death-specific fill/border/header-rule colours) -- window 2. Fires from `Sessions.OnSelfDefeat`. "Last hit by" resolved by scanning `session.lastTaken` backward for the last `kind == "damage"` entry (temp-morale-loss rows don't carry an attacker). 5 pooled `Row` instances (never rebuilt), tinted per row: the killing-blow row's amount goes `DamageFatal`, temp-morale rows go `MutedText` end to end, everything else scales `DamageTaken`/`DamageSevere` off post-hit `moralePct`. Countdown is a `Bar`, `_G.settings.deathAutoHide` seconds (default 15) -- tracked as `self.remaining` (seconds left, decremented by real elapsed `dt` each `Update()` tick) rather than an absolute target timestamp, specifically so **pausing is just "skip subtracting this tick"**: `self.MouseEnter`/`self.MouseLeave` toggle `self.paused`, per direct feedback that hovering the window to read it shouldn't race the auto-hide closing it. Row time column widened (38px -> 46px) and format changed from one decimal (`"-3.7s"`) to whole seconds (`"-4s"`) per feedback that the times "seemed broken" -- most likely a width/overflow problem given the format itself checked out fine standalone, but the exact in-game rendering was never confirmed, so this is a defensive fix (shorter string, wider column) rather than a diagnosed-and-proven one; if it's still wrong, the underlying `entry.time - self.deathTime` computation itself is the next thing to check with a real capture, the way the `ChatType.Death` bug was found. The morale column is now a `Bar` per row (`self.moraleBars`, pooled) instead of a `Format.Percent` Label, matching the analysis window's own bar style per feedback. Depends on `UI/Row.lua`'s rows being mouse-invisible (`SetMouseVisible(false)`, changed from `true` -- nothing in a `Row` was ever individually clickable) so a row sitting over the window doesn't swallow the hover before it reaches the window's own `MouseEnter`/`MouseLeave`. **Unverified**: whether `Turbine.UI.Window.MouseEnter`/`.MouseLeave` fire based on the window's own bounds regardless of mouse-invisible children on top (assumed, consistent with how mouse-invisible children behave for click-through elsewhere, but not confirmed for Enter/Leave specifically) -- if hover-pause doesn't trigger in-game, check this first. |
 
-| `UI/Analysis.lua` | `Analysis` (extends `Frame`, `key = "analysis"`, resizable 1080x820, min 1080x600, max 1440x880) -- window 3, redesigned in v0.2.0. Session rail (unchanged), 4 view tabs in **damage-pair-then-healing-pair** order (`done`/`taken`/`healOut`/`healIn`) with centred labels, picker chips, 5 KPI cards, the graph block, the skill table at **full content width**, then the SELF BUFFS table and the two 233px side panels sharing the bottom row. `RESET RANGE` and the range chip live in `Frame`'s own header. State: `viewTab`, `filter[view]`, `selectedSession`, `rangeFrom`/`rangeTo`, `charted` (ordered, max 3), `buffsOpen`. **Everything is range-scoped through one `Session:Slice` per refresh** -- KPIs, table, both panels and the buff table are all fed from that single result, never from their own separate passes. `Layout()` and `RefreshContent()` call each other exactly once each: `RefreshContent` detects that the charted-lane or buff-row count changed shape, sets `laneCountWanted`/`buffRowsWanted` and re-runs `Layout()`, which ends by calling back with `skipRelayout` set -- that flag is the only thing stopping an infinite bounce, so do not remove it. The SELF BUFFS table now scrolls (`self.buffScrollView`/`self.buffScrollBar`, the same `ListBox` + `Lotro.ScrollBar` host as the skill table's `scrollView`/`tableScrollBar` -- see `BuildTable`'s comment) instead of the section growing to fit every tracked buff and silently dropping whatever didn't fit past the `BUFF_POOL` pool size or the space the window had -- `REDESIGN_SPEC.md` section 7 already called for this ("let the skill table shrink to its 150px floor first and the buff table scroll second"), it just wasn't wired up. `BuildBuffRow`'s container is unparented until `RefreshBuffSection`'s `ClearItems`/`AddItem` loop, mirroring `BuildTableRowSlot`'s own comment. |
+| `UI/Analysis.lua` | `Analysis` (extends `Frame`, `key = "analysis"`, resizable 1080x820, min 1080x600, max 1440 wide by the display's own height less 40px -- see `MaxHeight()`) -- window 3, redesigned in v0.2.0. Session rail (unchanged), 4 view tabs in **damage-pair-then-healing-pair** order (`done`/`taken`/`healOut`/`healIn`) with centred labels, picker chips, 5 KPI cards, the graph block, the skill table at **full content width**, then the SELF BUFFS table and the two 233px side panels sharing the bottom row. `RESET RANGE` and the range chip live in `Frame`'s own header. State: `viewTab`, `filter[view]`, `selectedSession`, `rangeFrom`/`rangeTo`, `charted` (ordered, max 3), `tableSort`/`buffSort`, `splitBottom` (the user's skill/buff split; `splitEffective` is what the window could give it). **Everything is range-scoped through one `Session:Slice` per refresh** -- KPIs, table, both panels and the buff table are all fed from that single result, never from their own separate passes. `Layout()` and `RefreshContent()` call each other exactly once each: `RefreshContent` detects that the charted-lane or picker-row count changed shape, sets `laneCountWanted` and re-runs `Layout()`, which ends by calling back with `skipRelayout` set -- that flag is the only thing stopping an infinite bounce, so do not remove it. The SELF BUFFS table now scrolls (`self.buffScrollView`/`self.buffScrollBar`, the same `ListBox` + `Lotro.ScrollBar` host as the skill table's `scrollView`/`tableScrollBar` -- see `BuildTable`'s comment) instead of the section growing to fit every tracked buff and silently dropping whatever didn't fit past the `BUFF_POOL` pool size or the space the window had -- `REDESIGN_SPEC.md` section 7 already called for this ("let the skill table shrink to its 150px floor first and the buff table scroll second"), it just wasn't wired up. `BuildBuffRow`'s container is unparented until `RefreshBuffSection`'s `ClearItems`/`AddItem` loop, mirroring `BuildTableRowSlot`'s own comment. **The target/source picker wraps** (`RefreshPicker`/`FlowChips`): chips used to flow left-to-right off the right edge of the content column with no wrap, cap or clip, which at ~5 chips per row (848px at min width, `ChipWidth` is `16 + chars*7`) made every target past the fifth unreachable in any fight with more than a handful of enemies. Now: labels truncate to `PICKER_MAX_CHARS` on a **character** boundary (`TruncateChip`/`CharCount` count UTF-8 lead bytes by hand -- Lua 5.1 has no `utf8` library and mob names carry accented characters; the marker is ASCII `..`, not `…`, per the pin-glyph lesson above), chips flow into at most 2 rows, and the remainder folds into a trailing `+N more` chip that expands the picker to at most `PICKER_ROWS_EXPANDED` (5) rows with a `less` chip to fold it back. `pickerExpanded` is ephemeral and resets on view/session change. Row count feeds the same shape-change relayout path as lanes/buff rows (`pickerRowsWanted`/`layoutPickerRows`), and `Layout()` re-runs `RefreshPicker` itself before sizing the row so a resize that changes the chips-per-row count can't leave the geometry a pass behind. Chip **labels** are truncated but chip **values** stay the full name -- filtering matches on the value, so a shortened label never breaks the filter (offline-checked). |
 | `UI/AnalysisGraph.lua` | `Graph` -- the time plot, rewritten in v0.2.0 as a **line-and-dot plot**. Owns four stacked rows: the 150px plot, 0-3 charted buff lanes, the range slider, and the timeline + legend; `GraphHeightFor(laneCount)` is a plain global so `Analysis:Layout` can ask for the total before a Graph exists. **A diagonal is not drawable here** -- Turbine has no canvas or line primitive -- so each polyline step is an L: a horizontal run at the *midpoint* height plus a vertical riser at its right end, risers z-ordered *under* the runs so the joint has no seam. This is Option A from `GRAPH_RESEARCH.md`, deliberately the one with no unknowns; Option B (the undocumented `SetRotation`, which Gibberish3 does use but only at 0/90/180/270) would halve the Control count and needs a 7-item in-game probe first, and `DrawStep` is the only function that would change. Morale is a **background bar graph** (48 bars + 48 brighter 1px top edges, low-morale pair below `MORALE_DANGER`, guide lines at 100%/50%), replacing the old 22px dot lane; unsampled buckets carry the last known value forward, because a second in which you took no damage is not a second at 0 morale. **Hovering is one mouse-visible Control -- the plot ground -- not 48 zones on top of the data**: the old per-bucket zones hid the morale trace underneath them (found in-game, mechanism never pinned down), and putting the hover surface *behind* everything sidesteps that question entirely while relying only on the click-through behaviour `UI/Row.lua` already depends on. Pools: 2x(48 dots + 47 runs + 47 risers) + 96 morale + 3x24 lane segments, all built once. |
 
 **Two documented deviations from the mockup's literal pixel values**, both explained in
@@ -694,7 +776,14 @@ Follow the `VitalSelf` pattern: `Turbine.PluginData.Save(Turbine.DataScope.Chara
 - Read new keys defensively; existing saves will not have them (`DEFAULTS` merge in
   `Settings.Load()`).
 - Sessions are **not** persisted (`docs/DESIGN.md` "Session model"). Persist: window
-  positions/size, `liveTab`, `deathAutoHide`, `buffsOpen`, `chartedBuffs`, `buffIgnore`.
+  positions/size, the analysis window's splitter position (`windows.analysis.split`), `liveTab`,
+  `deathAutoHide`, `chartedBuffs`, `buffIgnore`. (`buffsOpen` was removed along with the buff
+  section's collapse toggle -- see the splitter note in Build status.)
+- Everything a window persists lives in one `_G.settings.windows[key]` table, so anything writing
+  to it must **mutate** that table rather than replace it. `Frame`'s header-drag handler used to do
+  `_G.settings.windows[key] = { left = left, top = top }`, which silently threw away the analysis
+  window's saved `width`/`height` (and now `split`) every single time the window was dragged --
+  fixed, but the shape is easy to reintroduce.
 - `chartedBuffs` is an ordered list of buff **names**, never colours -- a charted buff's lane
   colour is derived from its position in that list at render time, so no `Turbine.UI.Color` ever
   reaches `PluginData`. `buffIgnore` is a `[name] = true` set. Both are table-valued defaults and
@@ -722,7 +811,7 @@ Follow the `VitalSelf` pattern: `Turbine.PluginData.Save(Turbine.DataScope.Chara
 ## Testing
 
 **Run `sh tools/offline/run.sh` before every in-game load** (needs `lua5.1`; see
-`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 246
+`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 335
 checks against the real classes and the real `Main.lua`. It is not a substitute for loading the
 plugin -- it cannot tell you whether anything actually *draws* -- but everything it catches is a
 reload you don't have to spend.

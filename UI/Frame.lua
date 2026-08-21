@@ -221,7 +221,16 @@ function Frame:WireDrag()
 		if args.Button == Turbine.UI.MouseButton.Left then
 			frame.dragging = false
 			local left, top = frame:GetPosition()
-			_G.settings.windows[frame.windowKey] = { left = left, top = top }
+			-- Mutate the saved entry rather than replacing it: the analysis window keeps its
+			-- size and its splitter position in the same table, and replacing it wholesale
+			-- silently threw both away every time the window was dragged.
+			local saved = _G.settings.windows[frame.windowKey]
+			if saved == nil then
+				saved = {}
+				_G.settings.windows[frame.windowKey] = saved
+			end
+			saved.left = left
+			saved.top = top
 			Settings.Save()
 		end
 	end

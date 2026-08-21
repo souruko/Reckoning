@@ -119,6 +119,13 @@ Turbine = {
 		ListBox = ListBox,
 		TextBox = Control,
 		Color = function(r, g, b, a) return { R = r, G = g, B = b, A = a } end,
+		-- A 1920x1080 screen, so Analysis's MaxHeight() (which reads GetHeight through a pcall)
+		-- has something real to clamp against instead of falling back to its old constant.
+		Display = {
+			GetWidth = function() return 1920 end,
+			GetHeight = function() return 1080 end,
+			GetSize = function() return 1920, 1080 end,
+		},
 		ContentAlignment = {
 			TopLeft = 1, TopCenter = 2, TopRight = 3,
 			MiddleLeft = 4, MiddleCenter = 5, MiddleRight = 6,

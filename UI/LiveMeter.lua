@@ -241,9 +241,14 @@ function LiveMeter:BuildAnalysisButton()
 
 	-- `analysis` is a root-level global (Main.lua) constructed after LiveMeter -- read at click
 	-- time, not captured here, so construction order between the two windows doesn't matter.
+	-- Toggles: a second click closes the window it opened.
 	button.MouseClick = function()
-		analysis:SetVisible(true)
-		analysis:Activate()
+		if analysis:IsVisible() then
+			analysis:SetVisible(false)
+		else
+			analysis:SetVisible(true)
+			analysis:Activate()
+		end
 	end
 	button.MouseEnter = function() button:SetForeColor(Theme.Color(Theme.Hex.Accent200)) end
 	button.MouseLeave = function() button:SetForeColor(Theme.Color(Theme.Hex.DimText)) end

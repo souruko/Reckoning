@@ -47,11 +47,11 @@ if not ok then os.exit(1) end
 check("all three windows constructed", liveMeter ~= nil and deathCause ~= nil and analysis ~= nil)
 check("options panel constructed", optionsPanel ~= nil)
 check("LocalPlayer.name monkey-patched", LocalPlayer.name == "Luxtheninth")
-check("version is 0.2.0 in Constants", Reckoning.Version == "0.2.0")
+check("version is 0.3.0 in Constants", Reckoning.Version == "0.3.0")
 check("Buffs global exists before Events", Buffs ~= nil and Buffs.PollInterval == 0.25)
 check("new settings defaults merged",
-  _G.settings.buffsOpen == true and type(_G.settings.chartedBuffs) == "table"
-  and type(_G.settings.buffIgnore) == "table")
+  type(_G.settings.chartedBuffs) == "table" and type(_G.settings.buffIgnore) == "table")
+check("the removed buff-collapse setting is gone", DEFAULTS.buffsOpen == nil)
 
 -- table-valued defaults must be fresh copies, not aliases of DEFAULTS
 _G.settings.chartedBuffs[1] = "Poisoned Default"

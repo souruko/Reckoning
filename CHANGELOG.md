@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.3.0 - unreleased
+
+**Search boxes on the skill table and the self-buff table.** Type any part of a skill, damage type,
+attacker or buff name to narrow the list down to matching rows.
+
+**Both tables sort by any column.** Click a heading to sort by it, click the same heading again to
+reverse the order.
+
+**A draggable splitter between the skill table and the SELF BUFFS row.** Drag it to give either
+section more room, and it remembers where you put it. The buff section's collapse arrow is gone --
+dragging the splitter to the bottom does the same job.
+
+**The analysis window can now be as tall as your screen**, instead of stopping at a fixed height.
+
+**Escape closes a window**, same as clicking its close button.
+
+**Window buttons are proper icons now** -- the close button, the session pins and the search box's
+magnifying glass and clear button were all plain text characters before.
+
+**Live meter:** the big headline number is your damage or healing per second now, with the raw
+total moved to the small line in the corner -- they used to be the other way round. The button
+that opens the analysis window also closes it again on a second click.
+
+**Self-buffs are listed worst uptime first**, so the ones you let drop are at the top instead of
+buried under everything you held at 100%.
+
+**Fixed: targets past the fifth were unreachable in the analysis window's picker.** In a fight with
+more than a handful of enemies the chips ran off the right-hand edge of the window with no way to
+get at them. They now wrap onto two rows with a "+N more" chip that opens up the rest, and long
+names are shortened to fit.
+
+**Fixed: the resize gripper was wildly oversensitive** -- dragging the corner made the window run
+away from the pointer instead of following it.
+
+**Fixed: dragging a window threw away its saved size** -- and the analysis window's splitter
+position along with it -- every single time.
+
+**Fixed: the game could stall for seconds around a death, and got laggier the longer you played.**
+The live meter was asking the game for your current target ten times a second, and your morale was
+re-read from scratch on every hit you took; both are now only updated when they actually change. A
+single bad combat chat line can also no longer break combat tracking for the rest of a fight.
+
 ## 0.2.0 - unreleased
 
 The analysis window gets a redesign.

@@ -106,7 +106,7 @@ check("CloseSession closes every open interval", not openLeft)
 
 local rows = Buffs.Stats(s, nil, nil)
 check("Stats returns a row per tracked buff", #rows == 2, "#rows=" .. #rows)
-check("Stats sorted by uptime, highest first", rows[1].uptimePct >= rows[2].uptimePct)
+check("Stats sorted by uptime, lowest first", rows[1].uptimePct <= rows[2].uptimePct)
 local byName = {}; for _, r in ipairs(rows) do byName[r.name] = r end
 local writ, guard = byName["Writ of Health"], byName["Bracing Guard"]
 -- Expected values carry the poll's inherent quarter-second granularity: a drop is only

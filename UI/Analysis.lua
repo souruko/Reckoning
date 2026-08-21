@@ -5,7 +5,9 @@
 --
 -- The content column is 848px wide at the minimum window size (1080 - 208 rail - 2x12 padding),
 -- which is exactly the width every number in the redesign mock was measured against. Blocks
--- stack: tab strip + goal line (30), picker chips (22), 5 KPI cards (50), the graph block
+-- stack: tab strip + goal line (30), picker chips (22 per row, 1-2 rows unless expanded -- see
+-- RefreshPicker; every block below shifts down by whatever extra rows claim), 5 KPI cards (50),
+-- the graph block
 -- (plot + charted buff lanes + range slider + timeline + legend, see UI/AnalysisGraph.lua),
 -- the skill table at full content width, then the SELF BUFFS table and the two side panels
 -- sharing the bottom row.
@@ -17,7 +19,7 @@
 --    whole point of the resize gripper existing on this window and not the other two. Bucket
 --    COUNT stays fixed at 48 (docs/IMPLEMENTATION_PLAN.md); bucket width scales instead. The two
 --    side panels keep their 233px so the buff table gets every pixel the window gains.
---  - The 5 KPIs are one uniform shape across all four views (total+rate, hits/heals+skill count,
+--  - The 5 KPIs are one uniform shape across all four views (rate+total, hits/heals+skill count,
 --    crit/dev%, largest+skill, active-or-range time) rather than bespoke per view --
 --    docs/DESIGN.md specifies "five KPIs" per view without dictating their exact content.
 --
@@ -31,11 +33,27 @@
 Analysis = class(Frame)
 
 local MIN_WIDTH, MIN_HEIGHT = 1080, 600
-local MAX_WIDTH, MAX_HEIGHT = 1440, 880
--- The redesign's own stack (buff section open, 2 lanes charted, 9 skill rows) comes to ~851px,
--- so a new install opens tall enough to show all of it. MIN_HEIGHT stays at 600 for anyone on a
--- short screen -- the skill table shrinks and scrolls first, the buff table second.
+local MAX_WIDTH = 1440
+-- The redesign's own stack (2 lanes charted, 9 skill rows) comes to ~851px, so a new install
+-- opens tall enough to show all of it. MIN_HEIGHT stays at 600 for anyone on a short screen --
+-- the skill table shrinks and scrolls first, the buff table second.
 local DEFAULT_HEIGHT = 820
+
+-- Height used to be capped at a hardcoded 880, which is shorter than the screen this plugin
+-- actually runs on -- the cap is the display's own height now, less a margin so the window can
+-- never be dragged taller than the screen it lives on. Read through a pcall like every other
+-- native read in this codebase, falling back to the old constant; Turbine.UI.Display.GetHeight
+-- is confirmed-working precedent (FervourFocus/UI/SettingsPanel.lua, Darf/UI/framework.lua).
+local FALLBACK_MAX_HEIGHT = 880
+local SCREEN_MARGIN = 40
+
+local function MaxHeight()
+	local ok, height = pcall(function() return Turbine.UI.Display.GetHeight() end)
+	if ok and type(height) == "number" and height > 0 then
+		return math.max(MIN_HEIGHT, height - SCREEN_MARGIN)
+	end
+	return FALLBACK_MAX_HEIGHT
+end
 
 local RAIL_WIDTH = 208
 local HEADER_HEIGHT = 32
@@ -45,6 +63,16 @@ local GAP = 11
 local PAD = 12
 local KPI_ROW_HEIGHT = 50
 local PICKER_HEIGHT = 22
+-- The picker wraps rather than running off the content column's right edge. Two rows is what it
+-- shows unprompted; clicking the trailing "+N more" chip opens it up to PICKER_ROWS_EXPANDED,
+-- which at the minimum window width is room for roughly 30 names -- past that the tail (always
+-- the smallest contributors, since chips are sorted by total descending) is dropped rather than
+-- pushing the graph off the bottom of the window.
+local PICKER_ROW_GAP = 4
+local PICKER_ROWS_COLLAPSED = 2
+local PICKER_ROWS_EXPANDED = 5
+local PICKER_CHIP_GAP = 6
+local PICKER_MAX_CHARS = 16
 local ROW_HEIGHT = 22
 local RAIL_ROW_HEIGHT = 34
 local PIN_SIZE = 12
@@ -69,22 +97,22 @@ local VIEWS = { "done", "taken", "healOut", "healIn" }
 local VIEW_META = {
 	done = {
 		label = "Damage done", question = "Which skills carried it, against whom",
-		pickerLabel = "targets", hitWord = "hits", color = Theme.Hex.DamageDone,
+		pickerLabel = "targets", hitWord = "hits", rateWord = "DPS", color = Theme.Hex.DamageDone,
 		shape = "damage", counterpartHeader = "TYPE",
 	},
 	taken = {
 		label = "Damage taken", question = "What hit you, what got through",
-		pickerLabel = "sources", hitWord = "hits", color = Theme.Hex.DamageTaken,
+		pickerLabel = "sources", hitWord = "hits", rateWord = "DPS", color = Theme.Hex.DamageTaken,
 		shape = "damage", counterpartHeader = "TYPE",
 	},
 	healOut = {
 		label = "Healing done", question = "Self-sustain and group contribution",
-		pickerLabel = "recipients", hitWord = "heals", color = Theme.Hex.HealingDone,
+		pickerLabel = "recipients", hitWord = "heals", rateWord = "HPS", color = Theme.Hex.HealingDone,
 		shape = "heal", counterpartHeader = "TO",
 	},
 	healIn = {
 		label = "Healing taken", question = "Did healers keep pace",
-		pickerLabel = "casters", hitWord = "heals", color = Theme.Hex.HealingTaken,
+		pickerLabel = "casters", hitWord = "heals", rateWord = "HPS", color = Theme.Hex.HealingTaken,
 		shape = "heal", counterpartHeader = "FROM",
 	},
 }
@@ -121,15 +149,25 @@ local MAX_TABLE_COLUMNS = 7
 
 -- [chart box 22][icon 24][name 190][uptime % 98][uptime 90][apps 74][longest gap 106] = 604,
 -- which is exactly the content width minus the two side panels and their gap.
+--
+-- `sortable` marks the five real data columns; the checkbox and icon gutters are not data and
+-- get no click target (the BUFF header already spans the icon column, so clicking there sorts
+-- by name).
 local BUFF_COLUMNS = {
 	{ key = "check", width = 22,  label = "" },
 	{ key = "icon",  width = 24,  label = "" },
-	{ key = "name",  width = 190, label = "BUFF" },
-	{ key = "pct",   width = 98,  label = "UPTIME %",    numeric = true },
-	{ key = "up",    width = 90,  label = "UPTIME",      numeric = true },
-	{ key = "apps",  width = 74,  label = "APPS",        numeric = true },
-	{ key = "gap",   width = 106, label = "LONGEST GAP", numeric = true },
+	{ key = "name",  width = 190, label = "BUFF",                       sortable = true },
+	{ key = "pct",   width = 98,  label = "UPTIME %",    numeric = true, sortable = true },
+	{ key = "up",    width = 90,  label = "UPTIME",      numeric = true, sortable = true },
+	{ key = "apps",  width = 74,  label = "APPS",        numeric = true, sortable = true },
+	{ key = "gap",   width = 106, label = "LONGEST GAP", numeric = true, sortable = true },
 }
+
+-- Appended to the header text of whichever column the table is currently sorted by. ASCII, not
+-- the mock's Unicode triangles -- the session rail's pin diamonds already proved this (this
+-- client's fonts render U+25B4/25BE as "?").
+local SORT_ASC = " ^"
+local SORT_DESC = " v"
 
 local BUFF_GOOD_UPTIME = 0.75
 local BUFF_POOR_UPTIME = 0.35
@@ -145,6 +183,19 @@ local AVOID_NAMES = {
 local SEARCH_HEIGHT = 20
 local SEARCH_WIDTH = 190
 local SEARCH_ICON = 16
+
+-- The draggable split between the skill table and the bottom row (SELF BUFFS + the two side
+-- panels). BOTTOM_MIN is the bottom row's own chrome -- section header, search box, column
+-- header -- with no buff rows showing at all; everything above that is whole buff rows, which
+-- is what a drag snaps to. Same reasoning as RangeSlider snapping to bucket stops rather than
+-- pixels: it keeps the row grid aligned and bounds how many distinct splits one drag can ask
+-- Layout() for. TABLE_MIN is the skill table's own floor, so the splitter can never be dragged
+-- far enough down to leave no skill rows at all.
+local BOTTOM_MIN = BUFF_HEADER_HEIGHT + 1 + SEARCH_HEIGHT + BUFF_TABLE_HEADER_HEIGHT
+local DEFAULT_SPLIT = BOTTOM_MIN + 6 * BUFF_ROW_HEIGHT
+local TABLE_MIN = SEARCH_HEIGHT + ROW_HEIGHT * 3
+local SPLITTER_HEIGHT = GAP -- the band between the two blocks, which the handle now occupies
+local SPLITTER_GRIP = 2     -- the visible rule inside it
 
 -- Plain substring match, case-insensitive -- `string.find(..., true)` (plain mode) so a name
 -- with pattern-magic characters in it (unlikely in a skill/buff name, but free to guard) can't
@@ -183,6 +234,12 @@ function Analysis:Constructor()
 	self.tableFilterText = ""
 	self.buffFilterText = ""
 
+	-- Column sort, one state per table, also ephemeral. The defaults reproduce exactly what
+	-- each table used to hardcode: the skill table by TOTAL descending, the buff table by
+	-- UPTIME % ascending (Buffs.Stats' own "worst uptime first" order -- see Buffs.lua).
+	self.tableSort = { key = "total", ascending = false }
+	self.buffSort = { key = "pct", ascending = true }
+
 	self.bucketCount = GraphBucketCount()
 	self.rangeFrom = 1
 	self.rangeTo = self.bucketCount
@@ -198,15 +255,27 @@ function Analysis:Constructor()
 			end
 		end
 	end
-	self.buffsOpen = (_G.settings.buffsOpen ~= false)
+	-- How much height the bottom row (SELF BUFFS + the two side panels) gets; the skill table
+	-- takes what is left. The user drags the splitter between them to change it, so it is a real
+	-- persisted preference rather than something derived from how many buffs a fight tracked.
+	-- Overwritten below if this window has a saved split. Snapped to whole buff rows -- see
+	-- SnapSplit.
+	self.splitBottom = DEFAULT_SPLIT
 
 	-- What the last Layout() sized the variable-height blocks for. RefreshContent compares
 	-- against these and re-runs Layout only when the shape actually changed, which is what stops
-	-- the two from calling each other forever.
+	-- the two from calling each other forever. The buff table is no longer in this set: its
+	-- height is the splitter's now, not its row count's, so listing more buffs only ever means
+	-- more scrolling, never a re-layout.
 	self.layoutLanes = -1
-	self.layoutBuffRows = -1
+	self.layoutPickerRows = -1
 	self.laneCountWanted = 0
-	self.buffRowsWanted = 0
+	self.pickerRowsWanted = 1
+
+	-- Whether the picker is showing every chip or just the first two rows' worth. Ephemeral like
+	-- viewTab/filter, and reset whenever the view or session changes -- "show me all 14 sources"
+	-- is an answer to one question, not a standing preference.
+	self.pickerExpanded = false
 
 	self:BuildHeaderExtras()
 	self:BuildSessionRail()
@@ -220,7 +289,14 @@ function Analysis:Constructor()
 
 	local saved = _G.settings.windows[self.windowKey]
 	if saved ~= nil and saved.width ~= nil and saved.height ~= nil then
-		self:Resize(saved.width, saved.height)
+		-- Re-clamped rather than restored verbatim: a size saved on a bigger screen (or before
+		-- the cap moved) must not open taller than the display it is being restored onto.
+		local w = math.max(MIN_WIDTH, math.min(MAX_WIDTH, saved.width))
+		local h = math.max(MIN_HEIGHT, math.min(MaxHeight(), saved.height))
+		self:Resize(w, h)
+	end
+	if saved ~= nil and type(saved.split) == "number" then
+		self.splitBottom = saved.split
 	end
 
 	-- SelectView before Layout: it only needs self.viewTab/self.filter (already set above) and
@@ -320,7 +396,7 @@ function Analysis:RefreshHeaderExtras()
 	self.resetButton:SetForeColor(Theme.Color(full and Theme.Hex.Disabled or Theme.Hex.Accent200))
 end
 
--- Chrome resize plus the two header widgets Frame knows nothing about.
+-- Chrome resize plus the two header widgets Frame knows nothing about, and the gripper.
 function Analysis:Resize(width, height)
 	Frame.Resize(self, width, height)
 	if self.titleLabel ~= nil then
@@ -329,12 +405,20 @@ function Analysis:Resize(width, height)
 	if self.resetButton ~= nil then
 		self:LayoutHeaderExtras()
 	end
+	-- The gripper has to follow the corner on EVERY resize, not just in Layout(): a drag reads
+	-- mouse coordinates relative to the gripper, so leaving it behind while the window grows
+	-- makes every move event re-apply the whole offset from the press point. See the long note
+	-- in BuildResizeGripper.
+	if self.gripper ~= nil then
+		self.gripper:SetPosition(width - 12, height - 12)
+	end
 end
 
 -- Back to the shipped size and position, for /reck reset.
 function Analysis:ResetGeometry()
 	self:Resize(MIN_WIDTH, DEFAULT_HEIGHT)
 	self:SetPosition(200, 200)
+	self.splitBottom = DEFAULT_SPLIT
 	self:Layout()
 end
 
@@ -535,6 +619,7 @@ function Analysis:SelectSession(session)
 		return
 	end
 	self.selectedSession = session
+	self.pickerExpanded = false
 	self:ResetRange()
 	self:RefreshRail()
 	self:RefreshContent()
@@ -555,6 +640,7 @@ function Analysis:BuildContentArea()
 	self:BuildKpiRow()
 	self:BuildGraphArea()
 	self:BuildTable()
+	self:BuildSplitter()
 	self:BuildBuffSection()
 	self:BuildPanels()
 end
@@ -638,14 +724,85 @@ function Analysis:BuildPicker()
 	self.pickerChips = {}
 end
 
+-- Character count, not byte count: mob names carry accented characters (Utûgi, Rúadh) that are
+-- two bytes each in the UTF-8 the client hands the parser, and counting those twice would both
+-- over-estimate the chip's width and truncate the name earlier than asked. Lua 5.1 has no utf8
+-- library, so the lead-byte ranges are counted by hand.
+local function CharCount(text)
+	local n = string.len(text)
+	local i, chars = 1, 0
+	while i <= n do
+		local b = string.byte(text, i)
+		local size = 1
+		if b >= 240 then size = 4
+		elseif b >= 224 then size = 3
+		elseif b >= 192 then size = 2 end
+		chars = chars + 1
+		i = i + size
+	end
+	return chars
+end
+
+-- Truncate on a character boundary, never mid-sequence (a half-written UTF-8 character renders
+-- as garbage). The marker is ASCII ".." rather than a "…": this client's fonts have already been
+-- caught missing Geometric Shapes glyphs (the session rail's old pin diamonds rendered as "?").
+local function TruncateChip(text)
+	local n = string.len(text)
+	local i, chars = 1, 0
+	while i <= n do
+		local b = string.byte(text, i)
+		local size = 1
+		if b >= 240 then size = 4
+		elseif b >= 224 then size = 3
+		elseif b >= 192 then size = 2 end
+		if chars >= PICKER_MAX_CHARS - 2 then
+			return string.sub(text, 1, i - 1) .. ".."
+		end
+		chars = chars + 1
+		i = i + size
+	end
+	return text
+end
+
 local function ChipWidth(text)
-	return 16 + string.len(text) * 7
+	return 16 + CharCount(text) * 7
+end
+
+-- Greedy left-to-right flow into at most `maxRows` rows, `reserve` px kept free at the end of the
+-- last row for the "+N more"/"less" chip. Returns one { x, row, w } per chip that fit, how many
+-- did not, and where the last row left off (so the trailing chip can be placed there).
+--
+-- A chip wider than the whole row is placed anyway rather than dropped -- a clipped name is still
+-- clickable and still says which target it is; a missing one is just gone.
+local function FlowChips(labels, width, maxRows, reserve)
+	local placed = {}
+	local x, row = 0, 1
+	for i = 1, table.getn(labels) do
+		local w = ChipWidth(labels[i])
+		local limit = width
+		if row == maxRows then limit = width - reserve end
+
+		if x > 0 and x + w > limit then
+			if row >= maxRows then
+				return placed, table.getn(labels) - (i - 1), x, row
+			end
+			row = row + 1
+			x = 0
+		end
+
+		placed[i] = { x = x, row = row, w = w }
+		x = x + w + PICKER_CHIP_GAP
+	end
+	return placed, 0, x, row
 end
 
 function Analysis:RefreshPicker()
 	for i = 1, table.getn(self.pickerChips) do
 		self.pickerChips[i].control:SetVisible(false)
+		self.pickerChips[i].isMore = false
 	end
+
+	self.pickerRowsWanted = 1
 
 	local session = self.selectedSession
 	if session == nil then
@@ -668,35 +825,66 @@ function Analysis:RefreshPicker()
 	-- because of a leading nil hole silently overwrites that slot instead of appending after
 	-- it (confirmed live: it shifted every chip's filter value one position off from its
 	-- label, so clicking a chip filtered by a *different* target than the one shown).
+	-- The label is what the chip shows (truncated to fit); the value is the real, untruncated name
+	-- the filter matches on. They are deliberately separate -- filtering by a shortened name would
+	-- match nothing at all.
 	local labels = { "All " .. meta.pickerLabel }
 	local values = {}
 	for i = 1, table.getn(names) do
-		labels[i + 1] = names[i]
+		labels[i + 1] = TruncateChip(names[i])
 		values[i + 1] = names[i]
 	end
 
-	local x = 0
-	for i = 1, table.getn(labels) do
-		local chip = self.pickerChips[i]
-		if chip == nil then
-			chip = self:BuildPickerChip()
-			self.pickerChips[i] = chip
-		end
+	local width = self.pickerWidth or (MIN_WIDTH - RAIL_WIDTH - PAD * 2)
+	local maxRows = self.pickerExpanded and PICKER_ROWS_EXPANDED or PICKER_ROWS_COLLAPSED
 
-		local text = labels[i]
-		local w = ChipWidth(text)
-		chip.control:SetPosition(x, 0)
-		chip.control:SetSize(w, PICKER_HEIGHT)
-		chip.border:SetSize(w, PICKER_HEIGHT)
-		chip.label:SetSize(w, PICKER_HEIGHT)
-		chip.label:SetText(text)
-		chip.value = values[i]
-		chip.control:SetVisible(true)
-
-		x = x + w + 6
+	-- Flow once to find out whether everything fits; if it does not, flow again with room kept for
+	-- the trailing chip. The reserve is sized off the total name count, so it is always at least as
+	-- wide as the "+N more" the second pass ends up needing -- one re-flow, never a loop.
+	local placed, overflow, endX, endRow = FlowChips(labels, width, maxRows, 0)
+	local wantsTrailing = (overflow > 0) or self.pickerExpanded
+	if wantsTrailing then
+		local reserve = ChipWidth("+" .. table.getn(names) .. " more") + PICKER_CHIP_GAP
+		placed, overflow, endX, endRow = FlowChips(labels, width, maxRows, reserve)
 	end
 
+	local rows = 1
+	local count = table.getn(placed)
+	for i = 1, count do
+		local p = placed[i]
+		if p.row > rows then rows = p.row end
+		self:PlaceChip(i, labels[i], values[i], p.x, p.row, p.w, false)
+	end
+
+	-- Trailing chip: "+N more" opens the picker up, "less" folds it back. Expanded shows "less"
+	-- even when nothing overflowed, so there is always a way back out of the taller layout.
+	if wantsTrailing then
+		local text = (overflow > 0) and ("+" .. overflow .. " more") or "less"
+		if endRow > rows then rows = endRow end
+		self:PlaceChip(count + 1, text, nil, endX, endRow, ChipWidth(text), true)
+	end
+
+	self.pickerRowsWanted = rows
 	self:RefreshPickerSelection()
+end
+
+-- Position and fill pooled chip `index`, growing the pool if this refresh needs more chips than
+-- any previous one did.
+function Analysis:PlaceChip(index, text, value, x, row, w, isMore)
+	local chip = self.pickerChips[index]
+	if chip == nil then
+		chip = self:BuildPickerChip()
+		self.pickerChips[index] = chip
+	end
+
+	chip.control:SetPosition(x, (row - 1) * (PICKER_HEIGHT + PICKER_ROW_GAP))
+	chip.control:SetSize(w, PICKER_HEIGHT)
+	chip.border:SetSize(w, PICKER_HEIGHT)
+	chip.label:SetSize(w, PICKER_HEIGHT)
+	chip.label:SetText(text)
+	chip.value = value
+	chip.isMore = isMore
+	chip.control:SetVisible(true)
 end
 
 function Analysis:BuildPickerChip()
@@ -725,12 +913,21 @@ function Analysis:BuildPickerChip()
 	label:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleCenter)
 	label:SetMouseVisible(false)
 
-	local chip = { control = control, border = border, inset = inset, label = label, value = nil }
+	local chip = { control = control, border = border, inset = inset, label = label, value = nil,
+		isMore = false }
 
 	local window = self
-	control.MouseClick = function() window:SelectFilter(chip.value) end
+	control.MouseClick = function()
+		if chip.isMore then
+			window:TogglePickerExpanded()
+		else
+			window:SelectFilter(chip.value)
+		end
+	end
 	control.MouseEnter = function()
-		if window.filter[window.viewTab] ~= chip.value then
+		-- The "+N more"/"less" chip is never the selected one, so it always takes the hover tint;
+		-- a real chip only takes it when it is not already selected.
+		if chip.isMore or window.filter[window.viewTab] ~= chip.value then
 			inset:SetBackColor(Theme.Color(Theme.Hex.Hover))
 		end
 	end
@@ -744,7 +941,9 @@ function Analysis:RefreshPickerSelection()
 	for i = 1, table.getn(self.pickerChips) do
 		local chip = self.pickerChips[i]
 		if chip.control:IsVisible() then
-			local isSelected = (chip.value == selected)
+			-- isMore matters here: the trailing chip carries a nil value, which would otherwise
+			-- compare equal to the unfiltered state and render as if "All X" were selected.
+			local isSelected = (not chip.isMore and chip.value == selected)
 			chip.inset:SetBackColor(Theme.Color(isSelected and Theme.Hex.ActiveTab or Theme.Hex.WindowFill))
 			chip.border:SetBackColor(Theme.Color(isSelected and Theme.Hex.Accent700 or Theme.Hex.Border))
 			chip.label:SetForeColor(Theme.Color(isSelected and Theme.Hex.Accent200 or Theme.Hex.DimText))
@@ -758,6 +957,14 @@ end
 function Analysis:SelectFilter(who)
 	self.filter[self.viewTab] = who
 	self:RefreshPickerSelection()
+	self:RefreshContent()
+end
+
+-- Changes the picker's row count, which changes where every block below it sits -- so this goes
+-- through RefreshContent (which detects the shape change and re-runs Layout), never straight to
+-- RefreshPicker.
+function Analysis:TogglePickerExpanded()
+	self.pickerExpanded = not self.pickerExpanded
 	self:RefreshContent()
 end
 
@@ -959,15 +1166,43 @@ function Analysis:BuildTable()
 	self.tableHeaderRow:SetBackColor(Theme.Color(Theme.Hex.HeaderFill))
 	self.tableHeaderRow:SetMouseVisible(false)
 
+	-- One mouse-visible cell per column, with the header Label parented inside it -- the same
+	-- hover-fill-wrapper-around-a-mouse-invisible-child shape as Frame's close button and the
+	-- search box's clear glyph. The cell, not the Label, is the click target so the column's
+	-- 8px padding is clickable too. A mouse-visible child inside a mouse-invisible parent
+	-- (tableHeaderRow) does receive clicks: the picker chips and the session-rail rows already
+	-- work exactly this way in-game.
+	self.tableHeaderCells = {}
 	self.tableHeaderLabels = {}
 	for i = 1, MAX_TABLE_COLUMNS do
+		local cell = Turbine.UI.Control()
+		cell:SetParent(self.tableHeaderRow)
+		cell:SetPosition(0, 0)
+		cell:SetSize(0, ROW_HEIGHT)
+		cell:SetVisible(false)
+
 		local label = Turbine.UI.Label()
-		label:SetParent(self.tableHeaderRow)
+		label:SetParent(cell)
 		label:SetFont(Font.Verdana10)
 		label:SetForeColor(Theme.Color(Theme.Hex.DimText))
+		label:SetPosition(8, 0)
 		label:SetSize(0, ROW_HEIGHT)
 		label:SetVisible(false)
 		label:SetMouseVisible(false)
+
+		cell.MouseEnter = function() cell:SetBackColor(Theme.Color(Theme.Hex.Hover)) end
+		cell.MouseLeave = function() cell:SetBackColor(nil) end
+		-- The column at index i changes with the view, so the sort key is read from the active
+		-- spec at click time rather than captured here.
+		cell.MouseClick = function()
+			local spec = window.tableColumnSpec
+			local column = spec and spec[i]
+			if column ~= nil then
+				window:SortTableBy(column.key, column.numeric)
+			end
+		end
+
+		self.tableHeaderCells[i] = cell
 		self.tableHeaderLabels[i] = label
 	end
 
@@ -1066,23 +1301,43 @@ function Analysis:RefreshTableColumns(tableWidth)
 
 	self.tableColumns = columns
 	self.tableWidth = x
+	self.tableColumnSpec = spec
+
+	-- AVOID exists only in the damage views, so a view switch can leave the sort pointing at a
+	-- column this view doesn't have. Fall back to the default rather than ordering the table by
+	-- something the reader can't see (and can't click again to reverse).
+	local sortable = false
+	for i = 1, table.getn(spec) do
+		if spec[i].key == self.tableSort.key then
+			sortable = true
+		end
+	end
+	if not sortable then
+		self.tableSort.key = "total"
+		self.tableSort.ascending = false
+	end
 
 	for i = 1, MAX_TABLE_COLUMNS do
+		local cell = self.tableHeaderCells[i]
 		local label = self.tableHeaderLabels[i]
 		local column = spec[i]
 		if column == nil then
+			cell:SetVisible(false)
 			label:SetVisible(false)
 		else
 			local col = columns[i]
 			-- 8px cell padding on both sides, so a right-aligned header sits directly over the
 			-- right-aligned number underneath it.
-			label:SetPosition(col.x + 8, 0)
+			cell:SetPosition(col.x, 0)
+			cell:SetSize(col.width, ROW_HEIGHT)
+			label:SetPosition(8, 0)
 			label:SetSize(math.max(0, col.width - 16), ROW_HEIGHT)
-			label:SetText(ColumnLabel(column, meta))
 			label:SetTextAlignment(col.align)
 			label:SetVisible(true)
+			cell:SetVisible(true)
 		end
 	end
+	self:RefreshTableHeaderText()
 	self.tableHeaderRow:SetSize(x, ROW_HEIGHT)
 
 	-- The same 8px padding on the cells themselves.
@@ -1110,6 +1365,100 @@ function Analysis:RefreshTableColumns(tableWidth)
 	end
 end
 
+-- Header text and colour only -- no geometry -- so a sort click doesn't have to rebuild every
+-- pooled row's column spec just to move the direction marker.
+function Analysis:RefreshTableHeaderText()
+	local meta = VIEW_META[self.viewTab]
+	local spec = self.tableColumnSpec
+	if spec == nil then
+		return
+	end
+
+	for i = 1, table.getn(spec) do
+		local column = spec[i]
+		local sorted = (column.key == self.tableSort.key)
+		local text = ColumnLabel(column, meta)
+		if sorted then
+			text = text .. (self.tableSort.ascending and SORT_ASC or SORT_DESC)
+		end
+		self.tableHeaderLabels[i]:SetText(text)
+		self.tableHeaderLabels[i]:SetForeColor(
+			Theme.Color(sorted and Theme.Hex.Accent200 or Theme.Hex.DimText))
+	end
+end
+
+-- First click on a column sorts by it -- descending for numbers (the big contributors are what
+-- a reader is looking for), ascending for names; clicking the same column again reverses.
+function Analysis:SortTableBy(key, numeric)
+	if key == nil then
+		return
+	end
+	if self.tableSort.key == key then
+		self.tableSort.ascending = not self.tableSort.ascending
+	else
+		self.tableSort.key = key
+		self.tableSort.ascending = not numeric
+	end
+	self:RefreshTableHeaderText()
+	self:RefreshContent()
+end
+
+-- The value a column sorts on -- always the number (or name) the cell actually displays, so the
+-- resulting order matches what the reader can see in that column. CRIT / DEV is one column
+-- showing two percentages, so it sorts on the combined crit+devastate rate.
+local function TableSortValue(row, key, shape)
+	if key == "skill" then
+		return string.lower(row.skill or "")
+	elseif key == "type" then
+		if shape == "heal" then
+			return string.lower(row.who or "")
+		end
+		return string.lower(DamageType.Names[row.type] or "")
+	elseif key == "hits" then
+		return row.hits or 0
+	elseif key == "critdev" then
+		if (row.hits or 0) <= 0 then
+			return 0
+		end
+		return ((row.crits or 0) + (row.devs or 0)) / row.hits
+	elseif key == "avoid" then
+		local swings = (row.hits or 0) + (row.avoided or 0)
+		if swings <= 0 then
+			return 0
+		end
+		return (row.avoided or 0) / swings
+	elseif key == "max" then
+		return row.max or 0
+	end
+	return row.total or 0
+end
+
+-- Sorts in place. The skill-name/total tiebreak is not cosmetic: table.sort needs a strict weak
+-- ordering or it can raise "invalid order function for sorting", and several of these columns
+-- (AVOID, CRIT / DEV, HITS) tie constantly.
+function Analysis:SortTableRows(list, shape)
+	local key = self.tableSort.key
+	local ascending = self.tableSort.ascending
+
+	table.sort(list, function(a, b)
+		local va = TableSortValue(a, key, shape)
+		local vb = TableSortValue(b, key, shape)
+		if va ~= vb then
+			if ascending then
+				return va < vb
+			end
+			return va > vb
+		end
+		local na = string.lower(a.skill or "")
+		local nb = string.lower(b.skill or "")
+		if na ~= nb then
+			return na < nb
+		end
+		return (a.total or 0) > (b.total or 0)
+	end)
+	return list
+end
+
 -- Damage views group across counterparts by skill+type; heal views keep one row per
 -- skill+counterpart, since "who healed you" is the interesting axis there. `rows` is whatever
 -- Session:Slice returned for the current category/range/filter, so this is the same code path
@@ -1122,8 +1471,7 @@ function Analysis:TableRows(rows, view)
 		for i = 1, table.getn(rows) do
 			list[i] = rows[i]
 		end
-		table.sort(list, function(a, b) return a.total > b.total end)
-		return list
+		return self:SortTableRows(list, meta.shape)
 	end
 
 	local grouped = {}
@@ -1146,8 +1494,7 @@ function Analysis:TableRows(rows, view)
 			g.max = row.max
 		end
 	end
-	table.sort(order, function(a, b) return a.total > b.total end)
-	return order
+	return self:SortTableRows(order, meta.shape)
 end
 
 local function CritDevText(row)
@@ -1251,29 +1598,22 @@ function Analysis:BuildBuffSection()
 	self.buffTopRule:SetBackColor(Theme.Color(Theme.Hex.Border))
 	self.buffTopRule:SetMouseVisible(false)
 
+	-- A plain section label now, not a collapse toggle: the splitter above it does the same job
+	-- better (drag it to the bottom and the buff table is one row tall; a collapse button on top
+	-- of that is a second way to say the same thing), so nothing here is clickable.
 	local header = Turbine.UI.Control()
 	header:SetParent(self.buffHolder)
 	header:SetPosition(0, 1)
 	header:SetSize(1, BUFF_HEADER_HEIGHT)
 	header:SetBackColor(Theme.Color(Theme.Hex.WindowFill))
-
-	-- ASCII caret, not the mock's Unicode triangles (U+25BE/25B8): the same class of glyph the
-	-- session-rail pins had to give up on, since this client's fonts render them as "?".
-	local caret = Turbine.UI.Label()
-	caret:SetParent(header)
-	caret:SetFont(Font.Verdana10)
-	caret:SetForeColor(Theme.Color(Theme.Hex.Accent))
-	caret:SetPosition(0, 0)
-	caret:SetSize(14, BUFF_HEADER_HEIGHT)
-	caret:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleCenter)
-	caret:SetMouseVisible(false)
+	header:SetMouseVisible(false)
 
 	local title = Turbine.UI.Label()
 	title:SetParent(header)
 	title:SetFont(Font.Verdana10)
 	title:SetText("SELF BUFFS")
 	title:SetForeColor(Theme.Color(Theme.Hex.MutedText))
-	title:SetPosition(16, 0)
+	title:SetPosition(0, 0)
 	title:SetSize(80, BUFF_HEADER_HEIGHT)
 	title:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
 	title:SetMouseVisible(false)
@@ -1282,23 +1622,14 @@ function Analysis:BuildBuffSection()
 	summary:SetParent(header)
 	summary:SetFont(Font.Verdana10)
 	summary:SetForeColor(Theme.Color(Theme.Hex.DimText))
-	summary:SetPosition(100, 0)
+	summary:SetPosition(84, 0)
 	summary:SetSize(1, BUFF_HEADER_HEIGHT)
 	summary:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
 	summary:SetMouseVisible(false)
 
 	local window = self
-	header.MouseClick = function() window:ToggleBuffSection() end
-	header.MouseEnter = function()
-		header:SetBackColor(Theme.Color(Theme.Hex.Hover))
-		title:SetForeColor(Theme.Color(Theme.Hex.Accent200))
-	end
-	header.MouseLeave = function()
-		header:SetBackColor(Theme.Color(Theme.Hex.WindowFill))
-		title:SetForeColor(Theme.Color(Theme.Hex.MutedText))
-	end
 
-	self.buffHeader = { control = header, caret = caret, title = title, summary = summary }
+	self.buffHeader = { control = header, title = title, summary = summary }
 
 	self.buffSearch = self:BuildSearchBox(self.buffHolder, "Search buffs...")
 	self.buffSearch.control:SetPosition(0, BUFF_HEADER_HEIGHT + 1)
@@ -1328,11 +1659,28 @@ function Analysis:BuildBuffSection()
 	self.buffTableHeader:SetBackColor(Theme.Color(Theme.Hex.HeaderFill))
 	self.buffTableHeader:SetMouseVisible(false)
 
+	-- Sortable columns get the same clickable hover cell as the skill table's header (see
+	-- BuildTable); the checkbox/icon gutters keep a plain Label parented straight to the header.
 	self.buffHeaderLabels = {}
+	self.buffHeaderCells = {}
 	for i = 1, table.getn(BUFF_COLUMNS) do
 		local column = BUFF_COLUMNS[i]
+		local host = self.buffTableHeader
+
+		if column.sortable then
+			local cell = Turbine.UI.Control()
+			cell:SetParent(self.buffTableHeader)
+			cell:SetPosition(0, 0)
+			cell:SetSize(0, BUFF_TABLE_HEADER_HEIGHT)
+			cell.MouseEnter = function() cell:SetBackColor(Theme.Color(Theme.Hex.Hover)) end
+			cell.MouseLeave = function() cell:SetBackColor(nil) end
+			cell.MouseClick = function() window:SortBuffsBy(column.key, column.numeric) end
+			self.buffHeaderCells[i] = cell
+			host = cell
+		end
+
 		local label = Turbine.UI.Label()
-		label:SetParent(self.buffTableHeader)
+		label:SetParent(host)
 		label:SetFont(Font.Verdana10)
 		label:SetForeColor(Theme.Color(Theme.Hex.DimText))
 		label:SetText(column.label)
@@ -1481,15 +1829,25 @@ function Analysis:LayoutBuffColumns(width)
 	for i = 1, table.getn(BUFF_COLUMNS) do
 		local geo = self.buffColumnX[i]
 		local label = self.buffHeaderLabels[i]
-		label:SetPosition(geo.x + 8, 0)
+		local cell = self.buffHeaderCells[i]
+		if cell ~= nil then
+			cell:SetPosition(geo.x, 0)
+			cell:SetSize(geo.width, BUFF_TABLE_HEADER_HEIGHT)
+			label:SetPosition(8, 0)
+		else
+			label:SetPosition(geo.x + 8, 0)
+		end
 		label:SetSize(math.max(0, geo.width - 16), BUFF_TABLE_HEADER_HEIGHT)
 	end
 	-- The BUFF header spans the checkbox+icon gutter as well as the name column, matching the
-	-- mock's single 214px heading over the three of them.
-	self.buffHeaderLabels[3]:SetPosition(self.buffColumnX[2].x + 8, 0)
-	self.buffHeaderLabels[3]:SetSize(
-		math.max(0, self.buffColumnX[2].width + self.buffColumnX[3].width - 16),
-		BUFF_TABLE_HEADER_HEIGHT)
+	-- mock's single 214px heading over the three of them -- so its click target does too.
+	local nameSpan = self.buffColumnX[2].width + self.buffColumnX[3].width
+	self.buffHeaderCells[3]:SetPosition(self.buffColumnX[2].x, 0)
+	self.buffHeaderCells[3]:SetSize(nameSpan, BUFF_TABLE_HEADER_HEIGHT)
+	self.buffHeaderLabels[3]:SetPosition(8, 0)
+	self.buffHeaderLabels[3]:SetSize(math.max(0, nameSpan - 16), BUFF_TABLE_HEADER_HEIGHT)
+
+	self:RefreshBuffHeaderText()
 
 	self.buffTableHeader:SetSize(x, BUFF_TABLE_HEADER_HEIGHT)
 
@@ -1503,13 +1861,6 @@ function Analysis:LayoutBuffColumns(width)
 			widgets.cells[i]:SetSize(math.max(0, geo.width - 16), BUFF_ROW_HEIGHT - 1)
 		end
 	end
-end
-
-function Analysis:ToggleBuffSection()
-	self.buffsOpen = not self.buffsOpen
-	_G.settings.buffsOpen = self.buffsOpen
-	Settings.Save()
-	self:RefreshContent()
 end
 
 function Analysis:IsCharted(name)
@@ -1545,6 +1896,76 @@ function Analysis:ToggleCharted(name)
 	self:RefreshContent()
 end
 
+function Analysis:RefreshBuffHeaderText()
+	for i = 1, table.getn(BUFF_COLUMNS) do
+		local column = BUFF_COLUMNS[i]
+		if column.sortable then
+			local sorted = (column.key == self.buffSort.key)
+			local text = column.label
+			if sorted then
+				text = text .. (self.buffSort.ascending and SORT_ASC or SORT_DESC)
+			end
+			self.buffHeaderLabels[i]:SetText(text)
+			self.buffHeaderLabels[i]:SetForeColor(
+				Theme.Color(sorted and Theme.Hex.Accent200 or Theme.Hex.DimText))
+		end
+	end
+end
+
+-- Same first-click rule as the skill table: numbers descending, the name column ascending.
+function Analysis:SortBuffsBy(key, numeric)
+	if key == nil then
+		return
+	end
+	if self.buffSort.key == key then
+		self.buffSort.ascending = not self.buffSort.ascending
+	else
+		self.buffSort.key = key
+		self.buffSort.ascending = not numeric
+	end
+	self:RefreshBuffHeaderText()
+	self:RefreshContent()
+end
+
+local function BuffSortValue(row, key)
+	if key == "name" then
+		return string.lower(row.name or "")
+	elseif key == "up" then
+		return row.uptime or 0
+	elseif key == "apps" then
+		return row.apps or 0
+	elseif key == "gap" then
+		return row.longestGap or 0
+	end
+	return row.uptimePct or 0
+end
+
+-- Sorts a COPY: `stats` is what Buffs.Stats handed back and what ChartedLanes still reads, and
+-- the unsorted-in-place contract there is not worth relying on a shared table's order for.
+-- Name is the tiebreak for the same strict-weak-ordering reason as SortTableRows.
+function Analysis:SortBuffStats(stats)
+	local key = self.buffSort.key
+	local ascending = self.buffSort.ascending
+
+	local list = {}
+	for i = 1, table.getn(stats) do
+		list[i] = stats[i]
+	end
+
+	table.sort(list, function(a, b)
+		local va = BuffSortValue(a, key)
+		local vb = BuffSortValue(b, key)
+		if va ~= vb then
+			if ascending then
+				return va < vb
+			end
+			return va > vb
+		end
+		return string.lower(a.name or "") < string.lower(b.name or "")
+	end)
+	return list
+end
+
 -- Matches the search text against the buff's own name -- the only column that's ever a name.
 function Analysis:FilterBuffStats(stats)
 	local query = self.buffFilterText
@@ -1565,11 +1986,8 @@ end
 -- search box narrowed it to and is what's actually listed. Kept separate so typing a search
 -- doesn't make the summary lie about how many buffs the session tracks in total.
 function Analysis:RefreshBuffSection(stats, filtered, fromSec, toSec)
-	local open = self.buffsOpen
 	local tracked = table.getn(stats)
 	local shownCount = table.getn(filtered)
-
-	self.buffHeader.caret:SetText(open and "v" or ">")
 
 	local scope
 	if fromSec == nil then
@@ -1580,17 +1998,14 @@ function Analysis:RefreshBuffSection(stats, filtered, fromSec, toSec)
 	self.buffHeader.summary:SetText(
 		"· " .. tracked .. " tracked · " .. table.getn(self.charted) .. " charted · " .. scope)
 
-	self.buffSearch.control:SetVisible(open)
-	self.buffTableHeader:SetVisible(open)
-	self.buffScrollView:SetVisible(open)
-	self.buffScrollBar:SetVisible(open)
-
 	-- ListBox is item-list based, not freeform positioning: clear and re-add each refresh, but
 	-- reuse the same pooled container/Row objects every time -- only the ListBox's membership
 	-- list is rebuilt, never the Controls themselves (matching RefreshTable's own comment).
+	-- Every matching buff is added regardless of how much height the splitter left this block:
+	-- the ListBox scrolls, so a short bottom row means scrolling, never dropped rows.
 	self.buffScrollView:ClearItems()
 
-	local shown = open and math.min(shownCount, BUFF_POOL) or 0
+	local shown = math.min(shownCount, BUFF_POOL)
 	for i = 1, shown do
 		local widgets = self.buffRows[i]
 		local row = filtered[i]
@@ -1849,6 +2264,7 @@ end
 
 function Analysis:SelectView(key, skipRefresh)
 	self.viewTab = key
+	self.pickerExpanded = false
 
 	for i = 1, table.getn(VIEWS) do
 		local k = VIEWS[i]
@@ -1909,17 +2325,20 @@ function Analysis:RefreshContent(skipRelayout)
 	-- charted buff the search doesn't match still keeps its lane.
 	local lanes = self:ChartedLanes(stats)
 	local laneCount = table.getn(lanes)
-	local buffStats = self:FilterBuffStats(stats)
-	local buffRowsWanted = self.buffsOpen and math.min(table.getn(buffStats), BUFF_POOL) or 0
+	local buffStats = self:SortBuffStats(self:FilterBuffStats(stats))
 
-	if not skipRelayout and (laneCount ~= self.layoutLanes or buffRowsWanted ~= self.layoutBuffRows) then
+	-- RefreshPicker (above) has already decided how many rows the chips wrap onto for this
+	-- session/view/expanded state; a change there moves everything below it, same as a lane
+	-- change does. The buff row count is deliberately NOT in this set any more -- the splitter
+	-- fixes that block's height, so more buffs means more scrolling, not a re-layout.
+	local pickerRows = self.pickerRowsWanted or 1
+
+	if not skipRelayout and (laneCount ~= self.layoutLanes or pickerRows ~= self.layoutPickerRows) then
 		self.laneCountWanted = laneCount
-		self.buffRowsWanted = buffRowsWanted
 		self:Layout()
 		return
 	end
 	self.laneCountWanted = laneCount
-	self.buffRowsWanted = buffRowsWanted
 
 	self:RefreshKpis(session, view, filterWho, meta, rows, fromSec, toSec)
 
@@ -2006,7 +2425,10 @@ function Analysis:ComputeKpis(session, category, filterWho, meta, rows, fromSec,
 	end
 
 	return {
-		{ label = "TOTAL", value = Format.Number(total), sub = Format.Rate(rate), subColor = Theme.Hex.Accent300 },
+		-- Rate is the headline number and the running total is the sub-line, not the other way
+		-- round -- per direct user request, in every view.
+		{ label = meta.rateWord, value = Format.Rate(rate),
+		  sub = Format.Number(total) .. " total", subColor = Theme.Hex.Accent300 },
 		{ label = string.upper(meta.hitWord), value = Format.Number(hits),
 		  sub = table.getn(rows) .. " skills", subColor = Theme.Hex.DimText },
 		{ label = "CRIT / DEV", value = Format.Percent(critPct) .. " / " .. Format.Percent(devPct),
@@ -2032,8 +2454,12 @@ function Analysis:BuildResizeGripper()
 	gripper.MouseDown = function(sender, args)
 		if args.Button == Turbine.UI.MouseButton.Left then
 			window.resizing = true
-			window.resizeStartX = args.X
-			window.resizeStartY = args.Y
+			-- Where inside the 12x12 gripper the press landed, NOT a screen coordinate. Every
+			-- MouseMove below re-reads args relative to the gripper, and Analysis:Resize keeps
+			-- the gripper pinned to the corner it is dragging, so this offset is what the args
+			-- return to once the window has caught up with the mouse.
+			window.resizeOffsetX = args.X
+			window.resizeOffsetY = args.Y
 		end
 	end
 	-- Chrome only during the drag itself (Frame:Resize -- background/border/header/client);
@@ -2042,13 +2468,24 @@ function Analysis:BuildResizeGripper()
 	-- graph) happens once on MouseUp, not on every drag tick -- rebuilding pooled table rows and
 	-- the 48-bucket graph continuously while dragging would be needless churn for a value nobody
 	-- reads until the mouse comes up anyway.
+	--
+	-- This used to feel wildly oversensitive, and the reason was a mismatch between the two
+	-- halves of that trade: the size grew by (args - press offset) every tick, which is only an
+	-- INCREMENT if the gripper itself moves to match. It didn't -- the gripper's position was
+	-- only ever set in Layout(), which is deferred to MouseUp -- so a mouse held 40px from the
+	-- press point reported the same 40px offset on every single move event, and each one added
+	-- another 40px to the window. Analysis:Resize now repositions the gripper on every call, so
+	-- args really is an increment and a stationary mouse adds nothing. This is exactly what the
+	-- splitter (and RangeSlider before it) already does -- both move their handle inside the
+	-- MouseMove that changed the value, which is why those two track the mouse one-to-one.
 	gripper.MouseMove = function(sender, args)
 		if window.resizing then
 			local w, h = window:GetSize()
-			w = w + (args.X - window.resizeStartX)
-			h = h + (args.Y - window.resizeStartY)
+			w = w + (args.X - window.resizeOffsetX)
+			h = h + (args.Y - window.resizeOffsetY)
+			local maxHeight = MaxHeight()
 			if w < MIN_WIDTH then w = MIN_WIDTH elseif w > MAX_WIDTH then w = MAX_WIDTH end
-			if h < MIN_HEIGHT then h = MIN_HEIGHT elseif h > MAX_HEIGHT then h = MAX_HEIGHT end
+			if h < MIN_HEIGHT then h = MIN_HEIGHT elseif h > maxHeight then h = maxHeight end
 			window:Resize(w, h)
 		end
 	end
@@ -2066,6 +2503,109 @@ function Analysis:BuildResizeGripper()
 	end
 
 	self.gripper = gripper
+end
+
+---------------------------------------------------------------------------------------------------
+-- The skill-table / buff-table splitter
+---------------------------------------------------------------------------------------------------
+
+-- The handle occupies the gap that already sat between the two blocks, so it costs no vertical
+-- space. Drag shape is RangeSlider's: MouseDown records the press offset inside the handle,
+-- MouseMove re-reads args.Y (relative to the handle, so it stays correct as the handle moves
+-- under a still-pressed mouse) and MouseUp clears it and persists.
+function Analysis:BuildSplitter()
+	local splitter = Turbine.UI.Control()
+	splitter:SetParent(self.contentArea)
+	splitter:SetSize(1, SPLITTER_HEIGHT)
+	splitter:SetMouseVisible(true)
+
+	local grip = Turbine.UI.Control()
+	grip:SetParent(splitter)
+	grip:SetPosition(0, math.floor((SPLITTER_HEIGHT - SPLITTER_GRIP) / 2))
+	grip:SetSize(1, SPLITTER_GRIP)
+	grip:SetBackColor(Theme.Color(Theme.Hex.Border))
+	grip:SetMouseVisible(false)
+
+	local window = self
+
+	splitter.MouseDown = function(sender, args)
+		if args.Button == Turbine.UI.MouseButton.Left then
+			window.splitDragging = true
+			window.splitDragOffset = args.Y
+			grip:SetBackColor(Theme.Color(Theme.Hex.Accent))
+		end
+	end
+
+	-- Dragging DOWN grows the skill table and shrinks the bottom row, which is why the delta is
+	-- subtracted. DragSplit snaps to whole buff rows and returns early when the snapped value
+	-- did not change, so a full Layout() runs once per row crossed, not once per mouse pixel.
+	splitter.MouseMove = function(sender, args)
+		if window.splitDragging then
+			window:DragSplit(args.Y - window.splitDragOffset)
+		end
+	end
+
+	splitter.MouseUp = function(sender, args)
+		if args.Button == Turbine.UI.MouseButton.Left then
+			window.splitDragging = false
+			grip:SetBackColor(Theme.Color(Theme.Hex.Border))
+
+			local saved = _G.settings.windows[window.windowKey]
+			if saved ~= nil then
+				saved.split = window.splitBottom
+				Settings.Save()
+			end
+		end
+	end
+
+	splitter.MouseEnter = function()
+		if not window.splitDragging then
+			grip:SetBackColor(Theme.Color(Theme.Hex.Accent200))
+		end
+	end
+	splitter.MouseLeave = function()
+		if not window.splitDragging then
+			grip:SetBackColor(Theme.Color(Theme.Hex.Border))
+		end
+	end
+
+	self.splitter = splitter
+	self.splitterGrip = grip
+end
+
+-- Snap a bottom-row height to whole buff rows above BOTTOM_MIN, then clamp it to what the window
+-- can actually give: never below its own chrome, never so tall that the skill table drops under
+-- TABLE_MIN. `available` is the content height the two blocks and the gap between them share.
+-- Everything here is in whole rows, including the clamp: a clamp that landed on an arbitrary
+-- pixel height would not survive being snapped again on the next pass (it would round to a
+-- neighbouring row), so a window that shrank and grew back would not return to the split it
+-- started from.
+function Analysis:SnapSplit(height, available)
+	local rows = math.floor((height - BOTTOM_MIN) / BUFF_ROW_HEIGHT + 0.5)
+	local maxRows = math.floor((available - SPLITTER_HEIGHT - TABLE_MIN - BOTTOM_MIN) / BUFF_ROW_HEIGHT)
+
+	if rows > maxRows then
+		rows = maxRows
+	end
+	if rows < 0 then
+		rows = 0
+	end
+	return BOTTOM_MIN + rows * BUFF_ROW_HEIGHT
+end
+
+-- self.splitBottom is the user's PREFERENCE and self.splitEffective is what the window could
+-- actually give it last Layout. A drag works from the effective value (that is the edge under
+-- the mouse) but writes the preference, and Layout never writes the preference back -- otherwise
+-- one pass at a short window height would silently overwrite the split for good, and growing the
+-- window again would not restore it.
+function Analysis:DragSplit(delta)
+	local current = self.splitEffective or self.splitBottom
+	local wanted = self:SnapSplit(current - delta, self.splitAvailable or 0)
+	if wanted == current then
+		return
+	end
+	self.splitBottom = wanted
+	self:Layout()
 end
 
 function Analysis:Layout()
@@ -2093,11 +2633,23 @@ function Analysis:Layout()
 	self.goalRule:SetPosition(goalX, TAB_STRIP_HEIGHT - 1)
 	self.goalRule:SetSize(goalWidth, 1)
 
+	-- The picker's height depends on how many rows its chips wrap onto AT THIS WIDTH, so re-flow
+	-- them here rather than trusting the count from whatever width the last pass ran at (a resize
+	-- changes it). RefreshContent's trailing pass re-runs the identical flow and lands on the same
+	-- number, so this and the geometry below can't disagree. RefreshPicker never calls back into
+	-- Layout, so there is no bounce to guard against here.
 	local pickerY = 40
-	self.pickerRow:SetPosition(innerX, pickerY)
-	self.pickerRow:SetSize(innerWidth, PICKER_HEIGHT)
+	self.pickerWidth = innerWidth
+	self:RefreshPicker()
+	local pickerRows = math.max(1, self.pickerRowsWanted or 1)
+	local pickerHeight = pickerRows * PICKER_HEIGHT + (pickerRows - 1) * PICKER_ROW_GAP
+	local pickerExtra = pickerHeight - PICKER_HEIGHT
 
-	local kpiY = 72
+	self.pickerRow:SetPosition(innerX, pickerY)
+	self.pickerRow:SetSize(innerWidth, pickerHeight)
+
+	-- Every block below the picker shifts down by whatever the extra chip rows claimed.
+	local kpiY = 72 + pickerExtra
 	self.kpiRow:SetPosition(innerX, kpiY)
 	self.kpiRow:SetSize(innerWidth, KPI_ROW_HEIGHT)
 	self:LayoutKpiCards(innerWidth)
@@ -2106,38 +2658,27 @@ function Analysis:Layout()
 	-- keeping a second copy of that arithmetic here.
 	local graphHeight = GraphHeightFor(self.laneCountWanted or 0)
 
-	local graphY = 133
+	local graphY = 133 + pickerExtra
 	self.graphHolder:SetPosition(innerX, graphY)
 	self.graphHolder:SetSize(innerWidth, graphHeight)
 	self:LayoutGraph(innerWidth)
 
 	local tableY = graphY + graphHeight + GAP
 
-	-- The bottom row (buff table on the left, side panels on the right) claims what its content
-	-- needs; the skill table takes everything that is left and scrolls. When the window is too
-	-- short for both, the skill table shrinks to its floor first and the buff list scrolls
-	-- second -- in that order, because the skill table is the block a reader came for. Either
-	-- way the buff list itself now scrolls (REDESIGN_SPEC.md section 7) rather than silently
-	-- dropping rows past whatever height it was given.
+	-- How the leftover height is split between the skill table and the bottom row (buff table on
+	-- the left, side panels on the right) is the user's call now, not the buff list's row count:
+	-- self.splitBottom is what the splitter was last dragged to, re-clamped here against whatever
+	-- height this window currently is. Both lists scroll, so neither ever drops rows for want of
+	-- space -- shrinking one just means scrolling it (REDESIGN_SPEC.md section 7).
 	local available = math.max(0, contentHeight - tableY - PAD)
-	local buffRows = self.buffRowsWanted or 0
-	local bottomHeight = BUFF_HEADER_HEIGHT + 1
-	if self.buffsOpen then
-		bottomHeight = bottomHeight + SEARCH_HEIGHT + BUFF_TABLE_HEADER_HEIGHT + buffRows * BUFF_ROW_HEIGHT
-	end
+	self.splitAvailable = available
 
-	local minTable = SEARCH_HEIGHT + ROW_HEIGHT * 5
-	local maxBottom = available - GAP - minTable
-	if bottomHeight > maxBottom then
-		bottomHeight = math.max(BUFF_HEADER_HEIGHT + 1, maxBottom)
-	end
-	if bottomHeight < BUFF_HEADER_HEIGHT + 1 then
-		bottomHeight = BUFF_HEADER_HEIGHT + 1
-	end
+	local bottomHeight = self:SnapSplit(self.splitBottom, available)
+	self.splitEffective = bottomHeight
 
-	local tableHeight = available - GAP - bottomHeight
-	if tableHeight < SEARCH_HEIGHT + ROW_HEIGHT * 2 then
-		tableHeight = SEARCH_HEIGHT + ROW_HEIGHT * 2
+	local tableHeight = available - SPLITTER_HEIGHT - bottomHeight
+	if tableHeight < TABLE_MIN then
+		tableHeight = TABLE_MIN
 	end
 
 	local listWidth = innerWidth - SCROLLBAR_WIDTH
@@ -2151,7 +2692,13 @@ function Analysis:Layout()
 	self.tableScrollBar:SetHeight(math.max(0, tableHeight - SEARCH_HEIGHT - ROW_HEIGHT))
 	self:RefreshTableColumns(listWidth)
 
-	local bottomY = tableY + tableHeight + GAP
+	-- The splitter sits in the band between the two blocks, spanning the full content column so
+	-- it reads as one continuous edge rather than a widget parked over one of them.
+	self.splitter:SetPosition(innerX, tableY + tableHeight)
+	self.splitter:SetSize(innerWidth, SPLITTER_HEIGHT)
+	self.splitterGrip:SetSize(innerWidth, SPLITTER_GRIP)
+
+	local bottomY = tableY + tableHeight + SPLITTER_HEIGHT
 	local panelsWidth = PANEL_WIDTH
 	local buffWidth = math.max(200, innerWidth - GAP - panelsWidth)
 
@@ -2159,7 +2706,7 @@ function Analysis:Layout()
 	self.buffHolder:SetSize(buffWidth, bottomHeight)
 	self.buffTopRule:SetSize(buffWidth, 1)
 	self.buffHeader.control:SetSize(buffWidth, BUFF_HEADER_HEIGHT)
-	self.buffHeader.summary:SetSize(math.max(0, buffWidth - 100), BUFF_HEADER_HEIGHT)
+	self.buffHeader.summary:SetSize(math.max(0, buffWidth - 84), BUFF_HEADER_HEIGHT)
 	self.buffTableHeader:SetPosition(0, BUFF_HEADER_HEIGHT + 1 + SEARCH_HEIGHT)
 
 	local buffListWidth = math.max(0, buffWidth - SCROLLBAR_WIDTH)
@@ -2184,8 +2731,8 @@ function Analysis:Layout()
 
 	-- Record what this pass sized things for, so RefreshContent can tell whether the shape
 	-- changed and skip re-entering here when it did not.
-	self.layoutBuffRows = self.buffRowsWanted or 0
 	self.layoutLanes = self.laneCountWanted or 0
+	self.layoutPickerRows = pickerRows
 
 	self:RefreshContent(true)
 end

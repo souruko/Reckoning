@@ -14,12 +14,14 @@ DEFAULTS = {
 	deathAutoHide     = 15,    -- seconds, 5-30
 	liveMeterEnabled  = true,  -- Phase 6 options panel
 	deathCauseEnabled = true,  -- Phase 6 options panel
-	windows           = {},    -- [windowKey] = { left, top, width?, height? } -- persisted window geometry
+	-- [windowKey] = { left, top, width?, height?, split? } -- persisted window geometry. `split`
+	-- is analysis-only: how much height its bottom row (SELF BUFFS + side panels) was last
+	-- dragged to, in pixels, re-clamped on load against the window's actual height.
+	windows           = {},
 	-- Analysis window's SELF BUFFS section. Strings only, never a Turbine.UI.Color: chartedBuffs
 	-- is an ordered list of at most 3 buff NAMES (the lane colour is derived from its position
 	-- in that list at render time, so no colour is ever serialised), and buffIgnore is a
 	-- [name] = true set extended by `/reck buffs ignore <name>`.
-	buffsOpen         = true,
 	chartedBuffs      = {},
 	buffIgnore        = {},
 }

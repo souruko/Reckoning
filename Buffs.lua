@@ -276,7 +276,8 @@ end
 ---------------------------------------------------------------------------------------------------
 
 -- Uptime / applications / longest gap for every tracked buff over [fromSec, toSec], clipping
--- each interval to the range first. Returns a list sorted by uptime, highest first.
+-- each interval to the range first. Returns a list sorted by uptime, lowest first -- the buffs
+-- worth acting on (the ones with gaps) sit at the top, the 100%-uptime ones at the bottom.
 --
 -- `longestGap` deliberately includes the head and tail gaps: a buff that dropped near the end
 -- and never came back is exactly the case this column exists to make visible, and a version
@@ -342,7 +343,7 @@ function Buffs.Stats(session, fromSec, toSec)
 		if a.uptimePct == b.uptimePct then
 			return a.name < b.name -- stable order, so rows don't shuffle between refreshes
 		end
-		return a.uptimePct > b.uptimePct
+		return a.uptimePct < b.uptimePct
 	end)
 
 	return rows
