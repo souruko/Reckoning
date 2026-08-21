@@ -98,6 +98,7 @@ function Control:SetChecked(v) self._checked = v end
 function Control:IsChecked() return self._checked end
 function Control:SetClipMode(m) self._clip = m end
 function Control:SetMultiline(v) self._multiline = v end
+function Control:SetWantsKeyEvents(v) self._keyEvents = v end
 
 local Window = class(Control)
 function Window:Constructor() Control.Constructor(self) end
@@ -126,6 +127,7 @@ Turbine = {
 		Orientation = { Horizontal = 1, Vertical = 2 },
 		BlendMode = { Overlay = 5, AlphaBlend = 1 },
 		Lotro = {
+			Action = { Escape = "Escape" },
 			Font = {
 				Verdana10 = "Verdana10", Verdana12 = "Verdana12", Verdana20 = "Verdana20",
 				Verdana22 = "Verdana22", TrajanPro13 = "TrajanPro13",

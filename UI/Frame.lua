@@ -139,6 +139,16 @@ function Frame:BuildHeader(title, width, ruleColor)
 		self.closeLabel.MouseClick = function()
 			frame:Close()
 		end
+
+		-- Esc closes the window, same as clicking the x -- confirmed-working pattern in
+		-- LootLogs (UI/Window/Base.lua, LootBrowser.lua): SetWantsKeyEvents(true) plus a
+		-- KeyDown handler gated on Turbine.UI.Lotro.Action.Escape.
+		self:SetWantsKeyEvents(true)
+		self.KeyDown = function(sender, args)
+			if args.Action == Turbine.UI.Lotro.Action.Escape then
+				frame:Close()
+			end
+		end
 	end
 
 	self.headerRule = Turbine.UI.Control()
