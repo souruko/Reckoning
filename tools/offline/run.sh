@@ -18,7 +18,7 @@ echo "  all files parse under Lua 5.1"
 echo
 
 status=0
-for t in slice graph buffs analysis windows load; do
+for t in slice graph buffs lifecycle analysis windows load; do
 	echo "== $t =="
 	if (cd "$here" && lua5.1 "${t}_test.lua" > /tmp/reck_$t.out 2>&1); then
 		tail -1 /tmp/reck_$t.out

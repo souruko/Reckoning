@@ -10,6 +10,7 @@ Turbine.Gameplay.LocalPlayer = {
       GetMorale = function() return 500000 end,
       GetMaxMorale = function() return 900000 end,
       GetTarget = function() return nil end,
+      IsInCombat = function() return true end,
       GetEffects = function()
         local list = { { GetName = function() return "Writ of Health" end,
                          GetIcon = function() return "icon:writ" end,

@@ -7,6 +7,7 @@ _G.lp = {
   GetName = function() return "Luxtheninth" end,
   GetMorale = function() return morale end, GetMaxMorale = function() return 900000 end,
   GetTarget = function() return { GetName = function() return "the Khardâmu Blood-sworn" end } end,
+  IsInCombat = function() return true end,  -- heals only count in combat, see Sessions.lua
   GetEffects = function() return { GetCount = function() return 0 end, Get = function() return nil end } end,
 }
 LocalPlayer = _G.lp; LocalPlayer.name = LocalPlayer:GetName()

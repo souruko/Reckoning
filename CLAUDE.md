@@ -51,7 +51,7 @@ the player-facing version and `REDESIGN_SPEC.md` for the spec each piece came fr
 **There is now a real offline test suite: `tools/offline/`.** Unlike the original scratch harness
 (described below), it runs the **real** classes and the **real** `Main.lua` under a **real Lua
 5.1** interpreter against a `Turbine` stub built on this repo's own `class()` shim. `sh
-tools/offline/run.sh` runs 335 checks in about a second. It caught three genuine bugs during the
+tools/offline/run.sh` runs 355 checks in about a second. It caught three genuine bugs during the
 redesign that `luac -p` could not have: an index-base probe that could not actually distinguish a
 0-based from a 1-based `EffectList`, a `nil` layout constant reaching `SetPosition`, and the
 analysis window failing to adopt an already-archived session. **Run it before every in-game
@@ -410,6 +410,34 @@ to cache. And the death window's countdown label (`UI/DeathCause.lua`) used to r
 only touches the label when the displayed integer second actually changes -- the countdown bar
 itself is untouched and still updates every frame, since that one needs to look smooth.
 
+**A session now starts and ends with combat, not with any parsed event** (reported in-game: a heal
+cast out of combat started a "fight", and it never ended for as long as heal-over-times kept
+ticking). `Session.endTime` moves on every recorded event, and `Sessions.Tick()` closed on it, so
+one HoT rotation could hold a session open indefinitely and archive a fight that never happened.
+There are now two clocks: `endTime` (any recorded event, unchanged) and **`combatEndTime`** (damage
+in either direction, a temp-morale loss, a defeat -- or a heal that landed while the client had the
+player flagged in combat). `Sessions.Tick` closes on `combatEndTime`, and `Sessions.Close`'s
+too-short discard reads `Session:CombatDuration()`, so a 2s scuffle padded out by 4s of heal ticks
+is judged as the 2s fight it was. Heals are gated on `Sessions.InCombat()`: in combat they open and
+extend a session like a hit; out of combat they are still *recorded* into whatever session is open
+(the last ticks of a HoT do belong to the fight just fought) but can neither open one nor postpone
+its close. A revive no longer opens a session either -- it is the end of a fight, never the start
+of one. The combat flag comes from `_G.lp:IsInCombat()`, **confirmed-real LocalPlayer API used
+identically by four independently-written installed plugins** (`FervourFocus`, `Gibberish3`'s
+`TRIGGER/COMBAT/Functions.lua`, `Darf/MiniRaid`, `Thurallor`) -- not a guessed Turbine shape. It is
+refreshed on the 4Hz heartbeat (`Sessions.Tick`) and cached, deliberately **not** by hooking
+`InCombatChanged`: FervourFocus and Gibberish3 both assign that field slot outright, so hooking it
+would be a clobbering contest with them (the chain-don't-clobber trick `Session.lua` uses for
+`MoraleChanged` only works if everyone plays along, and those two don't), and a flag up to 250ms
+stale cannot change whether a heal belongs to a fight. The read is `pcall`'d and falls back to "not
+in combat", i.e. to "heals never open a session on their own" -- the safe direction. Offline-
+verified end to end: `tools/offline/lifecycle_test.lua` drives real chat lines through
+`Turbine.Chat.Received` plus real `Sessions.Tick` calls. **Not yet confirmed in-game**: that
+`IsInCombat()` on the captured `_G.lp` handle tracks the real combat flag (the four precedents all
+call it on a freshly-fetched instance in an event handler, this one reads a handle captured at
+plugin load), and how long after the last hit the client actually drops the flag -- if a healer's
+fight ever splits into fragments, that lag is the first thing to check.
+
 **Later report: performance "very bad" specifically while a fight is being recorded**, prompting
 a look at `Session:MoralePct()` (`Session.lua`), the one native read on `AddTaken`'s/
 `AddTempMoraleLoss`'s own path (i.e. once per damage-taken chat line, including avoided hits that
@@ -645,7 +673,7 @@ inheritance + mixins). Treat them as vendored, not Reckoning-specific.
 | `Settings.lua` | `Settings.Load()` / `Settings.Save()` / `Settings.FixColors()` via `Turbine.PluginData`, `DEFAULTS` as single source of truth, `COLOR_KEYS` for colour rebuild. |
 | `Parse/en.lua` | `Trigger.ParseCombatChat` -- ported **verbatim** from `souruko/Gibberish3` (`UTILS/COMBATCHATPARSE/en.lua`). Do not rewrite it; `de.lua` / `fr.lua` are later drop-ins with the same signature. |
 | `Session.lua` | The `Session` class -- one fight's aggregate (`agg.done/taken/healOut/healIn`, `buckets`, `lastTaken` ring). One `Add*`/`On*` method per event kind: `AddDone`, `AddTaken`, `AddHealOut`, `AddHealIn`, `AddTempMoraleLoss`, `OnDefeat`, `OnRevive`. Each `buckets[second]` entry also carries a `<field>ByWho[counterpartName] = amount` table alongside its pooled scalar (`done`/`taken`/`healOut`/`healIn`) -- added so the analysis window's graph can respect the target/source picker; the pooled scalar is always exactly the sum of its own `ByWho` table (`AddToBucket()` updates both together, in one place, so they can't drift apart). Verified offline (a synthetic multi-target fight, checked the per-target and pooled sums against hand-computed expectations). |
-| `Sessions.lua` | The manager singleton (not a class): `Sessions.current` / `Sessions.list` (ring of 20, pinned exempt) / `Sessions.selected`; opens a `Session` lazily on the first own event, closes it after 5s of silence via `Sessions.Tick()`, discards anything under 3s. `Sessions.OnClosed` / `Sessions.OnSelfDefeat` are the callback lists Phase 3/4 UI hooks into. |
+| `Sessions.lua` | The manager singleton (not a class): `Sessions.current` / `Sessions.list` (ring of 20, pinned exempt) / `Sessions.selected`; opens a `Session` lazily on the first own **combat** event, closes it after 5s of combat silence via `Sessions.Tick()`, discards anything whose *combat* span is under 3s. `Sessions.OnClosed` / `Sessions.OnSelfDefeat` are the callback lists Phase 3/4 UI hooks into. **A session starts and ends with combat, not with any parsed event** -- see the heal-gating note in Build status. |
 | `Events.lua` | Wraps `Turbine.Chat.Received` (chaining to whatever was already registered), strips `<rgb=#......>` tags and trims before calling `Trigger.ParseCombatChat`, dispatches into `Sessions.*`. Also hosts the heartbeat (`Events.heartbeat`, a bare `Turbine.UI.Window` with `SetWantsUpdates(true)`) that drives `Sessions.Tick()`, since session-close-on-silence has to run even when chat is quiet. `Events.Shutdown()` restores the previous `Turbine.Chat.Received` and stops the heartbeat -- called from `plugin.Unload`. |
 | `Buffs.lua` | Self-buff uptime tracking. Polls `_G.lp:GetEffects()` at 4Hz from Events.lua's heartbeat (**not** the live meter's Update, as the spec suggested -- that meter can be switched off and uptime must keep recording either way), opening/closing an interval per effect name on `session.buffs[name] = { intervals, apps }`. `Buffs.Stats(session, fromSec, toSec)` clips every interval to a range and returns uptime / uptime% / apps / longest gap, sorted. Data source is the live effect list, **not** parser event 17 -- event 17 carries no duration and no fade, so uptime from it would be a guess. Everything here is defensive (one pcall around the whole enumeration; a failed read is a no-op, never "everything faded"; the 0-vs-1-based index base of `EffectList:Get` is **detected**, by probing index 0, not assumed) because nothing in this codebase has touched `Turbine.Gameplay.EffectList` before -- see the three "guessed the shape of a Turbine object" bugs in Build status. |
 | `Utils/Class.lua`, `Utils/Type.lua` | Vendored OOP shim, see above. |
@@ -811,7 +839,7 @@ Follow the `VitalSelf` pattern: `Turbine.PluginData.Save(Turbine.DataScope.Chara
 ## Testing
 
 **Run `sh tools/offline/run.sh` before every in-game load** (needs `lua5.1`; see
-`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 335
+`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 355
 checks against the real classes and the real `Main.lua`. It is not a substitute for loading the
 plugin -- it cannot tell you whether anything actually *draws* -- but everything it catches is a
 reload you don't have to spend.

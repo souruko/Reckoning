@@ -16,6 +16,9 @@ _G.lp = {
 	GetMorale = function() return 500000 end,
 	GetMaxMorale = function() return 900000 end,
 	GetTarget = function() return nil end,
+	-- Sessions.lua gates heal events on this (a heal only opens/extends a session in combat);
+	-- replaying a real fight log means the player was in combat the whole way through.
+	IsInCombat = function() return true end,
 	GetEffects = function() return { GetCount = function() return 0 end, Get = function() return nil end } end,
 }
 LocalPlayer = _G.lp

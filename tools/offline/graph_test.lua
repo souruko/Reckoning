@@ -5,7 +5,8 @@ local env = dofile("stub.lua"); local ROOT = env.ROOT
 import "Reckoning.Utils.Type"; import "Reckoning.Utils.Class"; import "Reckoning.Constants"
 Trigger = {}; import "Reckoning.Parse.en"; import "Reckoning.Settings"
 _G.lp = { GetName=function() return "Luxtheninth" end, GetMorale=function() return 5e5 end,
-  GetMaxMorale=function() return 9e5 end, GetTarget=function() return nil end }
+  GetMaxMorale=function() return 9e5 end, GetTarget=function() return nil end,
+  IsInCombat=function() return true end }  -- heals only count in combat, see Sessions.lua
 LocalPlayer = _G.lp; LocalPlayer.name = LocalPlayer:GetName()
 Settings.Load()
 import "Reckoning.Session"; import "Reckoning.Sessions"; import "Reckoning.Events"

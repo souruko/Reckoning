@@ -17,6 +17,7 @@ _G.lp = {
   GetName = function() return "Luxtheninth" end,
   GetMorale = function() return 5e5 end, GetMaxMorale = function() return 9e5 end,
   GetTarget = function() return nil end,
+  IsInCombat = function() return true end,  -- heals only count in combat, see Sessions.lua
   GetEffects = function()
     if readFails then error("effect list unavailable") end
     local ordered = {}

@@ -18,6 +18,14 @@ function Session:Constructor(startTime, startClock)
 	self.startTime  = startTime
 	self.endTime    = startTime
 	self.startClock = startClock  -- "HH:MM", see Sessions.lua (Turbine.Engine.GetDate())
+
+	-- The last moment this session saw real *combat* -- damage in either direction, a temp-morale
+	-- loss, a defeat, or a heal that landed while the client had the player flagged in combat. Any
+	-- recorded event moves self.endTime; only those move this one, and Sessions.Tick() closes the
+	-- session on this one. A heal-over-time ticking away after the fight is not a fight: it used to
+	-- move endTime on every tick and so held a session open for as long as the HoT ran (and could
+	-- open one from nothing out of combat). See Sessions.lua's heal dispatch.
+	self.combatEndTime = startTime
 	self.died       = false
 	self.pinned     = false
 
@@ -69,9 +77,18 @@ end
 -- Internal helpers
 ---------------------------------------------------------------------------------------------------
 
-function Session:Touch(t)
+-- `combat` marks this event as real combat activity, i.e. something that should keep the fight
+-- alive (see self.combatEndTime). Damage in either direction, a temp-morale loss and a defeat
+-- always pass it; heals never do on their own -- Sessions.lua calls MarkCombat() separately for a
+-- heal that landed while the player was flagged in combat, since it is the one that owns the
+-- cached combat state.
+function Session:Touch(t, combat)
 	if t > self.endTime then
 		self.endTime = t
+	end
+
+	if combat then
+		self:MarkCombat(t)
 	end
 
 	local second = math.floor(t - self.startTime)
@@ -84,6 +101,15 @@ function Session:Touch(t)
 	-- the session is live -- a closed session's cache is permanent, so re-selecting the same
 	-- range (or switching views and back) stays a pure redraw.
 	self._sliceCache = {}
+end
+
+-- Extends the fight without recording anything. Sessions.lua calls this for a heal that landed
+-- while the player was in combat -- a healer's whole fight can be heals with no damage in either
+-- direction, and that has to keep the session open the same way a hit would.
+function Session:MarkCombat(t)
+	if t > self.combatEndTime then
+		self.combatEndTime = t
+	end
 end
 
 -- Category ids for the compact event records. Kept numeric rather than the string keys the
@@ -270,7 +296,7 @@ end
 
 function Session:AddDone(skill, dmgType, target, amount, avoidType, critType, t)
 	target = StripThe(target)
-	self:Touch(t)
+	self:Touch(t, true)
 
 	FoldInto(DamageRow(self.agg.done, self.names.done, skill, dmgType, target), amount, avoidType, critType)
 	self:LogEvent("done", t, skill, dmgType, target, amount, critType, avoidType)
@@ -280,7 +306,7 @@ end
 
 function Session:AddTaken(skill, dmgType, initiator, amount, avoidType, critType, t)
 	initiator = StripThe(initiator)
-	self:Touch(t)
+	self:Touch(t, true)
 
 	local row = DamageRow(self.agg.taken, self.names.taken, skill, dmgType, initiator)
 	local moralePct = self:MoralePct()
@@ -321,13 +347,13 @@ function Session:AddHealIn(skill, initiator, amount, critType, t)
 end
 
 function Session:AddTempMoraleLoss(amount, t)
-	self:Touch(t)
+	self:Touch(t, true)
 	self:PushLastTaken({ time = t, kind = "tempMorale", amount = amount, moralePct = self:MoralePct() })
 end
 
 function Session:OnDefeat(defeatedName, t)
 	defeatedName = StripThe(defeatedName)
-	self:Touch(t)
+	self:Touch(t, true)
 	if defeatedName == StripThe(LocalPlayer.name) then
 		self.died = true
 	end
@@ -343,6 +369,14 @@ end
 
 function Session:Duration()
 	return self.endTime - self.startTime
+end
+
+-- The fight itself: start to the last *combat* event. Duration() can run a few seconds longer,
+-- since a heal recorded in the session's tail still moves endTime -- so anything judging "was this
+-- a real fight, and how long did it last" (the too-short-to-keep discard in Sessions.Close, the
+-- silence timer in Sessions.Tick) reads this instead.
+function Session:CombatDuration()
+	return self.combatEndTime - self.startTime
 end
 
 -- Seconds in which the player was actually acting. With a range, only the ones inside it --

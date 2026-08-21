@@ -39,6 +39,52 @@ local function EnsureOpen(t)
 	end
 end
 
+---------------------------------------------------------------------------------------------------
+-- Combat state
+---------------------------------------------------------------------------------------------------
+-- A session has to start and end with combat. Damage in either direction (and a temp-morale loss,
+-- and a defeat) says so by itself; a heal does not. Heal-over-time ticks run on well past the end
+-- of a fight and can be cast entirely out of one, and they used to both open a session from
+-- nothing and hold it open for as long as they kept ticking -- every tick moved endTime, which is
+-- what the silence timer closed on.
+--
+-- So heals are gated on the client's own combat flag instead. _G.lp:IsInCombat() is confirmed-real
+-- LocalPlayer API, used identically by four independently-written installed plugins (FervourFocus,
+-- Gibberish3's TRIGGER/COMBAT/Functions.lua, Darf/MiniRaid, Thurallor) -- not a guess at a Turbine
+-- shape, which is the category of bug this codebase has already been bitten by three times.
+--
+-- The flag is refreshed on the heartbeat (Tick, 4Hz) rather than by hooking the InCombatChanged
+-- event: both FervourFocus and Gibberish3 assign that field slot outright, so hooking it here
+-- would be a clobbering contest with them, and a combat flag up to 250ms stale cannot change
+-- whether a heal belongs to a fight. Falls back to "not in combat" if the read ever throws, which
+-- degrades to "heals never open a session on their own" -- the safe direction.
+local inCombat = false
+
+local function RefreshInCombat()
+	local ok, value = pcall(function() return _G.lp:IsInCombat() end)
+	inCombat = (ok and value == true)
+end
+
+RefreshInCombat()  -- the plugin can be loaded (or reloaded) mid-fight
+
+-- True while the client has the player flagged in combat, as of the last heartbeat tick.
+function Sessions.InCombat()
+	return inCombat
+end
+
+-- Heal dispatch: opens a session only in combat, and only then does the heal count as combat
+-- activity. Out of combat a heal is still recorded into whatever session is already open (the last
+-- ticks of a HoT do belong to the fight that was just fought) -- it simply cannot start one or
+-- keep one alive. Returns false when there is nothing to record into.
+local function EnsureOpenForHeal(t)
+	if inCombat then
+		EnsureOpen(t)
+		Sessions.current:MarkCombat(t)
+		return true
+	end
+	return Sessions.current ~= nil
+end
+
 -- Trims Sessions.list down to MAX_SESSIONS non-pinned entries, dropping the oldest non-pinned
 -- session first. Pinned sessions never count against the cap and are never dropped here.
 local function TrimRing()
@@ -67,7 +113,9 @@ function Sessions.Close()
 		return nil
 	end
 
-	if s:Duration() < MIN_DURATION then
+	-- CombatDuration, not Duration: a two-second scuffle followed by four seconds of heal ticks is
+	-- a two-second fight, and the discard has to judge it as one.
+	if s:CombatDuration() < MIN_DURATION then
 		return nil
 	end
 
@@ -95,10 +143,17 @@ function Sessions.Close()
 	return s
 end
 
--- Called on a heartbeat tick (see Events.lua) -- not from an event handler. Closes the open
--- session once it has gone quiet for CLOSE_AFTER seconds.
+-- Called on a heartbeat tick (see Events.lua) -- not from an event handler. Refreshes the cached
+-- combat flag and closes the open session once it has gone quiet for CLOSE_AFTER seconds.
+--
+-- The silence is measured against combatEndTime, not endTime: a session ends when the *fight*
+-- does. Heals landing after that still get recorded into it for as long as it stays open, but they
+-- no longer postpone the close, which is what let a rotation of heal-over-times keep one session
+-- running indefinitely.
 function Sessions.Tick(now)
-	if Sessions.current ~= nil and (now - Sessions.current.endTime) >= CLOSE_AFTER then
+	RefreshInCombat()
+
+	if Sessions.current ~= nil and (now - Sessions.current.combatEndTime) >= CLOSE_AFTER then
 		Sessions.Close()
 	end
 end
@@ -118,12 +173,16 @@ function Sessions.AddTaken(skill, dmgType, initiator, amount, avoidType, critTyp
 end
 
 function Sessions.AddHealOut(skill, target, amount, critType, t)
-	EnsureOpen(t)
+	if not EnsureOpenForHeal(t) then
+		return
+	end
 	Sessions.current:AddHealOut(skill, target, amount, critType, t)
 end
 
 function Sessions.AddHealIn(skill, initiator, amount, critType, t)
-	EnsureOpen(t)
+	if not EnsureOpenForHeal(t) then
+		return
+	end
 	Sessions.current:AddHealIn(skill, initiator, amount, critType, t)
 end
 
@@ -143,8 +202,12 @@ function Sessions.OnDefeat(defeatedName, t)
 	end
 end
 
+-- Deliberately does not open a session: a revive is the end of a fight, never the start of one,
+-- and reviving at a rez circle with nothing else happening used to open an empty one.
 function Sessions.OnRevive(revivedName, t)
-	EnsureOpen(t)
+	if Sessions.current == nil then
+		return
+	end
 	Sessions.current:OnRevive(revivedName, t)
 end
 
