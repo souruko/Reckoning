@@ -98,6 +98,7 @@ function Control:SetChecked(v) self._checked = v end
 function Control:IsChecked() return self._checked end
 function Control:SetClipMode(m) self._clip = m end
 function Control:SetMultiline(v) self._multiline = v end
+function Control:SetMarkupEnabled(v) self._markup = v end
 function Control:SetWantsKeyEvents(v) self._keyEvents = v end
 
 local Window = class(Control)

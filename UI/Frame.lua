@@ -6,6 +6,13 @@
 -- move-overlay pattern, applied directly to the header instead of a separate move-mode toggle).
 --=================================================================================================
 
+-- Close button geometry -- matches Gibberish3's OPTIONS2/ELEMENTS/PanelWindow.lua and
+-- LootLogs' UI/Window/PanelWindow.lua exactly (BTN_SIZE 22, BTN_ICON 16, 8px from the edge),
+-- so all three plugins' window chrome now reads as one language.
+local CLOSE_SIZE = 22
+local CLOSE_ICON = 16
+local CLOSE_PAD = 8
+
 Frame = class(Turbine.UI.Window)
 
 -- params: { title, key, width, height, headerHeight, fillHex, borderHex, headerRuleHex, closable }
@@ -95,8 +102,8 @@ function Frame:Resize(width, height)
 	if self.titleLabel ~= nil then
 		self.titleLabel:SetSize(width - (self.closable and 30 or 16), self.headerHeight)
 	end
-	if self.closeLabel ~= nil then
-		self.closeLabel:SetPosition(width - 22, 0)
+	if self.closeButton ~= nil then
+		self.closeButton:SetPosition(width - CLOSE_PAD - CLOSE_SIZE, math.floor((self.headerHeight - CLOSE_SIZE) / 2))
 	end
 
 	self.client:SetSize(width, height - self.headerHeight)
@@ -117,8 +124,14 @@ function Frame:BuildHeader(title, width, ruleColor)
 		self.titleLabel = Turbine.UI.Label()
 		self.titleLabel:SetParent(self.header)
 		self.titleLabel:SetFont(Font.TrajanPro13)
-		self.titleLabel:SetText(title)
 		self.titleLabel:SetForeColor(Theme.Color(Theme.Hex.Text))
+		-- Markup off by default (Turbine.UI.Label, confirmed via Gibberish3's PanelWindow.lua and
+		-- LootLogs' LootRow.lua, both of which call this explicitly before trusting a "<" in their
+		-- text) -- needed for Analysis's inline <rgb=> version tag to render as color instead of
+		-- literal tag text. Every title string reaching this Frame is one this codebase writes
+		-- itself, never untrusted data, so enabling it unconditionally is safe.
+		self.titleLabel:SetMarkupEnabled(true)
+		self.titleLabel:SetText(title)
 		self.titleLabel:SetPosition(10, 0)
 		self.titleLabel:SetSize(width - (self.closable and 30 or 16), self.headerHeight)
 		self.titleLabel:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
@@ -126,17 +139,36 @@ function Frame:BuildHeader(title, width, ruleColor)
 	end
 
 	if self.closable then
-		self.closeLabel = Turbine.UI.Label()
-		self.closeLabel:SetParent(self.header)
-		self.closeLabel:SetFont(Font.Verdana10)
-		self.closeLabel:SetText("x")
-		self.closeLabel:SetForeColor(Theme.Color(Theme.Hex.MutedText))
-		self.closeLabel:SetSize(20, self.headerHeight)
-		self.closeLabel:SetPosition(width - 22, 0)
-		self.closeLabel:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleCenter)
+		-- Icon button, not a text "x" -- matches Gibberish3/LootLogs: a plain Control sized
+		-- CLOSE_SIZE, transparent at rest (SetBackColor(nil), the same clear-to-transparent
+		-- Gibberish3's own OPTIONS2/WINDOW/LIBRARY/LibraryItem.lua relies on), Theme.Hex.Hover
+		-- on MouseEnter -- the same hover fill every other clickable row/chip/tab in this
+		-- codebase already uses (docs/DESIGN.md "Interactions"). The glyph itself is a real
+		-- Resources/cross.tga icon (Phosphor "x", regular, 16x16 -- see Resources/ICONS.md),
+		-- centred inside the button and drawn with BlendMode.Overlay so it tints to whatever
+		-- sits behind it rather than carrying its own baked colour.
+		self.closeButton = Turbine.UI.Control()
+		self.closeButton:SetParent(self.header)
+		self.closeButton:SetSize(CLOSE_SIZE, CLOSE_SIZE)
+		self.closeButton:SetPosition(width - CLOSE_PAD - CLOSE_SIZE, math.floor((self.headerHeight - CLOSE_SIZE) / 2))
+		self.closeButton:SetMouseVisible(true)
+
+		local closeIcon = Turbine.UI.Control()
+		closeIcon:SetParent(self.closeButton)
+		closeIcon:SetSize(CLOSE_ICON, CLOSE_ICON)
+		closeIcon:SetPosition(math.floor((CLOSE_SIZE - CLOSE_ICON) / 2), math.floor((CLOSE_SIZE - CLOSE_ICON) / 2))
+		closeIcon:SetBlendMode(Turbine.UI.BlendMode.Overlay)
+		closeIcon:SetBackground("Reckoning/Resources/cross.tga")
+		closeIcon:SetMouseVisible(false)
 
 		local frame = self
-		self.closeLabel.MouseClick = function()
+		self.closeButton.MouseEnter = function()
+			frame.closeButton:SetBackColor(Theme.Color(Theme.Hex.Hover))
+		end
+		self.closeButton.MouseLeave = function()
+			frame.closeButton:SetBackColor(nil)
+		end
+		self.closeButton.MouseClick = function()
 			frame:Close()
 		end
 

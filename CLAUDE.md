@@ -251,6 +251,35 @@ be wrong:
   (matching by name against `_G.lp:GetEffects()` at render time) with this fixed path kept as the
   fallback for anything not currently live -- not a wholesale swap.
 
+**Window chrome brought in line with Gibberish3/LootLogs, per direct user request.** Every text
+glyph this codebase used as a UI control (`UI/Frame.lua`'s "x" close `Label`, the search box's "x"
+clear `Label`, the session rail's plain filled/dim pin square) is now a real icon instead --
+`Resources/*.tga` (new folder; `Resources/ICONS.md` has the source and licence, `tools/icons/
+build_icons.py` rebuilds them from Phosphor Icons, MIT licensed, the same source Gibberish3's
+`RESOURCES/` and LootLogs' `Ressources/` already draw from). Read both those folders' chrome first
+(`Gibberish3/OPTIONS2/ELEMENTS/PanelWindow.lua`, `LootLogs/UI/Window/PanelWindow.lua`) -- they are
+independent re-implementations of the *same* close-button shape (a plain `Control` sized 22x22,
+transparent at rest, `Theme`'s hover fill on `MouseEnter`, a 16x16 child `Control` centred inside
+it with `SetBlendMode(Overlay)` + `SetBackground(path)`) -- which is a strong confirmed-working
+precedent, not a guess. `UI/Frame.lua`'s close button (`self.closeButton`/`closeIcon`, replacing
+`self.closeLabel`), the session rail's pin (`Analysis:BuildSessionRow`, now `Resources/pin_on.tga`
+/`pin_off.tga` swapped by state -- the same two-full-icon-no-tint technique as Gibberish3's own pin
+toggle, `OPTIONS2/WINDOW/LIBRARY/LibraryItem.lua`) and the search box's magnifying-glass/clear
+glyph (`Analysis:BuildSearchBox`, now `Resources/search.tga`/`cross.tga` -- matching LootLogs'
+`UI/Window/Sidebar.lua`, the same file this box's `Turbine.UI.TextBox` itself was already ported
+from) all follow this exactly. `Frame:Close()`'s Escape-key handling and `Resize()`'s reposition
+logic are untouched beyond renaming `closeLabel` to `closeButton`. Offline-verified: `windows_test.lua`
+and `analysis_test.lua` both construct the real `Analysis`/`DeathCause` windows (which is where the
+close button and, for `Analysis`, the search boxes and session rail actually get built) and both
+still report zero failures, so nothing in the construction path throws or mis-sizes under the stub.
+**Not yet confirmed in-game**: this is the same residual risk every other `SetBackground` +
+`BlendMode.Overlay` icon in this codebase carries (see the self-buff icon tile saga above) --
+plausible, pattern-matched against two independent *confirmed-working* precedents rather than one
+guessed-at reference, but not proof until a real load shows the glyphs actually painting instead of
+rendering as an empty tile or a solid block. If they don't, re-read that saga's round six/seven/eight
+before assuming the cause is something new -- the same `Icon.Apply` sequence in `Constants.lua` is
+right there as a second, already-hardened reference for what this engine actually needs.
+
 **Skill table and buff table each got a search box** (`Analysis:BuildSearchBox`, wired in
 `BuildTable`/`BuildBuffSection`), filtering by skill/type/who name and buff name respectively,
 case-insensitive substring. This is the first use anywhere in this codebase of

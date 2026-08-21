@@ -47,6 +47,7 @@ local KPI_ROW_HEIGHT = 50
 local PICKER_HEIGHT = 22
 local ROW_HEIGHT = 22
 local RAIL_ROW_HEIGHT = 34
+local PIN_SIZE = 12
 local SCROLLBAR_WIDTH = 10
 local RAIL_POOL = 20 -- generous: ring cap is 10 but pinned sessions are exempt from it
 local PANEL_WIDTH = 233
@@ -143,6 +144,7 @@ local AVOID_NAMES = {
 -- Search box geometry, shared by the skill table and the buff table.
 local SEARCH_HEIGHT = 20
 local SEARCH_WIDTH = 190
+local SEARCH_ICON = 16
 
 -- Plain substring match, case-insensitive -- `string.find(..., true)` (plain mode) so a name
 -- with pattern-magic characters in it (unlikely in a skill/buff name, but free to guard) can't
@@ -160,7 +162,14 @@ end
 
 function Analysis:Constructor()
 	Frame.Constructor(self, {
-		key = "analysis", title = "Reckoning", closable = true,
+		-- Version rendered dim via an inline <rgb=> tag, not a second Label/Font -- matches
+		-- Gibberish3's own title-bar version text (OPTIONS2/WINDOW/BaseWindow.lua's
+		-- _RefreshTexts, "Brand  <rgb=#5C6076>3.8.0</rgb>"), the only confirmed-working
+		-- precedent anywhere in these plugins for a de-emphasized run of text inside one
+		-- Turbine.UI.Label. Uses Theme.Hex.DimText rather than Gibberish's own hex so it stays
+		-- inside Reckoning's own palette.
+		key = "analysis", closable = true,
+		title = "Reckoning  <rgb=" .. Theme.Hex.DimText .. ">" .. Reckoning.Version .. "</rgb>",
 		width = MIN_WIDTH, height = DEFAULT_HEIGHT, headerHeight = HEADER_HEIGHT,
 	})
 
@@ -411,13 +420,17 @@ function Analysis:BuildSessionRow()
 	leftBorder:SetSize(0, RAIL_ROW_HEIGHT)
 	leftBorder:SetMouseVisible(false)
 
-	-- Pin glyph: a small filled square, not a text glyph -- the Unicode diamonds (U+25C6/25C7)
-	-- the mockup uses aren't in this client's fonts and render as "?". A filled rectangle is
-	-- also literally what docs/DESIGN.md says every mark in this design is, absent an icon.
+	-- Pin glyph: a real icon, not a text glyph -- the Unicode diamonds (U+25C6/25C7) the mockup
+	-- uses aren't in this client's fonts and render as "?" (docs/DESIGN.md / CLAUDE.md "Build
+	-- status"). Resources/pin_on.tga / pin_off.tga (Phosphor "push-pin-simple", fill/regular,
+	-- 12x12 -- see Resources/ICONS.md) swap by state, same technique as Gibberish3's own pin
+	-- toggle (OPTIONS2/WINDOW/LIBRARY/LibraryItem.lua): BlendMode.Overlay over the row's own
+	-- themed fill, no colour baked into the asset.
 	local pin = Turbine.UI.Control()
 	pin:SetParent(row)
-	pin:SetPosition(9, 12)
-	pin:SetSize(8, 8)
+	pin:SetPosition(8, math.floor((RAIL_ROW_HEIGHT - PIN_SIZE) / 2))
+	pin:SetSize(PIN_SIZE, PIN_SIZE)
+	pin:SetBlendMode(Turbine.UI.BlendMode.Overlay)
 	pin:SetMouseVisible(true)
 
 	local name = Turbine.UI.Label()
@@ -489,7 +502,7 @@ function Analysis:RefreshRail()
 			widgets.control:SetPosition(0, (i - 1) * RAIL_ROW_HEIGHT)
 			widgets.name:SetText(s:DisplayName() .. (s.died and " · died" or ""))
 			widgets.meta:SetText(s.startClock .. " · " .. Format.Clock(s:Duration()) .. " · " .. Format.Rate(s:Rate("done")))
-			widgets.pin:SetBackColor(Theme.Color(s.pinned and Theme.Hex.Accent or Theme.Hex.Disabled))
+			widgets.pin:SetBackground(s.pinned and "Reckoning/Resources/pin_on.tga" or "Reckoning/Resources/pin_off.tga")
 			self:RefreshRailRow(widgets)
 		end
 	end
@@ -836,11 +849,24 @@ function Analysis:BuildSearchBox(parent, placeholderText)
 	inset:SetBackColor(Theme.Color(Theme.Hex.WindowFill))
 	inset:SetMouseVisible(false)
 
-	local fieldWidth = SEARCH_WIDTH - 2 - 6 - 18
+	-- Magnifying-glass icon, left of the field -- matches LootLogs' own sidebar search
+	-- (UI/Window/Sidebar.lua: searchIcon, Resources/search.tga, BlendMode.Overlay), the same
+	-- same-shape precedent this box's TextBox itself is already built from (see this
+	-- function's header comment).
+	local searchIcon = Turbine.UI.Control()
+	searchIcon:SetParent(inset)
+	searchIcon:SetPosition(6, math.floor((SEARCH_HEIGHT - 2 - SEARCH_ICON) / 2))
+	searchIcon:SetSize(SEARCH_ICON, SEARCH_ICON)
+	searchIcon:SetBlendMode(Turbine.UI.BlendMode.Overlay)
+	searchIcon:SetBackground("Reckoning/Resources/search.tga")
+	searchIcon:SetMouseVisible(false)
+
+	local fieldLeft = 6 + SEARCH_ICON + 4
+	local fieldWidth = SEARCH_WIDTH - 2 - fieldLeft - 18
 
 	local textbox = Turbine.UI.TextBox()
 	textbox:SetParent(inset)
-	textbox:SetPosition(6, 0)
+	textbox:SetPosition(fieldLeft, 0)
 	textbox:SetSize(fieldWidth, SEARCH_HEIGHT - 2)
 	textbox:SetMultiline(false)
 	textbox:SetFont(Font.Verdana10)
@@ -853,7 +879,7 @@ function Analysis:BuildSearchBox(parent, placeholderText)
 	-- own comment on why (a seeded value would have to be filtered back out of every search).
 	local placeholder = Turbine.UI.Label()
 	placeholder:SetParent(inset)
-	placeholder:SetPosition(8, 0)
+	placeholder:SetPosition(fieldLeft + 2, 0)
 	placeholder:SetSize(fieldWidth, SEARCH_HEIGHT - 2)
 	placeholder:SetFont(Font.Verdana10)
 	placeholder:SetForeColor(Theme.Color(Theme.Hex.DimText))
@@ -861,17 +887,28 @@ function Analysis:BuildSearchBox(parent, placeholderText)
 	placeholder:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
 	placeholder:SetMouseVisible(false)
 
-	local clear = Turbine.UI.Label()
+	-- Clear button: a real Resources/cross.tga icon (same asset Frame's close button uses),
+	-- not a text "x" -- wrapped in its own Theme.Hex.Hover-on-MouseEnter Control rather than
+	-- recoloured directly, since a .tga's BlendMode.Overlay tint comes from what sits behind
+	-- it, not from its own ForeColor (there isn't one -- see UI/Frame.lua's close button for
+	-- the same reasoning).
+	local clear = Turbine.UI.Control()
 	clear:SetParent(control)
 	clear:SetPosition(SEARCH_WIDTH - 2 - 16, 1)
 	clear:SetSize(16, SEARCH_HEIGHT - 2)
-	clear:SetFont(Font.Verdana10)
-	clear:SetText("x")
-	clear:SetForeColor(Theme.Color(Theme.Hex.DimText))
-	clear:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleCenter)
+	clear:SetMouseVisible(true)
 	clear:SetVisible(false)
-	clear.MouseEnter = function() clear:SetForeColor(Theme.Color(Theme.Hex.Accent200)) end
-	clear.MouseLeave = function() clear:SetForeColor(Theme.Color(Theme.Hex.DimText)) end
+
+	local clearIcon = Turbine.UI.Control()
+	clearIcon:SetParent(clear)
+	clearIcon:SetSize(SEARCH_ICON, SEARCH_ICON)
+	clearIcon:SetPosition(math.floor((16 - SEARCH_ICON) / 2), math.floor(((SEARCH_HEIGHT - 2) - SEARCH_ICON) / 2))
+	clearIcon:SetBlendMode(Turbine.UI.BlendMode.Overlay)
+	clearIcon:SetBackground("Reckoning/Resources/cross.tga")
+	clearIcon:SetMouseVisible(false)
+
+	clear.MouseEnter = function() clear:SetBackColor(Theme.Color(Theme.Hex.Hover)) end
+	clear.MouseLeave = function() clear:SetBackColor(nil) end
 
 	return { control = control, textbox = textbox, placeholder = placeholder, clear = clear, focused = false }
 end
