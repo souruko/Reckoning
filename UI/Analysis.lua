@@ -97,24 +97,47 @@ local VIEWS = { "done", "taken", "healOut", "healIn" }
 local VIEW_META = {
 	done = {
 		label = "Damage done", question = "Which skills carried it, against whom",
-		pickerLabel = "targets", hitWord = "hits", rateWord = "DPS", color = Theme.Hex.DamageDone,
+		pickerLabel = "targets", hitWord = "hits", rateWord = "DPS", role = "done",
 		shape = "damage", counterpartHeader = "TYPE",
 	},
 	taken = {
 		label = "Damage taken", question = "What hit you, what got through",
-		pickerLabel = "sources", hitWord = "hits", rateWord = "DPS", color = Theme.Hex.DamageTaken,
+		pickerLabel = "sources", hitWord = "hits", rateWord = "DPS", role = "taken",
 		shape = "damage", counterpartHeader = "TYPE",
 	},
 	healOut = {
 		label = "Healing done", question = "Self-sustain and group contribution",
-		pickerLabel = "recipients", hitWord = "heals", rateWord = "HPS", color = Theme.Hex.HealingDone,
+		pickerLabel = "recipients", hitWord = "heals", rateWord = "HPS", role = "healOut",
 		shape = "heal", counterpartHeader = "TO",
 	},
 	healIn = {
 		label = "Healing taken", question = "Did healers keep pace",
-		pickerLabel = "casters", hitWord = "heals", rateWord = "HPS", color = Theme.Hex.HealingTaken,
+		pickerLabel = "casters", hitWord = "heals", rateWord = "HPS", role = "healIn",
 		shape = "heal", counterpartHeader = "FROM",
 	},
+}
+
+-- A view's series colour, resolved AT CALL TIME from the active palette preset. VIEW_META used
+-- to carry a `color` hex read straight out of Theme.Hex, which is a module-level table built once
+-- at load -- it could never see the options window's Palette page change anything. Every read of
+-- it now goes through here (Constants.lua's Theme.Series).
+local function MetaColor(meta)
+	return Theme.Series(meta.role)
+end
+
+-- Damage-type tints for settings.typeColoredBars (options window, Palette page). These are ROLE
+-- colours, not series colours, so they are read straight from Theme.Hex and are deliberately NOT
+-- presettable -- a preset changes what "damage taken" looks like, not what "fire" means.
+--
+-- Only the five types Theme.Hex actually names have a tint. Everything else -- and
+-- DamageType.Unknown (13), which covers absorbs and any line with no stated type -- falls back to
+-- the view's own series colour rather than being given an invented sixth colour.
+local TYPE_HEX = {
+	[DamageType.Common]     = Theme.Hex.TypeCommon,
+	[DamageType.Beleriand]  = Theme.Hex.TypeBeleriand,
+	[DamageType.Fire]       = Theme.Hex.TypeFire,
+	[DamageType.Light]      = Theme.Hex.TypeLight,
+	[DamageType.Shadow]     = Theme.Hex.TypeShadow,
 }
 
 -- Column specs, replacing the old derive-widths-from-header-names approach. Crit and Dev are one
@@ -147,21 +170,43 @@ local COLUMN_SETS = {
 local SKILL_COLUMN_MIN = 150
 local MAX_TABLE_COLUMNS = 7
 
--- [chart box 22][icon 24][name 190][uptime % 98][uptime 90][apps 74][longest gap 106] = 604,
--- which is exactly the content width minus the two side panels and their gap.
+-- [chart box 22][icon 24][name 190][type 66][uptime % 98][uptime 90][apps 74][longest gap 106],
+-- against the mock's 604 content width (content minus the two side panels and their gap). TYPE
+-- is not in the mock -- it arrived with tracking every effect rather than only buffs, since
+-- "Wound" and "Writ of Health" in one list need telling apart -- so its 66px comes out of the
+-- name column, which is the one that absorbs slack in LayoutBuffColumns either way.
 --
--- `sortable` marks the five real data columns; the checkbox and icon gutters are not data and
--- get no click target (the BUFF header already spans the icon column, so clicking there sorts
+-- `sortable` marks the six real data columns; the checkbox and icon gutters are not data and
+-- get no click target (the EFFECT header already spans the icon column, so clicking there sorts
 -- by name).
 local BUFF_COLUMNS = {
 	{ key = "check", width = 22,  label = "" },
 	{ key = "icon",  width = 24,  label = "" },
-	{ key = "name",  width = 190, label = "BUFF",                       sortable = true },
+	{ key = "name",  width = 190, label = "EFFECT",                     sortable = true },
+	{ key = "kind",  width = 66,  label = "TYPE",                       sortable = true },
 	{ key = "pct",   width = 98,  label = "UPTIME %",    numeric = true, sortable = true },
 	{ key = "up",    width = 90,  label = "UPTIME",      numeric = true, sortable = true },
 	{ key = "apps",  width = 74,  label = "APPS",        numeric = true, sortable = true },
 	{ key = "gap",   width = 106, label = "LONGEST GAP", numeric = true, sortable = true },
 }
+
+-- What the TYPE column shows, and what the buff search box matches against. Keyed by
+-- Buffs.Kind.*; anything unrecognised falls back to the Unknown row, so a future kind can never
+-- render as an empty cell. "Unknown" is a real, honest state here -- see Buffs.Kinds' own note.
+local BUFF_KIND_TEXT = {
+	[Buffs.Kind.Buff]    = "Buff",
+	[Buffs.Kind.Debuff]  = "Debuff",
+	[Buffs.Kind.Unknown] = "Unknown",
+}
+local BUFF_KIND_HEX = {
+	[Buffs.Kind.Buff]    = Theme.Hex.HealingTaken,
+	[Buffs.Kind.Debuff]  = Theme.Hex.DamageTaken,
+	[Buffs.Kind.Unknown] = Theme.Hex.DimText,
+}
+
+local function BuffKindText(row)
+	return BUFF_KIND_TEXT[row.kind] or BUFF_KIND_TEXT[Buffs.Kind.Unknown]
+end
 
 -- Appended to the header text of whichever column the table is currently sorted by. ASCII, not
 -- the mock's Unicode triangles -- the session rail's pin diamonds already proved this (this
@@ -369,13 +414,65 @@ function Analysis:BuildHeaderExtras()
 		self.titleLabel:SetSize(200, HEADER_HEIGHT)
 	end
 
+	self:BuildPostButton()
+
 	self:LayoutHeaderExtras()
+end
+
+-- The post button reads the window's live state at rebuild time through these two closures rather
+-- than being handed a snapshot, so it can never post numbers from a previous refresh. See
+-- UI/PostButton.lua for why a click is unavoidable and ChatPost.lua for the text itself.
+function Analysis:BuildPostButton()
+	local window = self
+
+	self.postButton = PostButton({
+		parent = self.header,
+		headerHeight = HEADER_HEIGHT,
+		-- BuildLine, not Build: what a channel accepts is one plain line (see ChatPost's header).
+		onNeedLine = function()
+			local session = window.selectedSession
+			if session == nil then
+				return nil
+			end
+			local preset = (_G.settings and _G.settings.postPreset) or "summary"
+			local fromSec, toSec = window:RangeSeconds()
+			return ChatPost.BuildLine(session, preset, window.viewTab,
+				window.filter[window.viewTab], fromSec, toSec)
+		end,
+	})
+
+	-- The quickslot lives in its own top-level window positioned in screen coordinates, so it has
+	-- to follow this window rather than being a child of it.
+	self.postButton:Track(self)
+
+	-- Fired by Frame's header drag on every MouseMove, so the invisible click target stays glued
+	-- to the visible button while the window is being dragged.
+	self.OnMoved = function()
+		window:SyncPostOverlay(true)
+	end
+
+	-- Pressing this window raises it, which would bury the overlay -- so put the overlay back on
+	-- top in the same gesture. This is what keeps POST clickable without a per-frame Activate()
+	-- (and the focus-stealing that comes with one); see UI/PostButton.lua's header.
+	self.MouseDown = function()
+		window.postButton:Raise()
+	end
+
+	self.postButton.onCanDeath = function()
+		return window.selectedSession ~= nil and window.selectedSession.died == true
+	end
+
 end
 
 function Analysis:LayoutHeaderExtras()
 	local width = select(1, self:GetSize())
 	self.resetButton:SetPosition(width - 22 - 96, 0)
 	self.rangeChip:SetPosition(width - 22 - 96 - 6 - 220, 0)
+
+	if self.postButton ~= nil then
+		-- Place() moves the themed button, the channel button and the overlay together.
+		self.postButton:Place(width - 22 - 96 - 6 - 220 - 6 - PostButton.Width, 0)
+	end
 end
 
 function Analysis:RefreshHeaderExtras()
@@ -412,6 +509,83 @@ function Analysis:Resize(width, height)
 	if self.gripper ~= nil then
 		self.gripper:SetPosition(width - 12, height - 12)
 	end
+	-- Same reasoning as the gripper: the post button's overlay is positioned in screen
+	-- coordinates, so it must be re-placed on every resize, not only when Layout() runs.
+	if self.postButton ~= nil then
+		self.postButton:SyncOverlay(true)
+	end
+end
+
+-- The overlay quickslot is a separate top-level Window, so it does not inherit this window's
+-- position, size or visibility. Called from the drag handler and the resize path (instant) and
+-- from Events.lua's 4Hz heartbeat (the backstop for show/hide, which happens from several places).
+function Analysis:SyncPostOverlay(force)
+	if self.postButton ~= nil then
+		self.postButton:SyncOverlay(force)
+	end
+end
+
+---------------------------------------------------------------------------------------------------
+-- Settings
+---------------------------------------------------------------------------------------------------
+
+-- Re-reads everything this window takes from _G.settings and repaints. Nothing here rebuilds a
+-- Control: the palette, the number font, the graph's bucket width and the charted-buff set all
+-- flow through the refresh path that already exists.
+--
+-- The palette needs one extra step. RefreshContent only re-declares the graph's series when the
+-- VIEW changes (SetSeries clears the hidden set, so doing it every refresh would silently un-hide
+-- a series the reader toggled off) -- which means a preset change alone would leave the plot on
+-- its old colours. Clearing graphSeriesView forces exactly one re-declaration.
+function Analysis:ApplySettings()
+	self.graphSeriesView = nil
+
+	if self.graph ~= nil then
+		self.graph:ApplySettings()
+	end
+
+	self:AdoptChartedBuffs(true)
+	self:ApplyBorders()
+	self:Layout()
+end
+
+-- Re-reads settings.chartedBuffs into self.charted. Called when the options window's buff picker
+-- writes it -- the two surfaces edit the same list, and the analysis window caches it. `quiet`
+-- suppresses the refresh for callers that are about to do a full Layout anyway.
+function Analysis:AdoptChartedBuffs(quiet)
+	self.charted = {}
+	local saved = _G.settings.chartedBuffs
+	if type(saved) == "table" then
+		for i = 1, table.getn(saved) do
+			if i <= MAX_CHARTED and type(saved[i]) == "string" then
+				self.charted[table.getn(self.charted) + 1] = saved[i]
+			end
+		end
+	end
+
+	if not quiet then
+		self:RefreshContent()
+	end
+end
+
+-- Sessions.DropUnpinned / Sessions.ClearAll removed sessions out from under this window.
+function Analysis:OnSessionsDropped()
+	local kept = self.selectedSession
+	local stillThere = false
+	for i = 1, table.getn(Sessions.list) do
+		if Sessions.list[i] == kept then
+			stillThere = true
+			break
+		end
+	end
+
+	if not stillThere then
+		self.selectedSession = Sessions.current or Sessions.list[1]
+		self:ResetRange()
+	end
+
+	self:RefreshRail()
+	self:RefreshContent()
 end
 
 -- Back to the shipped size and position, for /reck reset.
@@ -453,7 +627,33 @@ function Analysis:RangeSeconds()
 	return fromSec, toSec
 end
 
+-- The plot's bucket count is not a constant any more: settings.bucketWidth (options window,
+-- Sessions page) can pin a bucket to 1 or 2 real seconds, which for a short fight means fewer
+-- than the pool's 48. It therefore depends on the SELECTED SESSION and has to be re-derived
+-- whenever that or the setting changes -- the range is clamped rather than reset, so narrowing
+-- the plot keeps as much of the reader's selection as still exists.
+--
+-- self.bucketCount and the Graph's own self.buckets are computed from the same function on the
+-- same session, so they always agree; if they ever did not, the range slider's stops and the
+-- seconds RangeSeconds() hands to Session:Slice would silently disagree with the plot.
+function Analysis:SyncBucketCount()
+	local count = GraphBucketCount(self.selectedSession)
+	if count == self.bucketCount then
+		return false
+	end
+
+	self.bucketCount = count
+	if self.rangeTo > count then
+		self.rangeTo = count
+	end
+	if self.rangeFrom >= self.rangeTo then
+		self.rangeFrom = math.max(1, self.rangeTo - 1)
+	end
+	return true
+end
+
 function Analysis:ResetRange()
+	self:SyncBucketCount()
 	self.rangeFrom = 1
 	self.rangeTo = self.bucketCount
 	if self.graph ~= nil then
@@ -724,48 +924,16 @@ function Analysis:BuildPicker()
 	self.pickerChips = {}
 end
 
--- Character count, not byte count: mob names carry accented characters (Utûgi, Rúadh) that are
--- two bytes each in the UTF-8 the client hands the parser, and counting those twice would both
--- over-estimate the chip's width and truncate the name earlier than asked. Lua 5.1 has no utf8
--- library, so the lead-byte ranges are counted by hand.
-local function CharCount(text)
-	local n = string.len(text)
-	local i, chars = 1, 0
-	while i <= n do
-		local b = string.byte(text, i)
-		local size = 1
-		if b >= 240 then size = 4
-		elseif b >= 224 then size = 3
-		elseif b >= 192 then size = 2 end
-		chars = chars + 1
-		i = i + size
-	end
-	return chars
-end
-
--- Truncate on a character boundary, never mid-sequence (a half-written UTF-8 character renders
--- as garbage). The marker is ASCII ".." rather than a "…": this client's fonts have already been
--- caught missing Geometric Shapes glyphs (the session rail's old pin diamonds rendered as "?").
+-- Both of these are UTF-8-aware character counts rather than byte counts -- see Format.CharCount /
+-- Format.Truncate in Constants.lua for why. They used to be hand-written here; ChatPost.lua needs
+-- the identical logic for its line-length cap, so it moved to Format and these are thin wrappers
+-- rather than a second copy that drifts.
 local function TruncateChip(text)
-	local n = string.len(text)
-	local i, chars = 1, 0
-	while i <= n do
-		local b = string.byte(text, i)
-		local size = 1
-		if b >= 240 then size = 4
-		elseif b >= 224 then size = 3
-		elseif b >= 192 then size = 2 end
-		if chars >= PICKER_MAX_CHARS - 2 then
-			return string.sub(text, 1, i - 1) .. ".."
-		end
-		chars = chars + 1
-		i = i + size
-	end
-	return text
+	return Format.Truncate(text, PICKER_MAX_CHARS)
 end
 
 local function ChipWidth(text)
-	return 16 + CharCount(text) * 7
+	return 16 + Format.CharCount(text) * 7
 end
 
 -- Greedy left-to-right flow into at most `maxRows` rows, `reserve` px kept free at the end of the
@@ -1287,7 +1455,7 @@ function Analysis:RefreshTableColumns(tableWidth)
 		if column.key == "skill" then
 			colorHex = Theme.Hex.Text
 		elseif column.accent then
-			colorHex = meta.color
+			colorHex = MetaColor(meta)
 		end
 
 		columns[i] = {
@@ -1353,7 +1521,7 @@ function Analysis:RefreshTableColumns(tableWidth)
 		local slot = self.tableRowPool[i]
 		slot.container:SetSize(x, ROW_HEIGHT)
 		slot.divider:SetSize(x, 1)
-		slot.shareBar:SetBackColor(Theme.Mix(meta.color, Theme.Hex.WindowFill, 0.08))
+		slot.shareBar:SetBackColor(Theme.Mix(MetaColor(meta), Theme.Hex.WindowFill, 0.08))
 
 		if slot.row == nil then
 			slot.row = Row(x, ROW_HEIGHT, padded)
@@ -1549,6 +1717,7 @@ end
 
 function Analysis:RefreshTable(rows)
 	local view = self.viewTab
+	local meta = VIEW_META[view]
 	local list = self:TableRows(rows, view)
 	list = self:FilterTableRows(list)
 
@@ -1570,6 +1739,15 @@ function Analysis:RefreshTable(rows)
 		n = poolSize
 	end
 
+	-- settings.typeColoredBars (options window, Palette page): tint each row's share bar by the
+	-- hit's own DAMAGE TYPE rather than by the view's series colour, so a fight's fire/shadow/
+	-- common split reads off the table without a column for it. Only the damage views have a type
+	-- at all -- a heal row's `type` is nil, and DamageType.Unknown (13, which covers absorbs and
+	-- any line with no stated type) is not a colour worth claiming either, so both fall back to
+	-- the series colour rather than to some fifth "other" tint.
+	local typed = (_G.settings.typeColoredBars == true) and (meta.shape == "damage")
+	local seriesMix = Theme.Mix(MetaColor(meta), Theme.Hex.WindowFill, 0.08)
+
 	for i = 1, n do
 		local slot = self.tableRowPool[i]
 		local row = list[i]
@@ -1577,6 +1755,13 @@ function Analysis:RefreshTable(rows)
 		slot.row:SetValues(self:RowValues(view, row))
 		local share = (maxTotal > 0) and (row.total / maxTotal) or 0
 		slot.shareBar:SetSize(math.floor(self.tableWidth * share), ROW_HEIGHT - 1)
+
+		if typed then
+			local hex = TYPE_HEX[row.type]
+			slot.shareBar:SetBackColor(hex and Theme.Mix(hex, Theme.Hex.WindowFill, 0.08) or seriesMix)
+		else
+			slot.shareBar:SetBackColor(seriesMix)
+		end
 
 		self.scrollView:AddItem(slot.container)
 	end
@@ -1611,10 +1796,10 @@ function Analysis:BuildBuffSection()
 	local title = Turbine.UI.Label()
 	title:SetParent(header)
 	title:SetFont(Font.Verdana10)
-	title:SetText("SELF BUFFS")
+	title:SetText("SELF EFFECTS")
 	title:SetForeColor(Theme.Color(Theme.Hex.MutedText))
 	title:SetPosition(0, 0)
-	title:SetSize(80, BUFF_HEADER_HEIGHT)
+	title:SetSize(92, BUFF_HEADER_HEIGHT)
 	title:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
 	title:SetMouseVisible(false)
 
@@ -1622,7 +1807,7 @@ function Analysis:BuildBuffSection()
 	summary:SetParent(header)
 	summary:SetFont(Font.Verdana10)
 	summary:SetForeColor(Theme.Color(Theme.Hex.DimText))
-	summary:SetPosition(84, 0)
+	summary:SetPosition(96, 0)
 	summary:SetSize(1, BUFF_HEADER_HEIGHT)
 	summary:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
 	summary:SetMouseVisible(false)
@@ -1631,7 +1816,7 @@ function Analysis:BuildBuffSection()
 
 	self.buffHeader = { control = header, title = title, summary = summary }
 
-	self.buffSearch = self:BuildSearchBox(self.buffHolder, "Search buffs...")
+	self.buffSearch = self:BuildSearchBox(self.buffHolder, "Search effects...")
 	self.buffSearch.control:SetPosition(0, BUFF_HEADER_HEIGHT + 1)
 	self.buffSearch.textbox.TextChanged = function()
 		window.buffFilterText = window.buffSearch.textbox:GetText()
@@ -1813,7 +1998,11 @@ function Analysis:LayoutBuffColumns(width)
 			fixed = fixed + BUFF_COLUMNS[i].width
 		end
 	end
-	local nameWidth = math.max(120, width - fixed)
+	-- 100, not the 120 this floor used to be: TYPE took 66px out of the name column, and at the
+	-- window's minimum width the old floor made the columns sum WIDER than the section they sit
+	-- in, which clips the last column instead of shortening the name. The floor only ever binds
+	-- below the minimum window size now.
+	local nameWidth = math.max(100, width - fixed)
 
 	local x = 0
 	self.buffColumnX = {}
@@ -1930,6 +2119,10 @@ end
 local function BuffSortValue(row, key)
 	if key == "name" then
 		return string.lower(row.name or "")
+	elseif key == "kind" then
+		-- The rendered word, so the order on screen is the order the column reads: Buff,
+		-- Debuff, Unknown.
+		return string.lower(BuffKindText(row))
 	elseif key == "up" then
 		return row.uptime or 0
 	elseif key == "apps" then
@@ -1966,17 +2159,40 @@ function Analysis:SortBuffStats(stats)
 	return list
 end
 
--- Matches the search text against the buff's own name -- the only column that's ever a name.
+-- Matches the search text against the effect's name or its TYPE word, so "debuff" narrows the
+-- list to debuffs -- the same "any text column" rule the skill table's own search follows.
+-- settings.hideStaticBuffs (options window, Self buffs page): drop rows that were simply up for
+-- the whole fight and applied once. Those are the class passives and the food buff -- true, but
+-- never the answer to a question, and they crowd out the ones with real gaps. A charted buff is
+-- never hidden: it has a lane on the graph, and a lane with no matching table row reads as a fault.
+--
+-- The test is uptime AND applications, not uptime alone: a buff that dropped and was re-applied
+-- inside the same second can still round to 100% uptime, and that one is exactly the kind of gap
+-- this table exists to show.
+local BUFF_STATIC_UPTIME = 0.999
+
+function Analysis:IsStaticBuff(row)
+	return row.uptimePct >= BUFF_STATIC_UPTIME and row.apps <= 1
+end
+
 function Analysis:FilterBuffStats(stats)
 	local query = self.buffFilterText
-	if query == nil or query == "" then
+	local hideStatic = (_G.settings.hideStaticBuffs == true)
+
+	if (query == nil or query == "") and not hideStatic then
 		return stats
 	end
 
 	local filtered = {}
 	for i = 1, table.getn(stats) do
-		if MatchesFilter(stats[i].name, query) then
-			table.insert(filtered, stats[i])
+		local row = stats[i]
+		local matches = (query == nil or query == "")
+			or MatchesFilter(row.name, query)
+			or MatchesFilter(BuffKindText(row), query)
+		local hidden = hideStatic and self:IsStaticBuff(row) and (self:IsCharted(row.name) == nil)
+
+		if matches and not hidden then
+			table.insert(filtered, row)
 		end
 	end
 	return filtered
@@ -2050,7 +2266,7 @@ function Analysis:FillBuffRow(widgets, row)
 
 	local pctHex = Theme.Hex.Text
 	if row.uptimePct >= BUFF_GOOD_UPTIME then
-		pctHex = Theme.Hex.HealingDone
+		pctHex = Theme.Series("healOut")
 	elseif row.uptimePct < BUFF_POOR_UPTIME then
 		pctHex = Theme.Hex.DamageSevere
 	end
@@ -2059,17 +2275,19 @@ function Analysis:FillBuffRow(widgets, row)
 
 	local texts = {
 		[3] = row.name,
-		[4] = Format.Percent(row.uptimePct),
-		[5] = Format.Clock(row.uptime),
-		[6] = Format.Number(row.apps),
-		[7] = math.floor(row.longestGap + 0.5) .. "s",
+		[4] = BuffKindText(row),
+		[5] = Format.Percent(row.uptimePct),
+		[6] = Format.Clock(row.uptime),
+		[7] = Format.Number(row.apps),
+		[8] = math.floor(row.longestGap + 0.5) .. "s",
 	}
 	local colors = {
 		[3] = chartIndex and Theme.Hex.Accent200 or Theme.Hex.Text,
-		[4] = pctHex,
-		[5] = Theme.Hex.MutedText,
+		[4] = BUFF_KIND_HEX[row.kind] or BUFF_KIND_HEX[Buffs.Kind.Unknown],
+		[5] = pctHex,
 		[6] = Theme.Hex.MutedText,
-		[7] = gapHex,
+		[7] = Theme.Hex.MutedText,
+		[8] = gapHex,
 	}
 
 	for i = 3, table.getn(BUFF_COLUMNS) do
@@ -2284,18 +2502,37 @@ end
 
 -- Which series each view plots. The two "incoming" views carry both sides of the exchange, since
 -- damage taken only means something next to the healing that did or didn't cover it.
+--
+-- Colours are NOT stored here -- only the role key. This table is a module-level local built once
+-- at load, so a hex baked into it could never follow a palette-preset change; SeriesForView()
+-- resolves each entry's colorHex through Theme.Series on the way out. It builds a fresh list per
+-- call, which is fine: it is only called when the view actually changes (RefreshContent guards
+-- SetSeriesWithMorale on self.graphSeriesView), not on every refresh.
 local SERIES_FOR_VIEW = {
-	done = { { key = "done", label = "Damage", colorHex = Theme.Hex.DamageDone } },
-	healOut = { { key = "healOut", label = "Healing out", colorHex = Theme.Hex.HealingDone } },
+	done = { { key = "done", label = "Damage", role = "done" } },
+	healOut = { { key = "healOut", label = "Healing out", role = "healOut" } },
 	taken = {
-		{ key = "taken", label = "Damage taken", colorHex = Theme.Hex.DamageTaken },
-		{ key = "healIn", label = "Healing in", colorHex = Theme.Hex.HealingTaken },
+		{ key = "taken", label = "Damage taken", role = "taken" },
+		{ key = "healIn", label = "Healing in", role = "healIn" },
 	},
 	healIn = {
-		{ key = "healIn", label = "Healing in", colorHex = Theme.Hex.HealingTaken },
-		{ key = "taken", label = "Damage taken", colorHex = Theme.Hex.DamageTaken },
+		{ key = "healIn", label = "Healing in", role = "healIn" },
+		{ key = "taken", label = "Damage taken", role = "taken" },
 	},
 }
+
+local function SeriesForView(view)
+	local spec = SERIES_FOR_VIEW[view]
+	local out = {}
+	for i = 1, table.getn(spec) do
+		out[i] = {
+			key = spec[i].key,
+			label = spec[i].label,
+			colorHex = Theme.Series(spec[i].role),
+		}
+	end
+	return out
+end
 
 -- One recount per interaction. Every widget below is fed from `rows` (a single Session:Slice)
 -- and `stats` (a single Buffs.Stats), never from its own separate pass over the session.
@@ -2310,6 +2547,10 @@ function Analysis:RefreshContent(skipRelayout)
 	local filterWho = self.filter[view]
 	local meta = VIEW_META[view]
 	local showMorale = (view == "taken" or view == "healIn")
+
+	-- Before RangeSeconds(), which divides by it: a different session (or a change to
+	-- settings.bucketWidth) can change how many buckets this fight's plot has.
+	self:SyncBucketCount()
 
 	self.goalLine:SetText(meta.question)
 	self:RefreshPicker()
@@ -2348,7 +2589,7 @@ function Analysis:RefreshContent(skipRelayout)
 		-- the moment they dragged a range handle or picked a different target.
 		if self.graphSeriesView ~= view then
 			self.graphSeriesView = view
-			self.graph:SetSeriesWithMorale(SERIES_FOR_VIEW[view], showMorale)
+			self.graph:SetSeriesWithMorale(SeriesForView(view), showMorale)
 		end
 		self.graph:SetData(session, showMorale, filterWho)
 		self.graph:SetRange(self.rangeFrom, self.rangeTo)
@@ -2359,12 +2600,20 @@ function Analysis:RefreshContent(skipRelayout)
 	self:RefreshBuffSection(stats, buffStats, fromSec, toSec)
 
 	if session == nil then
-		self:RefreshPanel(self.panelA, { title = "", items = {} }, meta.color)
-		self:RefreshPanel(self.panelB, { title = "", items = {} }, meta.color)
+		self:RefreshPanel(self.panelA, { title = "", items = {} }, MetaColor(meta))
+		self:RefreshPanel(self.panelB, { title = "", items = {} }, MetaColor(meta))
 	else
 		local dataA, dataB = self:PanelData(rows, view, filterWho)
-		self:RefreshPanel(self.panelA, dataA, meta.color)
+		self:RefreshPanel(self.panelA, dataA, MetaColor(meta))
 		self:RefreshPanel(self.panelB, dataB, Theme.Hex.Accent)
+	end
+
+	-- Last, and unconditionally: a chat post is a static alias string, so it goes stale the
+	-- instant any of view/filter/range/session changes. Every one of those changes funnels
+	-- through this function, which makes it the one correct place to rebuild -- CombatAnalysis
+	-- calls its own equivalent from six scattered sites for want of a single funnel like this.
+	if self.postButton ~= nil then
+		self.postButton:Rebuild()
 	end
 end
 
@@ -2706,7 +2955,7 @@ function Analysis:Layout()
 	self.buffHolder:SetSize(buffWidth, bottomHeight)
 	self.buffTopRule:SetSize(buffWidth, 1)
 	self.buffHeader.control:SetSize(buffWidth, BUFF_HEADER_HEIGHT)
-	self.buffHeader.summary:SetSize(math.max(0, buffWidth - 84), BUFF_HEADER_HEIGHT)
+	self.buffHeader.summary:SetSize(math.max(0, buffWidth - 96), BUFF_HEADER_HEIGHT)
 	self.buffTableHeader:SetPosition(0, BUFF_HEADER_HEIGHT + 1 + SEARCH_HEIGHT)
 
 	local buffListWidth = math.max(0, buffWidth - SCROLLBAR_WIDTH)

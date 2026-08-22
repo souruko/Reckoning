@@ -40,7 +40,12 @@
 
 Graph = class(Turbine.UI.Control)
 
-local BUCKET_COUNT = 48
+-- POOL SIZE, and the bucket count under "Auto". Every pool in this file is built at MAX_BUCKETS
+-- once and never grows; settings.bucketWidth (options window, Sessions page) can ask for FEWER
+-- buckets than this, never more, and the surplus pool entries are simply hidden.
+local MAX_BUCKETS = 48
+local MIN_BUCKETS = 2 -- one step needs two points, and the range slider needs two distinct stops
+
 local MAX_REGULAR_SERIES = 2 -- the busiest view (taken+healIn) never needs more than this
 local MAX_LANES = 3          -- max charted buffs, matching Theme.BuffLane's three colours
 
@@ -105,8 +110,42 @@ function GraphHeightFor(laneCount)
 		+ LEGEND_GAP + LEGEND_HEIGHT
 end
 
-function GraphBucketCount()
-	return BUCKET_COUNT
+-- How many buckets a given session's plot uses, under the current settings.bucketWidth.
+--
+-- "Auto" (0, and the fallback) is what this always did: MAX_BUCKETS columns spread across however
+-- long the fight was, so the plot always fills its width. 1s / 2s instead pin each bucket to that
+-- many SECONDS -- for a 20-second fight at 1s that is 20 buckets, each a real second, rather than
+-- 48 sub-second slivers. Long fights still cap at MAX_BUCKETS, because the pools are that size and
+-- because 48 columns is already the most a 640-1400px plot can show as distinct marks; past the
+-- cap, 1s and 2s and Auto are the same plot.
+--
+-- Called by UI/Analysis.lua too (for the range slider's stops and its seconds arithmetic), which
+-- is why it is a plain global rather than a method -- exactly like GraphHeightFor above.
+function GraphBucketCount(session)
+	local width = tonumber(_G.settings and _G.settings.bucketWidth) or 0
+	if width <= 0 then
+		return MAX_BUCKETS
+	end
+
+	local duration = session and session:Duration() or 0
+	if duration <= 0 then
+		return MAX_BUCKETS
+	end
+
+	local count = math.ceil(duration / width)
+	if count < MIN_BUCKETS then
+		count = MIN_BUCKETS
+	elseif count > MAX_BUCKETS then
+		count = MAX_BUCKETS
+	end
+	return count
+end
+
+-- The pool size, i.e. the most buckets any plot can ever have. Distinct from GraphBucketCount:
+-- callers sizing a pool or a loop bound want this, callers reading "how many are live right now"
+-- want the graph's own BucketCount().
+function GraphMaxBuckets()
+	return MAX_BUCKETS
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -117,11 +156,15 @@ function Graph:Constructor(width)
 	Turbine.UI.Control.Constructor(self)
 
 	self.plotWidth = width
-	self.bucketWidth = width / BUCKET_COUNT
+	-- How many buckets the plot is currently drawing. Starts at the pool size and is recomputed
+	-- from the session in SetData; the pools are always MAX_BUCKETS deep, so this can only ever
+	-- shrink the drawn set, never ask for a Control that does not exist.
+	self.buckets = MAX_BUCKETS
+	self.bucketWidth = width / self.buckets
 	self.laneCount = 0
 	self.duration = 1
 	self.rangeFrom = 1
-	self.rangeTo = BUCKET_COUNT
+	self.rangeTo = self.buckets
 	self.slices = {}
 	self.moraleBySlice = {}
 	self.seriesList = {}
@@ -204,7 +247,7 @@ function Graph:BuildMorale()
 	self.moraleBars = {}
 	self.moraleEdges = {}
 
-	for i = 1, BUCKET_COUNT do
+	for i = 1, MAX_BUCKETS do
 		local bar = Turbine.UI.Control()
 		bar:SetParent(self)
 		bar:SetVisible(false)
@@ -228,7 +271,7 @@ function Graph:BuildMorale()
 	self.moraleAxisLabel = Turbine.UI.Label()
 	self.moraleAxisLabel:SetParent(self)
 	self.moraleAxisLabel:SetFont(Font.Verdana10)
-	self.moraleAxisLabel:SetForeColor(Theme.Color(Theme.Hex.Morale))
+	self.moraleAxisLabel:SetForeColor(Theme.Color(Theme.Series("morale")))
 	self.moraleAxisLabel:SetSize(160, 12)
 	self.moraleAxisLabel:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleRight)
 	self.moraleAxisLabel:SetMouseVisible(false)
@@ -269,7 +312,7 @@ function Graph:BuildSeriesPools()
 		self.hSeg[slot] = {}
 		self.vSeg[slot] = {}
 
-		for i = 1, BUCKET_COUNT do
+		for i = 1, MAX_BUCKETS do
 			local dot = Turbine.UI.Control()
 			dot:SetParent(self)
 			dot:SetSize(DOT_SIZE, DOT_SIZE)
@@ -279,7 +322,7 @@ function Graph:BuildSeriesPools()
 			self.dots[slot][i] = dot
 		end
 
-		for i = 1, BUCKET_COUNT - 1 do
+		for i = 1, MAX_BUCKETS - 1 do
 			local run = Turbine.UI.Control()
 			run:SetParent(self)
 			run:SetVisible(false)
@@ -385,7 +428,7 @@ end
 
 function Graph:BuildSlider()
 	local graph = self
-	self.slider = RangeSlider(self.plotWidth, BUCKET_COUNT)
+	self.slider = RangeSlider(self.plotWidth, self.buckets)
 	self.slider:SetParent(self)
 	self.slider.OnChange = function(from, to)
 		graph.rangeFrom = from
@@ -483,8 +526,8 @@ function Graph:BucketAt(x)
 	local i = math.floor(x / self.bucketWidth) + 1
 	if i < 1 then
 		return 1
-	elseif i > BUCKET_COUNT then
-		return BUCKET_COUNT
+	elseif i > self.buckets then
+		return self.buckets
 	end
 	return i
 end
@@ -564,7 +607,7 @@ end
 -- scale. Heights/positions of the data pools are left to Redraw(), which the caller runs next.
 function Graph:Resize(width)
 	self.plotWidth = width
-	self.bucketWidth = width / BUCKET_COUNT
+	self.bucketWidth = width / self.buckets
 
 	self.plotGround:SetSize(width, PLOT_HEIGHT)
 	self:LayoutPlotBorder()
@@ -693,22 +736,24 @@ function Graph:SetData(session, showMorale, filterWho)
 	end
 	self.duration = duration
 
+	self:SetBucketCount(GraphBucketCount(session))
+
 	for i = 1, TIMELINE_MARKS do
 		local seconds = (i - 1) / (TIMELINE_MARKS - 1) * duration
 		self.timelineLabels[i]:SetText(Format.Clock(seconds))
 	end
 
 	self.slices = {}
-	for i = 1, BUCKET_COUNT do
+	for i = 1, self.buckets do
 		self.slices[i] = {}
 	end
 
 	local sampled = {}
 	if session ~= nil then
 		for second, bucket in pairs(session.buckets) do
-			local slice = math.floor(second / duration * BUCKET_COUNT) + 1
+			local slice = math.floor(second / duration * self.buckets) + 1
 			if slice < 1 then slice = 1 end
-			if slice > BUCKET_COUNT then slice = BUCKET_COUNT end
+			if slice > self.buckets then slice = self.buckets end
 
 			for i = 1, table.getn(self.seriesList) do
 				local key = self.seriesList[i].key
@@ -738,7 +783,7 @@ function Graph:SetData(session, showMorale, filterWho)
 	-- graph is a readout of where your morale was, and a hole in the sampling is not a dip.
 	self.moraleBySlice = {}
 	local firstKnown = nil
-	for i = 1, BUCKET_COUNT do
+	for i = 1, self.buckets do
 		if sampled[i] ~= nil then
 			firstKnown = sampled[i]
 			break
@@ -746,7 +791,7 @@ function Graph:SetData(session, showMorale, filterWho)
 	end
 
 	local lastKnown = firstKnown
-	for i = 1, BUCKET_COUNT do
+	for i = 1, self.buckets do
 		if sampled[i] ~= nil then
 			lastKnown = sampled[i]
 		end
@@ -754,6 +799,65 @@ function Graph:SetData(session, showMorale, filterWho)
 	end
 
 	self:Redraw()
+end
+
+function Graph:BucketCount()
+	return self.buckets
+end
+
+-- Changes how many of the pooled buckets are live (settings.bucketWidth). Everything downstream
+-- reads self.buckets, so this only has to fix up the three things that cache a count of their
+-- own: the pixel width of a bucket, the range slider's stops, and the range itself -- which is
+-- clamped rather than reset, so narrowing the plot keeps as much of the reader's selection as
+-- still exists.
+--
+-- Pool entries past the new count are hidden here rather than left to the draw loops: DrawMorale
+-- and DrawSeries only ever walk 1..self.buckets, so a bucket that was visible under a larger
+-- count would otherwise stay on screen forever.
+function Graph:SetBucketCount(count)
+	if count == self.buckets then
+		return
+	end
+
+	self.buckets = count
+	self.bucketWidth = self.plotWidth / count
+
+	for i = count + 1, MAX_BUCKETS do
+		self.moraleBars[i]:SetVisible(false)
+		self.moraleEdges[i]:SetVisible(false)
+		for slot = 1, MAX_REGULAR_SERIES do
+			self.dots[slot][i]:SetVisible(false)
+			if self.hSeg[slot][i] ~= nil then
+				self.hSeg[slot][i]:SetVisible(false)
+				self.vSeg[slot][i]:SetVisible(false)
+			end
+		end
+	end
+	-- The step at index `count` bridges into bucket count+1, which no longer exists.
+	for slot = 1, MAX_REGULAR_SERIES do
+		if self.hSeg[slot][count] ~= nil then
+			self.hSeg[slot][count]:SetVisible(false)
+			self.vSeg[slot][count]:SetVisible(false)
+		end
+	end
+
+	if self.rangeTo > count then
+		self.rangeTo = count
+	end
+	if self.rangeFrom >= self.rangeTo then
+		self.rangeFrom = math.max(1, self.rangeTo - 1)
+	end
+
+	self.slider:SetBucketCount(count)
+	self.slider:SetRange(self.rangeFrom, self.rangeTo)
+end
+
+-- Re-reads the settings this plot depends on. Only the bucket width needs work here: the palette
+-- reaches the plot through Analysis:RefreshContent re-declaring the series (see its own comment),
+-- and everything else the graph draws is a fixed design token.
+function Graph:ApplySettings()
+	self:SetBucketCount(GraphBucketCount(self.session))
+	self:SetData(self.session, self.showMorale, self.filterWho)
 end
 
 -- Charted self-buffs: { { name=, colorHex=, initials=, icon=, intervals={ {s=,e=}, ... } }, ... },
@@ -807,7 +911,7 @@ function Graph:Redraw()
 	for slot = 1, table.getn(self.seriesList) do
 		local key = self.seriesList[slot].key
 		if key ~= nil and not self.hidden[key] then
-			for i = 1, BUCKET_COUNT do
+			for i = 1, self.buckets do
 				local v = self.slices[i][key] or 0
 				if v > maxValue then
 					maxValue = v
@@ -845,7 +949,7 @@ function Graph:DrawMorale()
 		-- deliberately never rescoped by the range slider: it is the fixed reference the bars
 		-- are drawn against, so it has to stay put while the range moves.
 		local peak = 0
-		for i = 1, BUCKET_COUNT do
+		for i = 1, self.buckets do
 			local pct = self.moraleBySlice[i]
 			if pct ~= nil and pct > peak then
 				peak = pct
@@ -871,7 +975,7 @@ function Graph:DrawMorale()
 	local normalFill, lowFill = Theme.Color(Theme.Hex.MoraleBg), Theme.Color(Theme.Hex.MoraleBgLow)
 	local normalEdge, lowEdge = Theme.Color(Theme.Hex.MoraleBgEdge), Theme.Color(Theme.Hex.MoraleBgLowEdge)
 
-	for i = 1, BUCKET_COUNT do
+	for i = 1, self.buckets do
 		local bar = self.moraleBars[i]
 		local edge = self.moraleEdges[i]
 		local pct = show and self.moraleBySlice[i] or nil
@@ -906,10 +1010,10 @@ function Graph:DrawSeries(maxValue)
 		local live = (series ~= nil and series.key ~= nil and not self.hidden[series.key])
 
 		if not live then
-			for i = 1, BUCKET_COUNT do
+			for i = 1, self.buckets do
 				self.dots[slot][i]:SetVisible(false)
 			end
-			for i = 1, BUCKET_COUNT - 1 do
+			for i = 1, self.buckets - 1 do
 				self.hSeg[slot][i]:SetVisible(false)
 				self.vSeg[slot][i]:SetVisible(false)
 			end
@@ -917,7 +1021,7 @@ function Graph:DrawSeries(maxValue)
 			local color = Theme.Color(series.colorHex)
 			local key = series.key
 
-			for i = 1, BUCKET_COUNT - 1 do
+			for i = 1, self.buckets - 1 do
 				local y0 = self:ValueY(self.slices[i][key] or 0, maxValue)
 				local y1 = self:ValueY(self.slices[i + 1][key] or 0, maxValue)
 				DrawStep(self.hSeg[slot][i], self.vSeg[slot][i],
@@ -927,7 +1031,7 @@ function Graph:DrawSeries(maxValue)
 			-- A dot on every bucket at 48 buckets is noise, so only odd indices carry one
 			-- (1-based odd == the mock's 0-based even) -- plus both range endpoints, which are
 			-- the two the reader is actually looking for while dragging a handle.
-			for i = 1, BUCKET_COUNT do
+			for i = 1, self.buckets do
 				local dot = self.dots[slot][i]
 				local wanted = (i % 2 == 1) or (i == self.rangeFrom) or (i == self.rangeTo)
 				if wanted then
@@ -947,11 +1051,11 @@ end
 
 function Graph:DrawRangeOverlay()
 	local function StopX(bucket)
-		return math.floor((bucket - 1) / (BUCKET_COUNT - 1) * self.plotWidth)
+		return math.floor((bucket - 1) / (self.buckets - 1) * self.plotWidth)
 	end
 
 	local ax, bx = StopX(self.rangeFrom), StopX(self.rangeTo)
-	local full = (self.rangeFrom == 1 and self.rangeTo == BUCKET_COUNT)
+	local full = (self.rangeFrom == 1 and self.rangeTo == self.buckets)
 
 	if ax > 0 then
 		self.dimLeft:SetPosition(0, 0)
@@ -1080,8 +1184,8 @@ end
 -- directions. Used to ask Session:Slice for exactly the events that landed in this bucket.
 function Graph:SliceSecondRange(i)
 	local duration = self.duration
-	local fromSec = math.ceil((i - 1) * duration / BUCKET_COUNT)
-	local toSec = math.ceil(i * duration / BUCKET_COUNT) - 1
+	local fromSec = math.ceil((i - 1) * duration / self.buckets)
+	local toSec = math.ceil(i * duration / self.buckets) - 1
 	if toSec < fromSec then
 		toSec = fromSec
 	end
@@ -1140,7 +1244,7 @@ function Graph:ShowTooltip(bucketIndex)
 	local lines = self.tooltip.lines
 	local row = 1
 
-	local elapsed = (bucketIndex - 1) / BUCKET_COUNT * self.duration
+	local elapsed = (bucketIndex - 1) / self.buckets * self.duration
 	lines[row]:SetText(Format.Clock(elapsed))
 	lines[row]:SetForeColor(Theme.Color(Theme.Hex.DimText))
 	row = row + 1
@@ -1158,7 +1262,7 @@ function Graph:ShowTooltip(bucketIndex)
 	if self.showMorale and row <= TOOLTIP_LINES then
 		local pct = self.moraleBySlice[bucketIndex]
 		lines[row]:SetText(pct and ("Morale: " .. Format.Percent(pct)) or "Morale: --")
-		lines[row]:SetForeColor(Theme.Color(Theme.Hex.Morale))
+		lines[row]:SetForeColor(Theme.Color(Theme.Series("morale")))
 		row = row + 1
 	end
 

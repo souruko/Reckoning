@@ -20,15 +20,22 @@ real shape the harness had replaced with a convenient fake (`args.Type` vs `args
 
 So these go through the real entry points instead:
 
-- `load_test.lua` loads **`Main.lua` itself**, top to bottom, constructing all three windows and
-  the options panel, then drives a whole fight through `Turbine.Chat.Received` and
+- `load_test.lua` loads **`Main.lua` itself**, top to bottom, constructing all four windows and
+  the Plugin Manager stub, then drives a whole fight through `Turbine.Chat.Received` and
   `Events.heartbeat:Update()` and runs every `/reck` subcommand.
 - the rest construct the **real classes** (`Graph`, `RangeSlider`, `Analysis`, `LiveMeter`,
-  `DeathCause`) and call their real methods.
+  `DeathCause`, `OptionsWindow`, `OptionsPage`, `Slider`, `Segment`) and call their real methods.
+- `options_test.lua` in particular never pokes `_G.settings` and calls a refresh: it fires the
+  control's own `MouseClick` / `CheckedChanged` / `MouseDown`+`MouseMove`+`MouseUp`, because
+  "write the setting directly and re-render" is precisely the shortcut that hid three bugs before.
 
-`stub.lua` asserts on a non-numeric or negative `SetSize`/`SetPosition` argument, and errors
-outright on `SetOpacity` (which does not blend in this engine -- see `Theme.Mix`). That is how a
-nil constant reaching a layout call gets caught, which `luac -p` cannot see.
+`stub.lua` asserts on a non-numeric or negative `SetSize`/`SetPosition` argument. That is how a
+nil constant reaching a layout call gets caught, which `luac -p` cannot see. It also asserts on
+`SetOpacity` **when the control already has a solid `BackColor`** -- that is the case where it
+does not blend in this engine (use `Theme.Mix` instead). The guard used to ban `SetOpacity`
+outright, which encoded the lesson slightly too broadly: a whole-window fade on a `Window` with no
+`BackColor` of its own is confirmed to work, and `UI/PostButton.lua` uses the same call to fade
+its quickslot down over the themed button underneath it.
 
 ## What each file covers
 
@@ -39,8 +46,10 @@ nil constant reaching a layout call gets caught, which `luac -p` cannot see.
 | `graph_test.lua` | `Graph` geometry: nothing escapes the plot, morale bars carry forward, series hide/show, range overlays, buff lanes, resize, tooltip clamping, and the plotted values summing to `Session:Total`. |
 | `buffs_test.lua` | `Buffs` polling against a fake `EffectList`, in both 0-based and 1-based index conventions, plus a failed read (must not read as "everything faded"), range clipping, and the ignore list. |
 | `lifecycle_test.lua` | Session open/close: heals only open or extend a session while the client has the player flagged in combat, a heal-over-time ticking after a fight cannot postpone the close, a short fight with a long heal tail is still discarded, a revive never opens a session, and a throwing `IsInCombat` degrades to "out of combat". |
-| `analysis_test.lua` | The whole analysis window: tab order, the block stack's y offsets, table columns fitting their viewport in all four views, KPI cards not colliding, range dragging rescoping every widget, buff charting, and resize at both extremes. |
+| `analysis_test.lua` | The whole analysis window: tab order, the block stack's y offsets, table columns fitting their viewport in all four views, KPI cards not colliding, range dragging rescoping every widget, buff charting, resize at both extremes, and (section 18) the post button's invisible quickslot overlay tracking the window through drag, resize, show/hide, re-raise and shutdown. |
+| `chatpost_test.lua` | `ChatPost` against real sessions: that a post is always a single line within `MAX_MESSAGE` (a multi-line alias was refused in-game), range and counterpart scoping reaching it, the death preset's availability and its killing-blow-relative timestamps, colour being budgeted and stripping back to exactly the plain line, alias assembly per channel, and the newline/angle-bracket injection guard on names taken from parsed game text. |
 | `windows_test.lua` | Live meter (footprint, tab underlines, sparkline band) and death cause (killing blow vs. biggest hit marking, morale percentages, column bounds). |
+| `options_test.lua` | The whole options window, driven through real clicks: the shell's geometry, all seven pages building and the pane never holding more than one item, rail hover/selection, a checkbox writing and saving exactly once, a slider drag persisting **once** rather than per move (and not running away from the pointer), `deathRows` resizing the death window and the `lastTaken` ring, segment cells sharing their borders, palette presets reaching the live meter's sparkline / the analysis plot / a chat post's tint, `bucketWidth` changing the graph's bucket count with the window and slider staying in step, the buff picker's cap refusal and reordering, the ignore chips, the two-step Clear data, `Settings.Clamp`'s range and enum guards, the live meter's opacity/idle-fade/click-through states, `clockThroughAvoids`, the session rules (`sessionsKept`, `minFightLength`, pin exemption, `DropUnpinned`, an unreadable zone id failing safe), and Defaults putting every control back. |
 | `load_test.lua` | The plugin as a whole, as described above. |
 
 ## What these still cannot tell you

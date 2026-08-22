@@ -7,9 +7,9 @@ import "Reckoning.Constants"
 Trigger = {}; import "Reckoning.Parse.en"; import "Reckoning.Settings"
 
 local effectSet = {}
-local function MakeEffect(name, icon)
+local function MakeEffect(name, icon, debuff)
   return { GetName = function() return name end, GetIcon = function() return icon end,
-           IsDebuff = function() return false end }
+           IsDebuff = function() return debuff == true end }
 end
 _G.lp = {
   GetName = function() return "Luxtheninth" end,
@@ -25,7 +25,7 @@ _G.lp = {
 LocalPlayer = _G.lp; LocalPlayer.name = LocalPlayer:GetName()
 Settings.Load()
 import "Reckoning.Session"; import "Reckoning.Sessions"; import "Reckoning.Buffs"
-import "Reckoning.Events"; import "Reckoning.UI"
+import "Reckoning.Events"; import "Reckoning.ChatPost"; import "Reckoning.UI"
 
 local fails = 0
 local function check(label, ok, detail)
@@ -33,9 +33,26 @@ local function check(label, ok, detail)
   print(string.format("%-60s %s%s", label, ok and "OK" or "**FAIL**", detail and ("  " .. detail) or ""))
 end
 
+-- Parses a number back out of a RENDERED cell. Format.Number abbreviates from 10,000 up when
+-- settings.abbreviateNumbers is on (the shipped default, options window / Appearance), so a plain
+-- tonumber() on a cell reads nil for exactly the big values these checks care about. The tests
+-- deliberately run against the default rather than switching abbreviation off, so that the
+-- rendered form itself stays exercised.
+local function Num(text)
+  if text == nil or text == "" then return 0 end
+  local plain = text:gsub(",", "")
+  local body, suffix = plain:match("^(-?%d+%.?%d*)([km]?)$")
+  if body == nil then return 0 end
+  local value = tonumber(body) or 0
+  if suffix == "k" then return value * 1000 end
+  if suffix == "m" then return value * 1000000 end
+  return value
+end
+
 -- Build a real fight from the reference logs, with buffs polled through the real path.
+-- Mending Verse is flagged a debuff purely so the TYPE column has both kinds to tell apart.
 effectSet = { MakeEffect("Writ of Health", "icon:writ"), MakeEffect("Bracing Guard", nil),
-              MakeEffect("Mending Verse", "icon:verse") }
+              MakeEffect("Mending Verse", "icon:verse", true) }
 local clock = 1000
 local function Feed(path, ct)
   for line in io.lines(path) do
@@ -147,15 +164,26 @@ check("fifth KPI switches to RANGE", w.kpiCards[5].label:GetText() == "RANGE")
 check("header chip switches to RANGE", w.rangeChip:GetText():find("RANGE", 1, true) ~= nil,
   w.rangeChip:GetText())
 check("graph shows the range overlay", w.graph.dimLeft:IsVisible() and w.graph.dimRight:IsVisible())
+-- Read with abbreviation OFF: this is an exact subset check, and "1.1m" rounds a real 1,057,432
+-- UP, which would fail a strict "<= scopedTotal" against the true figure. Turning the setting off
+-- and refreshing also proves the setting reaches the rendered cells at all.
+_G.settings.abbreviateNumbers = false
+w:RefreshContent()
 check("side panels followed the range", (function()
   local sum = 0
   for i = 1, 5 do
     if w.panelA.rows[i].value:IsVisible() then
-      sum = sum + tonumber((w.panelA.rows[i].value:GetText():gsub(",", "")))
+      sum = sum + Num(w.panelA.rows[i].value:GetText())
     end
   end
   return sum > 0 and sum <= scopedTotal + 1
 end)())
+check("abbreviation off renders the full comma-grouped number",
+  w.kpiCards[1].value:GetText():find("k", 1, true) == nil
+  and w.kpiCards[1].value:GetText():find("m", 1, true) == nil,
+  w.kpiCards[1].value:GetText())
+_G.settings.abbreviateNumbers = true
+w:RefreshContent()
 
 -- 8. RESET RANGE
 w.resetButton.MouseClick()
@@ -190,8 +218,29 @@ w.resetButton.MouseClick()
 -- 11. buff section
 local stats = Buffs.Stats(session, nil, nil)
 check("buffs were tracked through the real poll path", #stats == 3, "#stats=" .. #stats)
+-- settings.hideStaticBuffs is ON by default, and one of the three fixture effects is up for the
+-- whole fight from a single application -- exactly what that setting hides. Turn it off for the
+-- row-per-buff check, then assert that turning it on is what removed the row.
+_G.settings.hideStaticBuffs = false
+w:RefreshContent()
 check("buff table shows a row per tracked buff -- as ListBox items, not just pooled Controls",
   w.buffScrollView:GetItemCount() == 3, tostring(w.buffScrollView:GetItemCount()))
+_G.settings.hideStaticBuffs = true
+w:RefreshContent()
+check("hideStaticBuffs drops the never-changing buffs",
+  w.buffScrollView:GetItemCount() < 3, tostring(w.buffScrollView:GetItemCount()))
+check("...but never a CHARTED one, which owns a lane on the graph", (function()
+  local hidden = nil
+  for i = 1, #stats do if w:IsStaticBuff(stats[i]) then hidden = stats[i].name end end
+  if hidden == nil then return false end
+  local before = w.buffScrollView:GetItemCount()
+  w:ToggleCharted(hidden)
+  local after = w.buffScrollView:GetItemCount()
+  w:ToggleCharted(hidden)
+  return after == before + 1
+end)())
+_G.settings.hideStaticBuffs = false
+w:RefreshContent()
 check("buff summary names the count and scope",
   w.buffHeader.summary:GetText():find("3 tracked", 1, true) ~= nil,
   w.buffHeader.summary:GetText())
@@ -416,7 +465,7 @@ local function TableCol(col)
 end
 local function AsNumbers(list)
   local out = {}
-  for i = 1, #list do out[i] = tonumber((list[i]:gsub(",", ""))) or 0 end
+  for i = 1, #list do out[i] = Num(list[i]) end
   return out
 end
 -- Names sort case-insensitively (Analysis lowercases both sides), so compare the same way here.
@@ -495,32 +544,51 @@ local function BuffCol(col)
 end
 
 check("buff table defaults to UPTIME % ascending",
-  w.buffHeaderLabels[4]:GetText() == "UPTIME % ^", w.buffHeaderLabels[4]:GetText())
-w.buffHeaderCells[4].MouseClick()
+  w.buffHeaderLabels[5]:GetText() == "UPTIME % ^", w.buffHeaderLabels[5]:GetText())
+w.buffHeaderCells[5].MouseClick()
 check("clicking UPTIME % reverses it",
-  w.buffHeaderLabels[4]:GetText() == "UPTIME % v", w.buffHeaderLabels[4]:GetText())
+  w.buffHeaderLabels[5]:GetText() == "UPTIME % v", w.buffHeaderLabels[5]:GetText())
 
 w.buffHeaderCells[3].MouseClick()
-check("clicking BUFF sorts buff names A-Z", Ordered(BuffCol(3), true),
+check("clicking EFFECT sorts effect names A-Z", Ordered(BuffCol(3), true),
   table.concat(BuffCol(3), " | "))
 w.buffHeaderCells[3].MouseClick()
-check("second click on BUFF reverses to Z-A", Ordered(BuffCol(3), false),
+check("second click on EFFECT reverses to Z-A", Ordered(BuffCol(3), false),
   table.concat(BuffCol(3), " | "))
 check("only the sorted buff column carries a marker",
-  w.buffHeaderLabels[4]:GetText() == "UPTIME %" and w.buffHeaderLabels[3]:GetText() == "BUFF v",
-  w.buffHeaderLabels[3]:GetText() .. " / " .. w.buffHeaderLabels[4]:GetText())
+  w.buffHeaderLabels[5]:GetText() == "UPTIME %" and w.buffHeaderLabels[3]:GetText() == "EFFECT v",
+  w.buffHeaderLabels[3]:GetText() .. " / " .. w.buffHeaderLabels[5]:GetText())
+
+-- TYPE column: a debuff and a buff are told apart, and the column sorts and searches.
+w.buffHeaderCells[4].MouseClick()
+check("clicking TYPE sorts by the word the column shows", Ordered(BuffCol(4), true),
+  table.concat(BuffCol(4), " | "))
+local kinds = {}
+for i = 1, #BuffCol(4) do kinds[BuffCol(4)[i]] = true end
+check("TYPE tells a debuff apart from a buff", kinds["Debuff"] and kinds["Buff"],
+  table.concat(BuffCol(4), " | "))
+w.buffSearch.textbox:SetText("debuff")
+w.buffSearch.textbox.TextChanged()
+check("searching the buff table by TYPE narrows it to debuffs",
+  w.buffScrollView:GetItemCount() >= 1 and Ordered(BuffCol(4), true)
+    and BuffCol(4)[1] == "Debuff" and BuffCol(4)[w.buffScrollView:GetItemCount()] == "Debuff",
+  table.concat(BuffCol(4), " | "))
+w.buffSearch.textbox:SetText("")
+w.buffSearch.textbox.TextChanged()
+w.buffHeaderCells[3].MouseClick()
+w.buffHeaderCells[3].MouseClick()
 check("sorting the buff table keeps every row listed",
   w.buffScrollView:GetItemCount() == #Buffs.Stats(session, nil, nil),
   tostring(w.buffScrollView:GetItemCount()))
 check("sorting the buff table does not disturb the charted lanes",
   w.graph.laneCount == #w.charted, w.graph.laneCount .. " vs " .. #w.charted)
 
-w.buffHeaderCells[6].MouseClick()
-check("clicking APPS starts descending", Ordered(AsNumbers(BuffCol(6)), false),
-  table.concat(BuffCol(6), " | "))
+w.buffHeaderCells[7].MouseClick()
+check("clicking APPS starts descending", Ordered(AsNumbers(BuffCol(7)), false),
+  table.concat(BuffCol(7), " | "))
 
--- the BUFF header's click target spans the checkbox/icon gutter, matching its label
-check("the BUFF header cell spans the icon column", (function()
+-- the EFFECT header's click target spans the checkbox/icon gutter, matching its label
+check("the EFFECT header cell spans the icon column", (function()
   local x, width = select(1, w.buffHeaderCells[3]:GetPosition()), select(1, w.buffHeaderCells[3]:GetSize())
   return x == w.buffColumnX[2].x and width == w.buffColumnX[2].width + w.buffColumnX[3].width
 end)())
@@ -733,6 +801,184 @@ check("persisting the size did not disturb the saved split",
   _G.settings.windows.analysis.split ~= nil)
 
 w:Resize(1080, 820); w:Layout()
+
+---------------------------------------------------------------------------------------------------
+print("")
+print("-- 18. post button and its quickslot --")
+---------------------------------------------------------------------------------------------------
+local pb = w.postButton
+check("the analysis window built a post button", pb ~= nil)
+
+-- POST is a themed button with an INVISIBLE quickslot floating over it in screen coordinates (a
+-- quickslot cannot be faded, but its own 0x0 opacity-0 host Window can). The thing most likely to
+-- break is that overlay drifting off the button, or being buried by the analysis window.
+
+-- Section setup. Earlier sections leave the view/filter wherever they finished, and a view with
+-- no rows in it correctly produces no post at all.
+w:SetVisible(true)
+w:SelectView("done")
+w:SelectFilter(nil)
+w:ResetRange()
+_G.settings.postChannel = "fellowship"
+_G.settings.postPreset = "summary"
+w:RefreshContent()
+
+-- Header layout: the pair sits left of the range chip, inside the window.
+local pbx = select(1, pb:GetPosition())
+local chanx = select(1, pb.channel:GetPosition())
+local chipx = select(1, w.rangeChip:GetPosition())
+check("POST is left of the channel button", pbx < chanx, pbx .. " < " .. chanx)
+check("the pair sits left of the range chip",
+  chanx + select(1, pb.channel:GetSize()) <= chipx,
+  chanx .. "+" .. select(1, pb.channel:GetSize()) .. " vs " .. chipx)
+check("the pair is inside the window", pbx > 0)
+check("the channel button shares POST's parent", pb.channel:GetParent() == pb:GetParent())
+
+check("post button armed a line", pb.line ~= nil and pb.line ~= "")
+check("the quickslot got the shortcut", pb.slot:GetShortcut() == pb.shortcut)
+check("the alias is addressed to the chosen channel",
+  string.sub(pb.shortcut:GetData() or "", 1, 3) == "/f ")
+
+-- The refusal this replaced: a multi-line alias sent as one oversized message.
+local armed = pb.shortcut:GetData()
+check("the armed alias is a single line", string.find(armed, "\n", 1, true) == nil)
+check("the armed alias fits the message limit",
+  string.len(armed) <= ChatPost.MAX_MESSAGE + 12, tostring(string.len(armed)))
+check("the armed alias is coloured when postColor is on",
+  _G.settings.postColor ~= true or string.find(armed, "<rgb=", 1, true) ~= nil)
+check("colour tags in the armed alias are balanced", (function()
+  local o, c = 0, 0
+  for _ in string.gmatch(armed, "<rgb=") do o = o + 1 end
+  for _ in string.gmatch(armed, "</rgb>") do c = c + 1 end
+  return o == c
+end)())
+
+-- Overlay tracking: it must land exactly on the themed button, in screen coordinates.
+check("the overlay is sized while armed and visible", select(1, pb.overlay:GetSize()) > 0)
+w:SetPosition(300, 150)
+w:SyncPostOverlay(true)
+local ox, oy = pb.overlay:GetPosition()
+local bx, by = pb:GetPosition()
+check("overlay sits exactly on the button", ox == 300 + bx and oy == 150 + by,
+  ox .. "," .. oy .. " vs " .. (300 + bx) .. "," .. (150 + by))
+
+-- A window drag moves the overlay inside the SAME handler (Frame fires OnMoved on every
+-- MouseMove). Deferring to MouseUp would strand the click target for the whole drag.
+w.header.MouseDown(w.header, { Button = LEFT, X = 10, Y = 5 })
+w.header.MouseMove(w.header, { Button = LEFT, X = 40, Y = 25 })
+local dx, dy = w:GetPosition()
+ox, oy = pb.overlay:GetPosition()
+check("overlay follows the window mid-drag", ox == dx + bx and oy == dy + by,
+  ox .. "," .. oy .. " vs " .. (dx + bx) .. "," .. (dy + by))
+w.header.MouseUp(w.header, { Button = LEFT })
+
+-- A resize repositions it too, without waiting for the deferred Layout().
+w:Resize(1200, 700)
+ox = select(1, pb.overlay:GetPosition())
+check("overlay follows a resize", ox == select(1, w:GetPosition()) + select(1, pb:GetPosition()))
+w:Resize(1080, 820)
+
+-- Hiding the window must collapse the overlay, or an invisible click target is left on screen.
+w:SetVisible(false)
+w:SyncPostOverlay(false)
+check("overlay collapses when the window hides", select(1, pb.overlay:GetSize()) == 0)
+w:SetVisible(true)
+w:SyncPostOverlay(false)
+check("overlay comes back when the window shows", select(1, pb.overlay:GetSize()) > 0)
+
+-- Pressing the analysis window raises it above the overlay, so the press must put the overlay
+-- back -- this is what keeps POST clickable without a per-frame Activate().
+pb.overlay._activated = false
+w.MouseDown(w, { Button = LEFT })
+check("pressing the window re-raises the overlay", pb.overlay._activated == true)
+
+-- The channel button names the destination, so a misdirected post is visible before it is sent.
+check("channel button shows the channel",
+  pb.channelLabel:GetText() == ChatPost.ChannelShort("fellowship"), pb.channelLabel:GetText())
+_G.settings.postChannel = "raid"
+pb:Rebuild()
+check("changing channel re-addresses the alias",
+  string.sub(pb.shortcut:GetData() or "", 1, 4) == "/ra ")
+check("changing channel updates the label",
+  pb.channelLabel:GetText() == ChatPost.ChannelShort("raid"), pb.channelLabel:GetText())
+_G.settings.postChannel = "fellowship"
+pb:Rebuild()
+
+-- The menu opens from the channel button (a plain Control), not the quickslot's right-click.
+check("the channel button takes clicks", pb.channel:IsMouseVisible() == true)
+
+-- The death preset is offered only when the selected session actually died.
+local wasDead = w.selectedSession.died
+w.selectedSession.died = false
+check("death preset unavailable when the fight had no death", pb.onCanDeath() == false)
+w.selectedSession.died = true
+check("death preset available after a death", pb.onCanDeath() == true)
+
+pb.channel.MouseClick()
+local items = pb.menu:GetItems()
+check("clicking the channel button opens a menu", items:GetCount() > 0)
+check("menu lists every channel plus both presets and a separator",
+  items:GetCount() == table.getn(ChatPost.Channels) + table.getn(ChatPost.Presets) + 1,
+  tostring(items:GetCount()))
+check("death entry is enabled for a session that died",
+  items:Get(items:GetCount()):IsEnabled() == true)
+w.selectedSession.died = false
+pb.channel.MouseClick()
+items = pb.menu:GetItems()
+check("death entry is disabled for a session that did not",
+  items:Get(items:GetCount()):IsEnabled() == false)
+w.selectedSession.died = wasDead
+
+-- Range and filter must reach the post -- the whole point of the feature is that what gets posted
+-- is what the window is showing. `pb.lines` is legitimately nil when the scoped range contains no
+-- rows for the active view, so compare rendered text and let that case be a real, named outcome
+-- rather than an index error.
+local function PostText()
+  return pb.line or "(nothing to post)"
+end
+
+w:ResetRange(); w:RefreshContent()
+local fullText = PostText()
+check("the full-range post has content", fullText ~= "(nothing to post)")
+
+w:OnRangeChanged(4, 20)
+check("a scoped range changes the post", PostText() ~= fullText)
+
+-- A range narrow enough to contain nothing must disarm the button rather than post an empty
+-- header -- and must not throw on the way there.
+w:OnRangeChanged(1, 2)
+check("an empty range disarms the button", pb.enabled == false or PostText() ~= fullText)
+check("an empty range collapses the overlay rather than leaving a dead click target",
+  pb.enabled == true or select(1, pb.overlay:GetSize()) == 0)
+check("every post the range walk produced stayed within the message limit",
+  pb.line == nil or string.len(pb.line) <= ChatPost.MAX_MESSAGE)
+
+w:ResetRange(); w:RefreshContent()
+check("resetting the range restores the post", PostText() == fullText)
+
+-- Filtering to one counterpart must change the post too, and back.
+local topWho = w.selectedSession:TopCounterpart("done")
+if topWho ~= nil then
+  w:SelectFilter(topWho)
+  check("a counterpart filter changes the post", PostText() ~= fullText)
+  check("the filtered post names the counterpart", string.find(PostText(), " > ", 1, true) ~= nil)
+  w:SelectFilter(nil)
+  check("clearing the filter restores the post", PostText() == fullText)
+end
+
+-- Switching view must repoint the post at the other category.
+w:SelectView("taken")
+check("switching view changes the post", PostText() ~= fullText)
+check("the taken post is labelled as such",
+  string.find(PostText(), "Damage taken", 1, true) ~= nil)
+w:SelectView("done")
+check("switching back restores the post", PostText() == fullText)
+
+-- Shutdown must leave nothing clickable behind: the overlay is a top-level Window and outlives
+-- the plugin otherwise.
+pb:Shutdown()
+check("shutdown collapses the overlay", select(1, pb.overlay:GetSize()) == 0)
+check("shutdown hides the overlay", pb.overlay:IsVisible() == false)
 
 print("")
 if fails == 0 then print("ALL ANALYSIS CHECKS PASSED") else print(fails .. " CHECK(S) FAILED"); os.exit(1) end

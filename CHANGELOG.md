@@ -2,14 +2,93 @@
 
 ## 0.3.0 - unreleased
 
-**Search boxes on the skill table and the self-buff table.** Type any part of a skill, damage type,
-attacker or buff name to narrow the list down to matching rows.
+**Reckoning has a real settings window.** Type `/reck options` (or click **Open options** in the
+Plugin Manager) and you get a proper Reckoning window instead of three rows on the Plugin
+Manager's own panel: a category list down the left -- Windows, Appearance, Palette, Live meter,
+Death window, Self buffs, Sessions -- and about thirty settings grouped behind it. Escape or the
+x closes it, and it remembers where you put it.
+
+**Nothing needs an Accept any more.** Every switch, slider and button takes effect and is saved
+the moment you touch it. **Defaults** in the footer puts everything back.
+
+What you can now change:
+
+- **Windows** -- turn the live meter and the death window on or off, open the analysis window
+  automatically after every fight, lock every window's position so a stray drag cannot move them,
+  and see (and reset) exactly where each window is saved.
+- **Appearance** -- how solid the live meter is in and out of combat, whether it fades away
+  entirely once you have been out of combat for a while, and whether it still catches your mouse
+  while faded. Big numbers can be shortened to `12.4k` / `1.2m`, and window borders can be turned
+  off.
+- **Palette** -- four colour sets for the damage, healing and morale series: **Reckoning**,
+  **High contrast**, **Colour-blind safe** and **Muted**. A preview strip shows the change before
+  you commit to it, and the whole plugin follows -- the live meter's sparkline, the analysis
+  plot, the tables and even the colours in a chat post. Damage bars can also be coloured by
+  damage type instead.
+- **Live meter** -- which tab it opens on, whether the headline shows the per-second rate, the
+  total, or both, whether the sparkline is drawn and how many seconds it covers, and how often
+  the whole thing redraws (2, 5 or 10 times a second -- lower is cheaper in a raid). You can also
+  stop the fight clock counting seconds in which everything missed you, and have a one-line fight
+  summary written to your chat window when a fight ends.
+- **Death window** -- how long before it hides itself, or whether it waits for you to close it;
+  how many hits it lists (up to 12 now, was always 5) and how far back it looks; whether it marks
+  the killing blow and the biggest hit, draws the morale track, lists avoided hits, and prints the
+  damage type after each skill name.
+- **Self buffs** -- pick the up-to-three buffs charted under the analysis plot and reorder them
+  (the lane colour comes from the order), and manage the ignore list without typing a command.
+  Buffs that were simply up for the whole fight can be hidden so the ones with real gaps stand
+  out.
+- **Sessions** -- how much silence ends a fight, how short a fight has to be before it is thrown
+  away, how many fights are kept (10, 25 or 50), whether a lull splits one fight into two,
+  whether changing zone clears the list, and whether the graph uses one bucket per second, per
+  two seconds, or spreads itself across the whole fight. **Clear data** throws away every fight
+  in memory; it asks once before it does.
+
+Two of the settings are saved but do not do anything yet -- **Rows shown** on the Live meter page
+and **Row density** on the Appearance page, both of which say so under themselves. And
+**Announce the fight summary** writes to your own chat window rather than to a channel: a plugin
+cannot send to a channel by itself, which is why the **POST** button exists.
+
+**You can post a fight to chat.** The analysis window's title bar has a **POST** button and a
+channel button beside it. Click POST and the fight you are looking at goes out to chat as one
+coloured line:
+
+> Training-dummy (00:13) - Damage done: 527,738 (52,774 DPS) | 29 hits | 55% crit | max 89,709
+> Serrated Slash
+
+Click the channel button to choose **where it goes** -- Say, Fellowship, Raid or Kinship -- and
+**what it says**: the summary above, or a **Death report** naming what killed you, for how much,
+and the last hits you took on the way down. The death report is only offered for a fight you
+actually died in. The button always shows the channel, so you can see where a click will send
+before you make it.
+
+The post matches what the window is showing. Scope the time slider to the last 30 seconds and the
+post covers those 30 seconds; click a target chip and it covers that target; switch to the healing
+tab and it posts your healing instead.
+
+`/reck post` prints the exact same line into your own chat window only, with its length, so you
+can check it before sending anything to anyone.
+
+Colour can be turned off on the options window's Palette page. Chat has a length limit and the colour codes count
+against it, so turning it off leaves more room -- most visible on the death report, which fits more
+of the last-hits list without colour.
+
+**The buff table now tracks every effect on you, not just buffs** -- debuffs, wounds, poisons and
+anything else the game puts on your character all show up with the same uptime, applications and
+longest-gap numbers, and can be charted on the graph the same way. The section is called SELF
+EFFECTS now, and a new **TYPE** column says whether each one is a buff or a debuff -- click it to
+group them, or type "debuff" in the search box to see only those. If something on the list is just
+noise, `/reck buffs ignore <name>` still hides it (and `/reck buffs unignore <name>` now also works
+on the ones Reckoning hides by default, like Riding).
+
+**Search boxes on the skill table and the self-effects table.** Type any part of a skill, damage
+type, attacker or effect name to narrow the list down to matching rows.
 
 **Both tables sort by any column.** Click a heading to sort by it, click the same heading again to
 reverse the order.
 
-**A draggable splitter between the skill table and the SELF BUFFS row.** Drag it to give either
-section more room, and it remembers where you put it. The buff section's collapse arrow is gone --
+**A draggable splitter between the skill table and the SELF EFFECTS row.** Drag it to give either
+section more room, and it remembers where you put it. The section's collapse arrow is gone --
 dragging the splitter to the bottom does the same job.
 
 **The analysis window can now be as tall as your screen**, instead of stopping at a fixed height.

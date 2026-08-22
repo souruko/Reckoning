@@ -5,10 +5,31 @@
 
 DeathCause = class(Frame)
 
-local ROW_COUNT = 5
+-- ROW_COUNT is the POOL size, i.e. settings.deathRows' upper bound (options window, Death window
+-- page). The window is built at that size once and resized down to whatever the setting currently
+-- asks for -- rows are hidden, never destroyed, and none is ever created at Show() time.
+local ROW_COUNT = 12
+local DEFAULT_ROWS = 8
 local ROW_HEIGHT = 24
 local CAUSE_BLOCK_HEIGHT = 50
 local RULE_HEIGHT = 2
+local WINDOW_WIDTH = 380
+local HEADER_HEIGHT = 28
+
+-- Client height for a given visible row count: the cause block, the rows, and the countdown rule.
+local function ClientHeightFor(rows)
+	return CAUSE_BLOCK_HEIGHT + rows * ROW_HEIGHT + RULE_HEIGHT
+end
+
+local function VisibleRows()
+	local rows = tonumber(_G.settings and _G.settings.deathRows) or DEFAULT_ROWS
+	if rows < 1 then
+		rows = 1
+	elseif rows > ROW_COUNT then
+		rows = ROW_COUNT
+	end
+	return rows
+end
 
 -- Adapted from docs/DESIGN.md's "38px 1fr 62px 46px" grid (360px content width, 380 window -
 -- 10px padding each side): TIME widened from 38 to 46px -- "-3.7s" at LucidaConsole12 was
@@ -31,12 +52,27 @@ local function DamageTypeName(dmgType)
 	return DamageType.Names[dmgType] or "Unknown"
 end
 
+-- Shown in the amount column of an avoided row (settings.deathIncludeAvoids). Lower case and
+-- short on purpose: these sit under a column of right-aligned numbers and should read as an
+-- absence of one, not as another value.
+local AVOID_LABELS = {
+	[AvoidType.Missed]    = "missed",
+	[AvoidType.Immune]    = "immune",
+	[AvoidType.Resisted]  = "resisted",
+	[AvoidType.Blocked]   = "blocked",
+	[AvoidType.Parried]   = "parried",
+	[AvoidType.Evaded]    = "evaded",
+	[AvoidType.Deflected] = "deflected",
+}
+
 -- The initiator of the final damage-taken event is "last hit by" (docs/DESIGN.md: event 9
 -- carries no killer). Scans backward past a trailing temp-morale-loss row, if any, so a popped
 -- bubble logged after the fatal hit doesn't get mistaken for the killing blow itself.
-local function FindKillingBlow(session)
-	for i = table.getn(session.lastTaken), 1, -1 do
-		local entry = session.lastTaken[i]
+-- Takes the LIST the window is about to render, not the session: settings.deathLookback can drop
+-- rows off the front of the ring, and an index into the ring would then mark the wrong row.
+local function FindKillingBlow(rows)
+	for i = table.getn(rows), 1, -1 do
+		local entry = rows[i]
 		if entry.kind == "damage" then
 			return i, entry
 		end
@@ -48,10 +84,10 @@ end
 -- just the one that happened to land when your morale was already gone. Telling those two apart
 -- is the whole point of this window, so both get marked. Temp-morale rows are excluded: a popped
 -- bubble is not a hit, and it would win this comparison almost every time if it counted.
-local function FindBiggestHit(session)
+local function FindBiggestHit(rows)
 	local bestIndex, best = nil, 0
-	for i = 1, table.getn(session.lastTaken) do
-		local entry = session.lastTaken[i]
+	for i = 1, table.getn(rows) do
+		local entry = rows[i]
 		if entry.kind == "damage" and entry.amount > best then
 			bestIndex, best = i, entry.amount
 		end
@@ -63,7 +99,8 @@ end
 function DeathCause:Constructor()
 	Frame.Constructor(self, {
 		key = "deathCause", title = nil, closable = true,
-		width = 380, height = 200, headerHeight = 28,
+		width = WINDOW_WIDTH, height = HEADER_HEIGHT + ClientHeightFor(ROW_COUNT),
+		headerHeight = HEADER_HEIGHT,
 		fillHex = Theme.Hex.DeathFill, borderHex = Theme.Hex.DeathBorder,
 		headerRuleHex = Theme.Hex.DeathRule,
 	})
@@ -72,6 +109,10 @@ function DeathCause:Constructor()
 	self:BuildCauseBlock()
 	self:BuildRows()
 	self:BuildCountdown()
+
+	-- Built at the pool's full height above so every row exists; immediately shrunk to whatever
+	-- settings.deathRows currently asks for.
+	self:ApplySettings()
 
 	self.remaining = nil
 	self.countdownTotal = 1
@@ -245,11 +286,38 @@ function DeathCause:BuildRows()
 end
 
 function DeathCause:BuildCountdown()
-	self.countdownBar = Bar(380, RULE_HEIGHT, Theme.Hex.Accent500, Theme.Hex.DeathRule)
+	self.countdownBar = Bar(WINDOW_WIDTH, RULE_HEIGHT, Theme.Hex.Accent500, Theme.Hex.DeathRule)
 	self.countdownBar:SetParent(self.client)
 
 	local _, clientHeight = self.client:GetSize()
 	self.countdownBar:SetPosition(0, clientHeight - RULE_HEIGHT)
+end
+
+-- Re-reads every death-window setting: how many rows are shown (which resizes the whole window),
+-- and the countdown, which "Stay open until dismissed" turns off entirely. The per-row flags
+-- (marks, morale track, damage type) are read by FillRow at Show() time, so nothing here has to
+-- touch them -- this window is only ever populated from Show(), never live.
+function DeathCause:ApplySettings()
+	local rows = VisibleRows()
+	self.visibleRows = rows
+
+	local height = HEADER_HEIGHT + ClientHeightFor(rows)
+	if select(2, self:GetSize()) ~= height then
+		Frame.Resize(self, WINDOW_WIDTH, height)
+	end
+
+	for i = 1, ROW_COUNT do
+		if i > rows then
+			self.rows[i].container:SetVisible(false)
+		end
+	end
+
+	local _, clientHeight = self.client:GetSize()
+	self.countdownBar:SetPosition(0, clientHeight - RULE_HEIGHT)
+	self.countdownBar:SetVisible(_G.settings.deathStayOpen ~= true)
+	self.countdownLabel:SetVisible(_G.settings.deathStayOpen ~= true)
+
+	self:ApplyBorders()
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -261,40 +329,72 @@ function DeathCause:Show(session)
 		return
 	end
 
+	-- Geometry first: settings.deathRows may have changed since the last death, and the row loop
+	-- below has to know how many rows the window is currently tall enough for.
+	self:ApplySettings()
+
 	self.session = session
 	self.deathTime = session.endTime
 
-	local killIndex, killEntry = FindKillingBlow(session)
-	local maxIndex = FindBiggestHit(session)
+	-- settings.deathLookback (5-30s): rows older than this are dropped even when there is room
+	-- for them. A hit forty seconds before you died is not part of what killed you, and the ring
+	-- can easily hold one in a fight that went quiet in the middle.
+	local lookback = tonumber(_G.settings.deathLookback) or 30
+	local shown = {}
+	for i = 1, table.getn(session.lastTaken) do
+		local entry = session.lastTaken[i]
+		if self.deathTime - entry.time <= lookback then
+			shown[table.getn(shown) + 1] = entry
+		end
+	end
+	-- Never show nothing: if every row is older than the lookback, the most recent one is still
+	-- the answer to "what hit you last" and dropping it would leave an empty window at the worst
+	-- possible moment.
+	if table.getn(shown) == 0 and table.getn(session.lastTaken) > 0 then
+		shown[1] = session.lastTaken[table.getn(session.lastTaken)]
+	end
+
+	-- Both marks are computed against the SHOWN list, not the ring: an index into the ring would
+	-- point at the wrong row once the lookback drops anything.
+	local killIndex, killEntry = FindKillingBlow(shown)
+	local maxIndex = FindBiggestHit(shown)
 	self.killIndex = killIndex
 	self.bossLabel:SetText(killEntry and killEntry.initiator or "Unknown")
 
-	local n = table.getn(session.lastTaken)
+	local n = table.getn(shown)
 	local lostTotal = 0
 	for i = 1, n do
-		lostTotal = lostTotal + session.lastTaken[i].amount
+		lostTotal = lostTotal + shown[i].amount
 	end
 	self.moraleLostLabel:SetText(
 		"Lost " .. Format.Number(lostTotal) .. " morale over the last " .. n .. (n == 1 and " hit" or " hits"))
 
 	for i = 1, ROW_COUNT do
 		local widgets = self.rows[i]
-		local entry = session.lastTaken[i]
+		local entry = (i <= self.visibleRows) and shown[i] or nil
 
 		if entry == nil then
 			widgets.container:SetVisible(false)
 		else
 			widgets.container:SetVisible(true)
-			self:FillRow(widgets, entry, i == killIndex, i == maxIndex)
+			self:FillRow(widgets, entry,
+				(i == killIndex) and _G.settings.deathMarkKill ~= false,
+				(i == maxIndex) and _G.settings.deathMarkMax ~= false)
 		end
 	end
 
-	self.countdownTotal = _G.settings.deathAutoHide or 15
-	self.remaining = self.countdownTotal
+	-- "Stay open until dismissed" (settings.deathStayOpen): no countdown at all, so Update()
+	-- returns immediately and only the x or Esc closes the window.
+	if _G.settings.deathStayOpen == true then
+		self.remaining = nil
+	else
+		self.countdownTotal = _G.settings.deathAutoHide or 15
+		self.remaining = self.countdownTotal
+		self.lastTick = Turbine.Engine.GetGameTime()
+		self.lastShownSeconds = nil -- force Update()'s first tick to set the label, see below
+		self.countdownBar:SetPercent(1)
+	end
 	self.paused = false
-	self.lastTick = Turbine.Engine.GetGameTime()
-	self.lastShownSeconds = nil -- force Update()'s first tick to set the label, see below
-	self.countdownBar:SetPercent(1)
 
 	self:SetVisible(true)
 	self:Activate()
@@ -326,12 +426,21 @@ function DeathCause:FillRow(widgets, entry, isKill, isMax)
 		row:SetValues({ relTime, "Temporary morale", "-" .. Format.Number(entry.amount) })
 		row:SetColumnColor(2, Theme.Hex.MutedText)
 		row:SetColumnColor(3, Theme.Hex.MutedText)
+	elseif entry.kind == "avoided" then
+		-- Only present at all when settings.deathIncludeAvoids is on (Session:AddTaken). The
+		-- amount column carries the avoid's own name instead of a number -- there is no number.
+		row:SetValues({ relTime, entry.skill, AVOID_LABELS[entry.avoidType] or "avoided" })
+		row:SetColumnColor(2, Theme.Hex.Disabled)
+		row:SetColumnColor(3, Theme.Hex.Disabled)
 	else
-		row:SetValues({
-			relTime,
-			entry.skill .. " · " .. DamageTypeName(entry.dmgType),
-			Format.Number(entry.amount),
-		})
+		-- settings.deathShowType: the damage type after the skill name. On by default -- knowing
+		-- a hit was Shadow rather than Common is often the whole answer -- but it costs width,
+		-- and a long skill name plus a long type name is exactly what pushes into the next column.
+		local name = entry.skill
+		if _G.settings.deathShowType ~= false then
+			name = name .. " · " .. DamageTypeName(entry.dmgType)
+		end
+		row:SetValues({ relTime, name, Format.Number(entry.amount) })
 		row:SetColumnColor(2, Theme.Hex.Text)
 
 		if isKill then
@@ -341,14 +450,22 @@ function DeathCause:FillRow(widgets, entry, isKill, isMax)
 		elseif entry.moralePct ~= nil and entry.moralePct < 0.15 then
 			row:SetColumnColor(3, Theme.Hex.DamageSevere)
 		else
-			row:SetColumnColor(3, Theme.Hex.DamageTaken)
+			row:SetColumnColor(3, Theme.Series("taken"))
 		end
 	end
 
-	local pct = entry.moralePct or 0
-	widgets.bar:SetPercent(pct)
-	widgets.bar:SetFillColor(pct < 0.20 and Theme.Hex.DamageSevere or Theme.Hex.Morale)
-	widgets.pct:SetText(Format.Percent(pct))
+	-- settings.deathMoraleTrack: the bar and its percentage are one unit -- either the row carries
+	-- the morale readout or it does not.
+	local showMorale = (_G.settings.deathMoraleTrack ~= false)
+	widgets.bar:SetVisible(showMorale)
+	widgets.pct:SetVisible(showMorale)
+
+	if showMorale then
+		local pct = entry.moralePct or 0
+		widgets.bar:SetPercent(pct)
+		widgets.bar:SetFillColor(pct < 0.20 and Theme.Hex.DamageSevere or Theme.Series("morale"))
+		widgets.pct:SetText(Format.Percent(pct))
+	end
 end
 
 -- Delta-time based (not an absolute target timestamp) specifically so pausing is just "skip

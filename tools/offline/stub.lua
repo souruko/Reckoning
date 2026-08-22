@@ -87,7 +87,18 @@ function Control:SetWantsUpdates(v) self._updates = v end
 function Control:SetBackground(b) self._bg = b end
 function Control:SetBlendMode(b) self._blend = b end
 function Control:SetStretchMode(m) self._stretch = m end
-function Control:SetOpacity(o) error("SetOpacity does not blend in this engine -- use Theme.Mix") end
+-- SetOpacity used to be banned outright here, which encoded the lesson slightly too broadly. The
+-- real rule (CLAUDE.md, the long note): it does NOT blend over a Control that already has a solid
+-- BackColor -- it draws the BackColor at full strength and the opacity is ignored. A whole-window
+-- fade on a Window with no BackColor of its own is the one case it IS confirmed to work
+-- (VitalSelf's incombat/outcombat fade; CombatAnalysis's invisible quickslot host, which is what
+-- UI/PostButton.lua fades its quickslot with). So the guard checks that condition, not the call.
+function Control:SetOpacity(o)
+	assert(self._back == nil,
+		"SetOpacity on a Control with a solid BackColor does not blend in this engine -- use Theme.Mix")
+	self._opacity = o
+end
+function Control:GetOpacity() return self._opacity end
 function Control:Activate() self._activated = true end
 function Control:AddItem(x) self._items[#self._items + 1] = x end
 function Control:ClearItems() self._items = {} end
@@ -111,6 +122,42 @@ function Label:Constructor() Control.Constructor(self) end
 local ListBox = class(Control)
 function ListBox:Constructor() Control.Constructor(self) end
 
+-- Chat-posting types (UI/PostButton.lua). None of these existed before -- nothing in this
+-- codebase had touched a Quickslot, a Shortcut or a ContextMenu.
+local Quickslot = class(Control)
+function Quickslot:Constructor() Control.Constructor(self) end
+function Quickslot:SetShortcut(s) self._shortcut = s end
+function Quickslot:GetShortcut() return self._shortcut end
+
+local Shortcut = class()
+function Shortcut:Constructor(shortcutType, data)
+	self._type, self._data = shortcutType, data
+end
+function Shortcut:SetData(d) self._data = d end
+function Shortcut:GetData() return self._data end
+
+-- MenuItem(text, enabled, checked) -- the three-argument form CombatAnalysis uses.
+local MenuItem = class()
+function MenuItem:Constructor(text, enabled, checked)
+	self._text, self._enabled, self._checked = text, enabled, checked
+end
+function MenuItem:GetText() return self._text end
+function MenuItem:IsEnabled() return self._enabled end
+function MenuItem:SetChecked(v) self._checked = v end
+function MenuItem:IsChecked() return self._checked end
+
+local ItemList = class()
+function ItemList:Constructor() self._list = {} end
+function ItemList:Add(item) self._list[#self._list + 1] = item end
+function ItemList:GetCount() return #self._list end
+function ItemList:Get(i) return self._list[i] end
+function ItemList:RemoveAt(i) table.remove(self._list, i) end
+
+local ContextMenu = class()
+function ContextMenu:Constructor() self._items = ItemList() end
+function ContextMenu:GetItems() return self._items end
+function ContextMenu:ShowMenu() self._shown = true end
+
 Turbine = {
 	UI = {
 		Control = Control,
@@ -118,6 +165,8 @@ Turbine = {
 		Label = Label,
 		ListBox = ListBox,
 		TextBox = Control,
+		ContextMenu = ContextMenu,
+		MenuItem = MenuItem,
 		Color = function(r, g, b, a) return { R = r, G = g, B = b, A = a } end,
 		-- A 1920x1080 screen, so Analysis's MaxHeight() (which reads GetHeight through a pcall)
 		-- has something real to clamp against instead of falling back to its old constant.
@@ -142,6 +191,9 @@ Turbine = {
 				TrajanPro16 = "TrajanPro16", LucidaConsole12 = "LucidaConsole12",
 			},
 			ScrollBar = Control, TextBox = Control, CheckBox = Control, Button = Control,
+			Quickslot = Quickslot,
+			Shortcut = Shortcut,
+			ShortcutType = { Alias = 6, Skill = 1, Item = 2 },
 			Window = nil, -- deliberately absent: docs/DESIGN.md forbids it, nothing may use it
 		},
 	},

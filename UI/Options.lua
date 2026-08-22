@@ -1,146 +1,65 @@
 --=================================================================================================
--- Options -- the in-game settings panel, returned via plugin.GetOptionsPanel. Same shape as
--- VitalSelf/UI/Settings.lua: a Turbine.UI.ListBox, table-driven numeric rows, Accept validates
--- before writing to _G.settings.
+-- Options -- the Plugin Manager stub, returned via plugin.GetOptionsPanel.
 --
--- Scoped to what docs/DESIGN.md actually calls settable (deathAutoHide, window enable flags).
--- No colour rows: the palette is fixed design tokens (Constants.lua Theme.Hex), not a per-user
--- setting -- Settings.lua's COLOR_KEYS is deliberately empty for the same reason.
+-- Every real setting moved to UI/OptionsWindow.lua (/reck options), which is a proper Reckoning
+-- window with the plugin's own chrome and grouping. The Plugin Manager still calls
+-- GetOptionsPanel and still wants a Turbine.UI.ListBox back, so this stays -- reduced to a
+-- one-line pointer plus a button that opens the real thing.
+--
+-- The old panel is gone rather than kept in parallel: it had two different commit models in one
+-- place (checkboxes saved on change, the numeric box only on Accept), which is exactly the
+-- problem the options window exists to remove. Two surfaces editing the same keys would put it
+-- straight back.
 --=================================================================================================
 
 Options = class(Turbine.UI.ListBox)
 
-local ROW_HEIGHT = 26
-local ROW_START = 10
-
-local ROWS = {
-	{ key = "deathAutoHide", label = "Death window auto-hide (5-30s)", low = 5, high = 30 },
-}
-
 function Options:Constructor()
 	Turbine.UI.ListBox.Constructor(self)
-	self:SetSize(420, 220)
+	self:SetSize(420, 96)
 
-	self:Header()
-	self:Values()
-end
+	local body = Turbine.UI.Control()
+	body:SetSize(420, 88)
 
-function Options:Header()
 	local title = Turbine.UI.Label()
+	title:SetParent(body)
 	title:SetFont(Font.TrajanPro16)
 	title:SetText("Reckoning v" .. Reckoning.Version)
 	title:SetForeColor(Theme.Color(Theme.Hex.Text))
-	title:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleCenter)
-	title:SetSize(400, 30)
-	self:AddItem(title)
-end
+	title:SetPosition(10, 6)
+	title:SetSize(400, 26)
+	title:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
 
-function Options:AddRow(parent, y, labelText, text)
-	local label = Turbine.UI.Label()
-	label:SetParent(parent)
-	label:SetSize(260, ROW_HEIGHT)
-	label:SetPosition(10, y)
-	label:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
-	label:SetFont(Font.Verdana12)
-	label:SetText(labelText)
-	label:SetForeColor(Theme.Color(Theme.Hex.Text))
+	local hint = Turbine.UI.Label()
+	hint:SetParent(body)
+	hint:SetFont(Font.Verdana12)
+	hint:SetText("Settings live in Reckoning's own window. Type /reck options.")
+	hint:SetForeColor(Theme.Color(Theme.Hex.MutedText))
+	hint:SetPosition(10, 34)
+	hint:SetSize(400, 20)
+	hint:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
 
-	local box = Turbine.UI.Lotro.TextBox()
-	box:SetParent(parent)
-	box:SetSize(60, ROW_HEIGHT)
-	box:SetPosition(280, y)
-	box:SetFont(Font.Verdana12)
-	box:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleCenter)
-	box:SetText(text)
-
-	return box
-end
-
-function Options:AddCheckbox(parent, y, text, checked, onChange)
-	local box = Turbine.UI.Lotro.CheckBox()
-	box:SetParent(parent)
-	box:SetPosition(10, y)
-	box:SetWidth(380)
-	box:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
-	box:SetFont(Font.Verdana12)
-	box:SetText(" " .. text)
-	box:SetChecked(checked)
-	box.CheckedChanged = function() onChange(box:IsChecked()) end
-	return box
-end
-
-function Options:Values()
-	local body = Turbine.UI.Control()
-	body:SetSize(420, ROW_START + (table.getn(ROWS) + 5) * ROW_HEIGHT)
-
-	self.boxes = {}
-	local y = ROW_START
-
-	for i = 1, table.getn(ROWS) do
-		local row = ROWS[i]
-		self.boxes[row.key] = self:AddRow(body, y, row.label, tostring(_G.settings[row.key]))
-		y = y + ROW_HEIGHT
+	-- Turbine.UI.Lotro.Button, not a hand-built Control: this panel is drawn on the Plugin
+	-- Manager's own ground, where Reckoning's palette has nothing to sit against, so the stock
+	-- widget is the one that looks right here (and it is the one thing this panel still does).
+	local open = Turbine.UI.Lotro.Button()
+	open:SetParent(body)
+	open:SetPosition(10, 58)
+	open:SetSize(120, 22)
+	open:SetFont(Font.Verdana12)
+	open:SetText("Open options")
+	-- optionsWindow is a root-level global (Main.lua) constructed after this panel -- read at
+	-- click time, never captured here, so construction order between the two does not matter.
+	open.Click = function()
+		if optionsWindow ~= nil then
+			optionsWindow:Toggle()
+		end
 	end
-
-	y = y + ROW_HEIGHT
-
-	self.liveMeterCheck = self:AddCheckbox(body, y, "Show live meter", _G.settings.liveMeterEnabled, function(checked)
-		_G.settings.liveMeterEnabled = checked
-		if not checked then
-			liveMeter:SetVisible(false)
-		end
-		Settings.Save()
-	end)
-	y = y + ROW_HEIGHT
-
-	self.deathCauseCheck = self:AddCheckbox(body, y, "Show death cause window", _G.settings.deathCauseEnabled, function(checked)
-		_G.settings.deathCauseEnabled = checked
-		if not checked then
-			deathCause:SetVisible(false)
-		end
-		Settings.Save()
-	end)
-	y = y + ROW_HEIGHT
-
-	local accept = Turbine.UI.Lotro.Button()
-	accept:SetParent(body)
-	accept:SetSize(100, ROW_HEIGHT)
-	accept:SetPosition(280, y)
-	accept:SetFont(Font.Verdana12)
-	accept:SetText("Accept")
-	accept.Click = function() self:Accept() end
 
 	self:AddItem(body)
 end
 
--- Reads every box, validates and clamps, and only then writes to _G.settings -- a box that
--- doesn't parse is left as whatever was already stored (VitalSelf/UI/Settings.lua's pattern).
-function Options:Accept()
-	for i = 1, table.getn(ROWS) do
-		local row = ROWS[i]
-		local value = tonumber(self.boxes[row.key]:GetText())
-		if value ~= nil then
-			value = math.floor(value)
-			if value < row.low then
-				value = row.low
-			elseif value > row.high then
-				value = row.high
-			end
-			_G.settings[row.key] = value
-		end
-	end
-
-	self:Refresh()
-	Settings.Save()
-end
-
--- Write the (possibly clamped) stored values back into the boxes so the panel always shows
--- what is actually in effect.
+-- Kept as a no-op so anything still calling it (Main.lua's older ResetAll) stays valid. There is
+-- nothing on this panel to re-read: it shows no setting.
 function Options:Refresh()
-	for i = 1, table.getn(ROWS) do
-		local row = ROWS[i]
-		self.boxes[row.key]:SetText(tostring(_G.settings[row.key]))
-	end
-	self.liveMeterCheck:SetChecked(_G.settings.liveMeterEnabled)
-	self.deathCauseCheck:SetChecked(_G.settings.deathCauseEnabled)
 end

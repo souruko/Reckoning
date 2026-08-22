@@ -34,7 +34,8 @@ local realImport = _G.import
 _G.import = function(path)
   if path == "Reckoning.UI" then
     realImport("Reckoning.UI")
-    _G.UI = { LiveMeter = LiveMeter, DeathCause = DeathCause, Analysis = Analysis, Options = Options }
+    _G.UI = { LiveMeter = LiveMeter, DeathCause = DeathCause, Analysis = Analysis,
+              OptionsWindow = OptionsWindow, Options = Options }
     return
   end
   if path:match("^Turbine") then return end
@@ -46,7 +47,9 @@ check("Main.lua loads top to bottom", ok, ok and "" or tostring(err))
 if not ok then os.exit(1) end
 
 check("all three windows constructed", liveMeter ~= nil and deathCause ~= nil and analysis ~= nil)
-check("options panel constructed", optionsPanel ~= nil)
+check("options panel stub constructed", optionsPanel ~= nil)
+check("options window constructed", optionsWindow ~= nil)
+check("options window constructed", optionsWindow ~= nil)
 check("LocalPlayer.name monkey-patched", LocalPlayer.name == "Luxtheninth")
 check("version is 0.3.0 in Constants", Reckoning.Version == "0.3.0")
 check("Buffs global exists before Events", Buffs ~= nil and Buffs.PollInterval == 0.25)
@@ -106,7 +109,7 @@ local function Run(text)
   local okCmd, errCmd = pcall(function() command:Execute(nil, text) end)
   return okCmd, errCmd
 end
-for _, cmd in ipairs({ "help", "dump", "buffs", "buffs list", "testdeath",
+for _, cmd in ipairs({ "help", "dump", "post", "buffs", "buffs list", "testdeath",
                        "show analysis", "hide analysis", "move analysis" }) do
   local okCmd, errCmd = Run(cmd)
   check("/reck " .. cmd, okCmd, okCmd and "" or tostring(errCmd))
@@ -116,6 +119,27 @@ check("/reck buffs ignore <name> keeps the name's case and spaces",
   okIg and _G.settings.buffIgnore["Writ of Health"] == true)
 local okUn = Run("buffs unignore Writ of Health")
 check("/reck buffs unignore <name>", okUn and _G.settings.buffIgnore["Writ of Health"] == nil)
+-- /reck post must survive every preset and channel, including the ones that legitimately have
+-- nothing to say -- it runs against whatever session state happens to exist, so a nil post is a
+-- normal outcome it has to print through rather than throw on.
+for _, preset in ipairs({ "summary", "death" }) do
+  for _, channel in ipairs({ "say", "fellowship", "raid", "kinship" }) do
+    _G.settings.postPreset = preset
+    _G.settings.postChannel = channel
+    local okPost, errPost = Run("post")
+    check("/reck post (" .. preset .. " -> " .. channel .. ")", okPost,
+      okPost and "" or tostring(errPost))
+  end
+end
+_G.settings.postPreset = "summary"
+_G.settings.postChannel = "say"
+
+-- The four post settings must come back from a fresh DEFAULTS merge, since an existing save
+-- predates them entirely.
+check("postChannel defaulted", _G.settings.postChannel ~= nil)
+check("postColor defaulted on", _G.settings.postColor == true)
+check("the removed postRows setting is gone", DEFAULTS.postRows == nil)
+
 local okReset = Run("reset")
 check("/reck reset", okReset)
 check("/reck reset restored the shipped window size",

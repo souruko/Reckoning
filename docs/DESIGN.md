@@ -6,11 +6,15 @@ from `souruko/Gibberish3` (`UTILS/COMBATCHATPARSE/en.lua`), read 2026-08-19.
 
 ## Scope
 
-Three windows, one data pipeline:
+Three reporting windows over one data pipeline, plus a settings window:
 
 1. **Live meter** (260 × 186) — always on screen, four tabs.
-2. **Death cause** (380 × 200) — auto-popup on defeat, auto-hides after 15s (configurable).
-3. **Post-combat analysis** (1080 × 600, resizable to 1440 × 800) — four views, session rail.
+2. **Death cause** (380 wide; height follows `deathRows`) — auto-popup on defeat, auto-hides after
+   15s (configurable, or never).
+3. **Post-combat analysis** (1080 × 820, resizable to 1440 × the display height) — four views,
+   session rail.
+4. **Options** (560 × 452) — see "Window 4" below. Not a reporting window: it owns no combat data
+   and reads `_G.settings` only.
 
 Tracked scope is **the local player only**. Nothing is read off targets or the
 group: no target morale, no target effects. The only live target datum is the
@@ -231,6 +235,27 @@ filtered, the split and the source's own defence breakdown.
 Crit and devastating are **always separate columns** — never summed.
 The morale line is a dashed overlay on its own 0–max axis, labelled at the right edge.
 
+## Window 4 — options
+
+`/reck options`, and the **Open options** button on the Plugin Manager stub. 560 × 452: a 146px
+category rail on the left, seven pages on the right in one reused `ListBox`, and a footer with
+**Defaults** and **Close**. Built from the `design_handoff_options_panel/` bundle (direction 1b);
+`SETTINGS_KEYS.md` in that bundle is the authority for every key, range and label string.
+
+**No Accept.** Every control writes `_G.settings` and persists on change. The one exception is a
+slider, which writes live (so a preview can follow the drag) but calls `Settings.Save()` on
+release only — a `Turbine.PluginData` write per drag pixel is not affordable.
+
+Pages: Windows · Appearance · Palette · Live meter · Death window · Self buffs · Sessions. The
+selected page is in-memory state; the window always opens on Windows.
+
+**The palette is presets, never a picker.** The saved value is the *name* of a `Theme.Presets`
+entry — a `Turbine.UI.Color` cannot be serialised (see Persistence below), which is exactly why
+`COLOR_KEYS` is empty and stays empty. Only the five *series* roles are presettable
+(`done`/`taken`/`healOut`/`healIn`/`morale`); role and threshold colours (DamageSevere,
+DamageFatal, the morale background pair, the damage-type tints) are fixed, and the death window
+deliberately keeps its own darker ground whatever the preset is.
+
 ## Type
 
 Only the client's own fonts exist (`Constants.lua` in Gibberish3), so every size
@@ -274,8 +299,13 @@ Follow the `VitalSelf` pattern: `Turbine.PluginData.Save(Turbine.DataScope.Chara
   `{R,G,B}` table. Rebuild every color key on load (a `FixColors()` equivalent)
   or the plugin breaks on second load.
 - Read new keys defensively; existing saves will not have them.
-- Persist window positions, the live tab, the auto-hide duration and pins.
-- Sessions themselves are **not** persisted.
+- Persist window positions and sizes, the analysis window's splitter position, and every options
+  window setting (`Settings.lua`'s `DEFAULTS` is the single list).
+- Sessions themselves are **not** persisted, and neither are pins.
+- Numeric settings are **clamped on load and on reset** (`Settings.Clamp`), and enum-valued ones
+  fall back to their default when the saved value is not in the allowed set. A hand-edited save
+  must not be able to put a value on screen that no control can represent, or a nil hex into
+  `Theme.Color`.
 
 ## Open questions
 

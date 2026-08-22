@@ -66,7 +66,8 @@ Set(WRIT, GUARD, RIDING, POISON)
 PollAt(1000)
 check("index base detected as 1", Buffs.indexBase == 1, "base=" .. tostring(Buffs.indexBase))
 check("ignored effect ('Riding') not tracked", s.buffs["Riding"] == nil)
-check("debuff not tracked", s.buffs["Grievous Wound"] == nil)
+-- Every effect is tracked now, benefit or not: IsDebuff is deliberately no longer consulted.
+check("debuff tracked like any other effect", s.buffs["Grievous Wound"] ~= nil)
 check("two real buffs opened", s.buffs["Writ of Health"] ~= nil and s.buffs["Bracing Guard"] ~= nil)
 check("icon cached from GetIcon()", Buffs.Icons["Writ of Health"] == "icon:writ")
 check("missing icon caches as false, not nil-retry", true)
@@ -106,7 +107,8 @@ for _, e in pairs(s.buffs) do if e.open ~= nil then openLeft = true end end
 check("CloseSession closes every open interval", not openLeft)
 
 local rows = Buffs.Stats(s, nil, nil)
-check("Stats returns a row per tracked buff", #rows == 2, "#rows=" .. #rows)
+-- Writ, Guard and the debuff (Grievous Wound, up for the first stretch only).
+check("Stats returns a row per tracked effect", #rows == 3, "#rows=" .. #rows)
 check("Stats sorted by uptime, lowest first", rows[1].uptimePct <= rows[2].uptimePct)
 local byName = {}; for _, r in ipairs(rows) do byName[r.name] = r end
 local writ, guard = byName["Writ of Health"], byName["Bracing Guard"]
@@ -159,12 +161,40 @@ check("effect with no icon falls back to initials",
   Buffs.Initials("Mending Verse") == "MV", Buffs.Initials("Mending Verse"))
 check("single-word buff yields one initial", Buffs.Initials("Reflect") == "R")
 
+-- ---- buff / debuff / unknown labelling (the table's TYPE column) ----
+-- No IsDebuff at all, the case a client without the method produces.
+local MYSTERY = { GetName = function() return "Odd Sensation" end, GetIcon = function() return nil end }
+Set(WRIT, POISON, MYSTERY)
+Buffs.Poll(2001)
+check("a benefit is labelled a buff", Buffs.Kinds["Writ of Health"] == Buffs.Kind.Buff,
+  tostring(Buffs.Kinds["Writ of Health"]))
+check("a debuff is labelled a debuff", Buffs.Kinds["Grievous Wound"] == Buffs.Kind.Debuff,
+  tostring(Buffs.Kinds["Grievous Wound"]))
+check("a missing IsDebuff reads as unknown, never as a buff",
+  Buffs.Kinds["Odd Sensation"] == Buffs.Kind.Unknown, tostring(Buffs.Kinds["Odd Sensation"]))
+local kinds = {}
+for _, r in ipairs(Buffs.Stats(s2, nil, nil)) do kinds[r.name] = r.kind end
+check("Stats carries the kind through to the table row",
+  kinds["Grievous Wound"] == Buffs.Kind.Debuff and kinds["Writ of Health"] == Buffs.Kind.Buff)
+
 -- ---- user ignore list ----
 Buffs.AddIgnore("Mending Verse")
 check("user ignore list takes effect", Buffs.IsIgnored("Mending Verse"))
 check("user ignore list persists to settings", _G.settings.buffIgnore["Mending Verse"] == true)
 Buffs.RemoveIgnore("Mending Verse")
 check("user ignore list is removable", not Buffs.IsIgnored("Mending Verse"))
+check("removing a non-default clears the key outright",
+  _G.settings.buffIgnore["Mending Verse"] == nil)
+
+-- A default entry can be overridden back on: unignoring one stores an explicit false rather
+-- than deleting a key that was never there, or the default would just reassert itself.
+check("default ignore applies before any override", Buffs.IsIgnored("Riding"))
+Buffs.RemoveIgnore("Riding")
+check("a default entry can be un-ignored", not Buffs.IsIgnored("Riding"))
+check("un-ignoring a default stores an explicit false",
+  _G.settings.buffIgnore["Riding"] == false)
+Buffs.AddIgnore("Riding")
+check("and can be ignored again", Buffs.IsIgnored("Riding"))
 
 -- ---- no session -> no work ----
 Sessions.current = nil

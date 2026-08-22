@@ -60,6 +60,19 @@ function Frame:Constructor(params)
 	self.client:SetSize(width, height - self.headerHeight)
 	self.client:SetMouseVisible(false)
 	self.client:SetZOrder(1)
+
+	self:ApplyBorders()
+end
+
+-- settings.showBorders (options window, Appearance page). Hides the four 1px edge Controls rather
+-- than recolouring them: they are the only thing drawing the border, they are already pooled for
+-- Resize(), and hiding is the one teardown-shaped operation this codebase has confirmed safe.
+-- Every window gets this for free by virtue of extending Frame.
+function Frame:ApplyBorders()
+	local show = (_G.settings == nil) or (_G.settings.showBorders ~= false)
+	for _, edge in pairs(self.borderEdges) do
+		edge:SetVisible(show)
+	end
 end
 
 function Frame:BuildBorder(width, height, color)
@@ -200,7 +213,13 @@ end
 function Frame:WireDrag()
 	local frame = self
 
+	-- settings.lockWindows (options window, Windows page) is checked on MouseDown rather than by
+	-- unwiring the handler: unwiring would need re-wiring on every change, and the whole point of
+	-- the lock is that it can be toggled while the windows are open.
 	self.header.MouseDown = function(sender, args)
+		if _G.settings ~= nil and _G.settings.lockWindows == true then
+			return
+		end
 		if args.Button == Turbine.UI.MouseButton.Left then
 			frame.dragging = true
 			frame.dragStartX = args.X
@@ -214,6 +233,13 @@ function Frame:WireDrag()
 			x = x + (args.X - frame.dragStartX)
 			y = y + (args.Y - frame.dragStartY)
 			frame:SetPosition(x, y)
+			-- Subclasses owning a control positioned in SCREEN coordinates (the analysis window's
+			-- post-button overlay, its own top-level Window) must move it inside this same
+			-- handler -- deferring to MouseUp would strand it for the whole drag. Frame itself
+			-- knows nothing about what the hook does.
+			if frame.OnMoved ~= nil then
+				frame:OnMoved()
+			end
 		end
 	end
 

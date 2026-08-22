@@ -82,7 +82,15 @@ end
 -- always pass it; heals never do on their own -- Sessions.lua calls MarkCombat() separately for a
 -- heal that landed while the player was flagged in combat, since it is the one that owns the
 -- cached combat state.
-function Session:Touch(t, combat)
+--
+-- `avoided` marks the event as a swing that landed nothing (a full avoid: amount 0, dmgType 13).
+-- settings.clockThroughAvoids (options window, Live meter page) decides whether such a second
+-- still counts as active time. On (the default, and what this always did): a second in which
+-- everything missed you is still a second of the fight, so the rate denominators include it.
+-- Off: only seconds where something actually landed count, which reads a per-second rate as
+-- "output while engaged" rather than "output over the whole fight". Either way the fight's own
+-- clock (endTime / combatEndTime) moves -- this only governs the ActiveSeconds denominator.
+function Session:Touch(t, combat, avoided)
 	if t > self.endTime then
 		self.endTime = t
 	end
@@ -91,8 +99,13 @@ function Session:Touch(t, combat)
 		self:MarkCombat(t)
 	end
 
+	local countsAsActive = true
+	if avoided and _G.settings ~= nil and _G.settings.clockThroughAvoids == false then
+		countsAsActive = false
+	end
+
 	local second = math.floor(t - self.startTime)
-	if self._activeSeconds[second] == nil then
+	if countsAsActive and self._activeSeconds[second] == nil then
 		self._activeSeconds[second] = true
 		self._activeSecondsCount = self._activeSecondsCount + 1
 	end
@@ -209,9 +222,23 @@ local function FoldInto(row, amount, avoidType, critType)
 	end
 end
 
+-- The ring is sized by settings.deathRows (options window, Death window page, 3-12) -- the death
+-- window is its only consumer and lists exactly this many rows. Read per push rather than
+-- captured, so raising the setting mid-play session takes effect on the next fight; lowering it
+-- trims the ring on the very next hit, which is what the window is about to show anyway.
+local LAST_TAKEN_FALLBACK = 5
+local LAST_TAKEN_MAX = 12
+
 function Session:PushLastTaken(entry)
+	local cap = tonumber(_G.settings and _G.settings.deathRows) or LAST_TAKEN_FALLBACK
+	if cap < 1 then
+		cap = 1
+	elseif cap > LAST_TAKEN_MAX then
+		cap = LAST_TAKEN_MAX
+	end
+
 	table.insert(self.lastTaken, entry)
-	while table.getn(self.lastTaken) > 5 do
+	while table.getn(self.lastTaken) > cap do
 		table.remove(self.lastTaken, 1)
 	end
 end
@@ -296,7 +323,7 @@ end
 
 function Session:AddDone(skill, dmgType, target, amount, avoidType, critType, t)
 	target = StripThe(target)
-	self:Touch(t, true)
+	self:Touch(t, true, AvoidType.IsFull(avoidType))
 
 	FoldInto(DamageRow(self.agg.done, self.names.done, skill, dmgType, target), amount, avoidType, critType)
 	self:LogEvent("done", t, skill, dmgType, target, amount, critType, avoidType)
@@ -306,7 +333,8 @@ end
 
 function Session:AddTaken(skill, dmgType, initiator, amount, avoidType, critType, t)
 	initiator = StripThe(initiator)
-	self:Touch(t, true)
+	local fullAvoid = AvoidType.IsFull(avoidType)
+	self:Touch(t, true, fullAvoid)
 
 	local row = DamageRow(self.agg.taken, self.names.taken, skill, dmgType, initiator)
 	local moralePct = self:MoralePct()
@@ -314,10 +342,19 @@ function Session:AddTaken(skill, dmgType, initiator, amount, avoidType, critType
 	FoldInto(row, amount, avoidType, critType)
 	self:LogEvent("taken", t, skill, dmgType, initiator, amount, critType, avoidType)
 
-	if not AvoidType.IsFull(avoidType) then
+	-- settings.deathIncludeAvoids (options window, Death window page) decides whether a swing
+	-- that landed nothing earns a place in the death window's list. Off by default: the list has
+	-- a handful of rows and "what killed me" is a question about hits that landed. On, an avoided
+	-- swing is logged with its avoidType, which UI/DeathCause.lua renders in place of the amount.
+	if not fullAvoid then
 		self:PushLastTaken({
 			time = t, kind = "damage", skill = skill, dmgType = dmgType,
 			amount = amount, initiator = initiator, moralePct = moralePct,
+		})
+	elseif _G.settings ~= nil and _G.settings.deathIncludeAvoids == true then
+		self:PushLastTaken({
+			time = t, kind = "avoided", skill = skill, dmgType = dmgType,
+			amount = 0, avoidType = avoidType, initiator = initiator, moralePct = moralePct,
 		})
 	end
 

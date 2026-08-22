@@ -199,6 +199,70 @@ Theme.Hex = {
 -- Morale fraction below which a bucket's background bar switches to the "low" pair above.
 MORALE_DANGER = 0.30
 
+---------------------------------------------------------------------------------------------------
+-- Palette presets (design_handoff_options_panel, Palette page)
+--
+-- The SAVED setting is the KEY of one of these, never a colour: a Turbine.UI.Color does not
+-- survive PluginData serialization (see Settings.lua's COLOR_KEYS comment, which is exactly why
+-- that list is empty and stays empty), and the design's brief was fixed presets with no free
+-- picker. "Reckoning" must stay byte-identical to the Theme.Hex series tokens above so the
+-- default look is unchanged by this feature existing.
+--
+-- Only the FIVE SERIES roles are presettable. DamageSevere/DamageFatal/MoraleBg*/Type* are role
+-- and threshold colours, not series colours, and the death window deliberately keeps its own
+-- darker ground whatever the preset is.
+---------------------------------------------------------------------------------------------------
+Theme.Presets = {
+	["Reckoning"] = {
+		done = "#9184d9", taken = "#c98fa8", healOut = "#7fb3a6",
+		healIn = "#9dc7bc", morale = "#e6d98f",
+	},
+	["High contrast"] = {
+		done = "#b5abfc", taken = "#f0b7c9", healOut = "#9dc7bc",
+		healIn = "#c3e0d8", morale = "#f2e9a6",
+	},
+	["Colour-blind safe"] = {
+		done = "#7f9fd9", taken = "#d9a05b", healOut = "#8fd0c4",
+		healIn = "#b9dfd8", morale = "#e9e9ed",
+	},
+	["Muted"] = {
+		done = "#6f679e", taken = "#96707f", healOut = "#5f8479",
+		healIn = "#79968e", morale = "#a89f6c",
+	},
+}
+
+-- Explicit order for the options window's swatch rows -- pairs() order is undefined in Lua and
+-- the four rows must not shuffle between openings.
+Theme.PresetOrder = { "Reckoning", "High contrast", "Colour-blind safe", "Muted" }
+
+local DEFAULT_PRESET = "Reckoning"
+
+-- The series colour for a role ("done"/"taken"/"healOut"/"healIn"/"morale") under whatever preset
+-- is active right now. RESOLVED PER CALL, deliberately: a module-level table of hexes built at
+-- load (which is what UI/LiveMeter.lua's TAB_COLORS and UI/Analysis.lua's VIEW_META/
+-- SERIES_FOR_VIEW used to be) can never see a preset change, so every one of those was rewritten
+-- to carry a role key and call this instead. Theme.Color caches by hex string, so switching
+-- presets only ever adds a handful of cache entries.
+function Theme.Series(role)
+	local name = _G.settings and _G.settings.palettePreset or nil
+	local preset = (name ~= nil and Theme.Presets[name]) or Theme.Presets[DEFAULT_PRESET]
+	return preset[role] or Theme.Presets[DEFAULT_PRESET][role]
+end
+
+-- Row height and number face, both settings on the options window's Appearance page. Functions,
+-- not constants, for the same reason Theme.Series is: they are read at layout/refresh time so a
+-- change takes effect on the next ApplySettings() rather than on the next /plugins reload.
+function Theme.RowHeight()
+	return (_G.settings and _G.settings.density == "Compact") and 16 or 20
+end
+
+function Theme.NumberFont()
+	if _G.settings and _G.settings.numberFont == "Verdana" then
+		return Font.Verdana12
+	end
+	return Font.LucidaConsole12
+end
+
 -- Buff lane colours, in pick order -- a charted self-buff takes the next free one for its lane,
 -- its row checkbox, its icon border and its name (UI/Analysis.lua's buff table). Max 3 charted
 -- at once, which is exactly why this list has three entries.
@@ -268,10 +332,24 @@ Format = {}
 
 -- "4812" -> "4,812". Mirrors VitalSelf/Main.lua's format_number: never call this from a
 -- per-frame Update() with anything heavier than the throttled refreshes these windows use.
+--
+-- With settings.abbreviateNumbers on (the default, Appearance page), anything from 10,000 up
+-- collapses to "12.4k"/"1.2m" instead. The 10,000 floor is deliberate: below it the comma form is
+-- both shorter and exact, so abbreviating would lose precision for nothing. The guard reads
+-- _G.settings defensively because Constants.lua is imported BEFORE Settings.Load() runs
+-- (Main.lua) and something could format a number in between.
 function Format.Number(value)
 	if value == nil then
 		return "0"
 	end
+
+	if _G.settings ~= nil and _G.settings.abbreviateNumbers and value >= 10000 then
+		if value >= 1000000 then
+			return string.format("%.1fm", value / 1000000)
+		end
+		return string.format("%.1fk", value / 1000)
+	end
+
 	local text = string.format("%.0f", value)
 	local sign, int = string.match(text, "^(%-?)(%d+)$")
 	if int == nil then
@@ -301,6 +379,57 @@ function Format.Clock(seconds)
 	local m = math.floor(seconds / 60)
 	local s = seconds % 60
 	return string.format("%02d:%02d", m, s)
+end
+
+-- Character count, not byte count: mob names carry accented characters (Utûgi, Rúadh) that are
+-- two bytes each in the UTF-8 the client hands the parser, and counting those twice would both
+-- over-estimate a chip's width and truncate the name earlier than asked. Lua 5.1 has no utf8
+-- library, so the lead-byte ranges are counted by hand.
+function Format.CharCount(text)
+	if text == nil then
+		return 0
+	end
+	local n = string.len(text)
+	local i, chars = 1, 0
+	while i <= n do
+		local b = string.byte(text, i)
+		local size = 1
+		if b >= 240 then size = 4
+		elseif b >= 224 then size = 3
+		elseif b >= 192 then size = 2 end
+		chars = chars + 1
+		i = i + size
+	end
+	return chars
+end
+
+-- Truncate on a character boundary, never mid-sequence (a half-written UTF-8 character renders as
+-- garbage). The marker is ASCII ".." rather than a "…": this client's fonts have already been
+-- caught missing Geometric Shapes glyphs (the session rail's old pin diamonds rendered as "?").
+-- Shared by the analysis window's picker chips and by ChatPost's line-length cap, which is why it
+-- lives here rather than staying a file-local in UI/Analysis.lua.
+function Format.Truncate(text, maxChars)
+	if text == nil then
+		return ""
+	end
+	if maxChars == nil or maxChars < 3 then
+		maxChars = 3
+	end
+	local n = string.len(text)
+	local i, chars = 1, 0
+	while i <= n do
+		local b = string.byte(text, i)
+		local size = 1
+		if b >= 240 then size = 4
+		elseif b >= 224 then size = 3
+		elseif b >= 192 then size = 2 end
+		if chars >= maxChars - 2 then
+			return string.sub(text, 1, i - 1) .. ".."
+		end
+		chars = chars + 1
+		i = i + size
+	end
+	return text
 end
 
 -- "#RRGGBB..." -> r, g, b floats in [0,1]. Reads only the first 6 hex digits -- alpha (an 8th

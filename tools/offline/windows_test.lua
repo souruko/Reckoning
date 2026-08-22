@@ -13,7 +13,7 @@ _G.lp = {
 LocalPlayer = _G.lp; LocalPlayer.name = LocalPlayer:GetName()
 Settings.Load()
 import "Reckoning.Session"; import "Reckoning.Sessions"; import "Reckoning.Buffs"
-import "Reckoning.Events"; import "Reckoning.UI"
+import "Reckoning.Events"; import "Reckoning.ChatPost"; import "Reckoning.UI"
 
 local fails = 0
 local function check(label, ok, detail)
@@ -59,9 +59,15 @@ check("headline shows the fight's dps (swapped with the total per feedback)",
 check("headline corner shows the fight's damage total",
   m.rateLabel:GetText() == Format.Number(session:Total("done")), m.rateLabel:GetText())
 check("headline number dropped to Verdana20", m.valueLabel._font == "Verdana20")
-check("sparkline has 30 pooled columns", #m.sparkColumns == 30)
+-- The pool is built at settings.sparklineWindow's upper bound (60), never at the current
+-- window: growing it later would mean creating Controls at refresh time.
+check("sparkline pool is built at the 60s maximum", #m.sparkColumns == 60)
+check("sparkline draws only the current 30s window", (function()
+  for i = 31, 60 do if m.sparkColumns[i]:IsVisible() then return false end end
+  return true
+end)())
 local lit, tallest = 0, 0
-for i = 1, 30 do
+for i = 1, 60 do
   local c = m.sparkColumns[i]
   if c:IsVisible() then
     lit = lit + 1
@@ -77,7 +83,7 @@ check("spark columns stay inside their 16px band", true)
 local doneColor = m.sparkColumns[30]:GetBackColor() or m.sparkColumns[1]:GetBackColor()
 m:SelectTab("healOut"); m:Refresh()
 check("sparkline recolours with the tab", (function()
-  for i = 1, 30 do
+  for i = 1, 60 do
     local c = m.sparkColumns[i]
     if c:IsVisible() then
       return math.abs(c:GetBackColor().G - Theme.Color(Theme.Hex.HealingDone).G) < 1e-9
@@ -98,8 +104,12 @@ check("three stat rows, none overlapping the sub-line",
 session.died = true
 session.endTime = clock
 local d = DeathCause()
-check("death window keeps its 380x200 footprint",
-  select(1, d:GetSize()) == 380 and select(2, d:GetSize()) == 200)
+-- 28 header + 50 cause block + deathRows * 24 + 2 countdown rule. The default deathRows is 8,
+-- so the window is taller than the fixed 380x200 it used to be; the ROW POOL is 12 deep and the
+-- window is resized down to whatever the setting asks for.
+check("death window is sized for settings.deathRows",
+  select(1, d:GetSize()) == 380 and select(2, d:GetSize()) == 28 + 50 + 8 * 24 + 2,
+  select(1, d:GetSize()) .. "x" .. select(2, d:GetSize()))
 
 -- craft a lastTaken ring where the biggest hit is NOT the killing blow
 session.lastTaken = {}

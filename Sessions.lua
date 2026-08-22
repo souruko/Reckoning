@@ -1,18 +1,45 @@
 --=================================================================================================
--- Sessions -- the manager: opens/closes Session instances on silence, keeps the ring of 20
--- (pinned exempt), tracks which session is selected for the analysis window.
+-- Sessions -- the manager: opens/closes Session instances on silence, keeps the ring
+-- (settings.sessionsKept -- 10/25/50, pinned exempt), tracks which session is selected for the analysis window.
 -- See docs/DESIGN.md "Session model". Not a class -- a single static namespace.
 --=================================================================================================
 
 Sessions = {}
 
-Sessions.list = {}      -- newest first; pinned entries are exempt from the MAX_SESSIONS cap
+Sessions.list = {}      -- newest first; pinned entries are exempt from the sessionsKept cap
 Sessions.current = nil  -- the open Session, or nil between fights
 Sessions.selected = nil -- the Session shown in the analysis window
 
-local MAX_SESSIONS = 20
-local CLOSE_AFTER  = 5  -- seconds of silence closes the open session
-local MIN_DURATION = 3  -- seconds; a session shorter than this is discarded, not archived
+-- The three fight-shape numbers are SETTINGS now (options window, Sessions page), read at the
+-- point of use rather than captured here: a change has to take effect on the next fight, not on
+-- the next /plugins reload, and none of them is hot enough for a table lookup to matter. The
+-- constants below are only the fallbacks for a load that somehow runs before Settings.Load().
+local MAX_SESSIONS = 20 -- settings.sessionsKept
+local CLOSE_AFTER  = 5  -- settings.idleTimeout: seconds of silence that closes the open session
+local MIN_DURATION = 3  -- settings.minFightLength: shorter than this is discarded, not archived
+
+local function SessionsKept()
+	return tonumber(_G.settings and _G.settings.sessionsKept) or MAX_SESSIONS
+end
+
+local function IdleTimeout()
+	return tonumber(_G.settings and _G.settings.idleTimeout) or CLOSE_AFTER
+end
+
+-- With mergeFights OFF, the close is gated on the client's combat flag -- but that flag is only
+-- refreshed on the 4Hz tick and the client itself takes a moment to raise it, while damage opens a
+-- session on the very first hit regardless. Without a floor, the tick right after a fight starts
+-- can see "session open, flag still false, quiet for 0.25s" and close a fight that just began. One
+-- second is comfortably longer than the flag's own lag and far shorter than any idle timeout.
+local UNMERGED_FLOOR = 1
+
+local function MinFightLength()
+	local value = tonumber(_G.settings and _G.settings.minFightLength)
+	if value == nil then
+		return MIN_DURATION
+	end
+	return value
+end
 
 local onClosedCallbacks = {}
 local onSelfDefeatCallbacks = {}
@@ -85,9 +112,10 @@ local function EnsureOpenForHeal(t)
 	return Sessions.current ~= nil
 end
 
--- Trims Sessions.list down to MAX_SESSIONS non-pinned entries, dropping the oldest non-pinned
+-- Trims Sessions.list down to settings.sessionsKept non-pinned entries, dropping the oldest non-pinned
 -- session first. Pinned sessions never count against the cap and are never dropped here.
 local function TrimRing()
+	local cap = SessionsKept()
 	local nonPinned = 0
 	for i = 1, table.getn(Sessions.list) do
 		if not Sessions.list[i].pinned then
@@ -95,7 +123,7 @@ local function TrimRing()
 		end
 	end
 
-	while nonPinned > MAX_SESSIONS do
+	while nonPinned > cap do
 		for i = table.getn(Sessions.list), 1, -1 do
 			if not Sessions.list[i].pinned then
 				table.remove(Sessions.list, i)
@@ -115,7 +143,7 @@ function Sessions.Close()
 
 	-- CombatDuration, not Duration: a two-second scuffle followed by four seconds of heal ticks is
 	-- a two-second fight, and the discard has to judge it as one.
-	if s:CombatDuration() < MIN_DURATION then
+	if s:CombatDuration() < MinFightLength() then
 		return nil
 	end
 
@@ -150,11 +178,117 @@ end
 -- does. Heals landing after that still get recorded into it for as long as it stays open, but they
 -- no longer postpone the close, which is what let a rotation of heal-over-times keep one session
 -- running indefinitely.
+--
+-- settings.mergeFights (options window, Sessions page) chooses which clock the silence is
+-- measured against. On (the default, and what this always did): the session survives any gap
+-- shorter than the idle timeout, so a pull, a lull and a re-engage are one fight. Off: the
+-- session closes as soon as the client's own combat flag drops, so each engagement is its own
+-- fight -- the timeout then only covers the moment between the last hit landing and the flag
+-- clearing.
 function Sessions.Tick(now)
 	RefreshInCombat()
+	Sessions.CheckZone()
 
-	if Sessions.current ~= nil and (now - Sessions.current.combatEndTime) >= CLOSE_AFTER then
+	if Sessions.current == nil then
+		return
+	end
+
+	local quietFor = now - Sessions.current.combatEndTime
+	local merge = (_G.settings == nil) or (_G.settings.mergeFights ~= false)
+
+	if quietFor >= IdleTimeout() then
 		Sessions.Close()
+	elseif not merge and not inCombat and quietFor >= UNMERGED_FLOOR then
+		Sessions.Close()
+	end
+end
+
+---------------------------------------------------------------------------------------------------
+-- Zone changes
+---------------------------------------------------------------------------------------------------
+-- settings.dropOnZoneChange: throw away every unpinned archived session when the player changes
+-- zone, so the analysis window's rail is about where you are rather than about the whole play
+-- session.
+--
+-- UNVERIFIED TURBINE SHAPE, and guarded accordingly. Turbine.Gameplay.Player:GetPosition()
+-- returning (instanceId, x, y, z) is the only zone-ish read available, and unlike _G.lp's morale
+-- and combat calls it has NO precedent anywhere in the ~1MB of installed plugin source this
+-- codebase checks its assumptions against (grepped: nothing reads a zone, map or region name).
+-- So the read is pcall'd and a failure disables the feature rather than erroring -- exactly the
+-- shape Buffs.Read() uses, and the safe direction: sessions are kept, never wrongly dropped.
+-- If this turns out to be the wrong call, only ZoneId below changes.
+local zoneId = nil
+local zoneReadable = true
+
+local function ZoneId()
+	if not zoneReadable then
+		return nil
+	end
+	local ok, id = pcall(function() return select(1, _G.lp:GetPosition()) end)
+	if not ok or id == nil then
+		zoneReadable = false
+		return nil
+	end
+	return id
+end
+
+function Sessions.CheckZone()
+	if _G.settings == nil or _G.settings.dropOnZoneChange ~= true then
+		-- Still track the id while the setting is off, so switching it on mid-session does not
+		-- immediately read as "the zone just changed".
+		zoneId = ZoneId()
+		return
+	end
+
+	local id = ZoneId()
+	if id == nil then
+		return
+	end
+
+	if zoneId ~= nil and id ~= zoneId then
+		Sessions.DropUnpinned()
+	end
+	zoneId = id
+end
+
+-- Drops every archived session that is not pinned. The OPEN session is left alone: it belongs to
+-- the fight you are in, and a zone change mid-fight (a portal, a skirmish phase) should not lose
+-- the numbers you are still watching.
+function Sessions.DropUnpinned()
+	for i = table.getn(Sessions.list), 1, -1 do
+		if not Sessions.list[i].pinned then
+			table.remove(Sessions.list, i)
+		end
+	end
+	Sessions.SelectFallback()
+end
+
+-- Clears every session and pin held in memory -- the options window's "Clear data". Settings are
+-- untouched; sessions are never persisted anyway (docs/DESIGN.md), so there is nothing on disk
+-- for this to reach.
+function Sessions.ClearAll()
+	Sessions.list = {}
+	Sessions.current = nil
+	Sessions.selected = nil
+	Sessions.SelectFallback()
+end
+
+-- Re-points Sessions.selected (and every window reading it) at whatever is left after a drop.
+function Sessions.SelectFallback()
+	local kept = Sessions.selected
+	local stillThere = false
+	for i = 1, table.getn(Sessions.list) do
+		if Sessions.list[i] == kept then
+			stillThere = true
+			break
+		end
+	end
+	if not stillThere then
+		Sessions.selected = Sessions.list[1]
+	end
+
+	if analysis ~= nil and analysis.OnSessionsDropped ~= nil then
+		analysis:OnSessionsDropped()
 	end
 end
 

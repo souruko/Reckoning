@@ -1,6 +1,14 @@
 --=================================================================================================
--- Buffs -- self-buff uptime tracking. Backs the analysis window's SELF BUFFS table and its
+-- Buffs -- self-EFFECT uptime tracking. Backs the analysis window's SELF EFFECTS table and its
 -- charted lanes (design_handoff_reckoning_redesign/REDESIGN_SPEC.md section 6).
+--
+-- EVERY effect on the local player is tracked, not only benefits: debuffs, corruptions and
+-- damage-over-times on you are exactly the things worth seeing next to a fight's damage-taken
+-- graph, and the client's own buff/debuff split (Effect:IsDebuff, which this file used to filter
+-- on) is not something a player asked to have applied for them. The module keeps the `Buffs`
+-- name and the `session.buffs` field so nothing downstream had to be renamed; read "buff" as
+-- "tracked effect" throughout. The ignore list below is the one filter left, and it is the
+-- player's (`/reck buffs ignore <name>`), not a guess about what counts as a buff.
 --
 -- The data source is the LIVE EFFECT LIST, not the combat parser. Parser event 17 (EventCode.Buff)
 -- fires when a benefit is applied but carries no duration and no fade, so uptime derived from it
@@ -17,7 +25,7 @@
 -- LocalPlayer.name, the ChatType.Death channel -- see CLAUDE.md "Build status"). So: the whole
 -- enumeration runs inside one pcall, a failed read is a no-op rather than an error, the
 -- 0-vs-1-based index base of EffectList:Get is DETECTED at first read rather than assumed, and
--- every optional accessor (GetIcon, IsDebuff) is probed before use. If effects never show up
+-- every optional accessor (GetName, GetIcon) is probed before use. If effects never show up
 -- in-game, the read helper below is the first place to look.
 --=================================================================================================
 
@@ -32,7 +40,15 @@ Buffs.PollInterval = 0.25
 -- buff table and the graph's lanes share a single lookup.
 Buffs.Icons = {}
 
--- Effects that are never self-buffs worth reporting. Deliberately EXACT-name matching, not
+-- [name] = Buffs.Kind.*, cached at first sighting alongside the icon. THREE states, not a
+-- boolean: Effect:IsDebuff is not confirmed to exist on this client's Effect type, and a client
+-- that doesn't have it must read as "we don't know" rather than silently labelling every effect
+-- a buff -- the table column built on this shows Unknown, which is a true statement, where a
+-- boolean would have shown a wrong one.
+Buffs.Kind = { Buff = "buff", Debuff = "debuff", Unknown = "unknown" }
+Buffs.Kinds = {}
+
+-- Effects that are never worth reporting in a fight. Deliberately EXACT-name matching, not
 -- substring: a substring rule ("Riding") would silently eat a real buff that happens to contain
 -- the word, and a player can never tell why their buff vanished from the table.
 --
@@ -57,12 +73,16 @@ Buffs.indexBase = nil
 -- Ignore list
 ---------------------------------------------------------------------------------------------------
 
+-- The player's own list wins over the defaults in BOTH directions: `true` ignores an effect the
+-- defaults say nothing about, and `false` un-ignores one of the defaults above. Without the
+-- `false` case, `/reck buffs unignore Riding` would silently do nothing and a default entry that
+-- turns out to match a real, wanted effect could never be recovered.
 function Buffs.IsIgnored(name)
-	if Buffs.Ignore[name] then
-		return true
-	end
 	local user = _G.settings and _G.settings.buffIgnore
-	return user ~= nil and user[name] == true
+	if user ~= nil and user[name] ~= nil then
+		return user[name] == true
+	end
+	return Buffs.Ignore[name] == true
 end
 
 function Buffs.AddIgnore(name)
@@ -72,10 +92,13 @@ function Buffs.AddIgnore(name)
 end
 
 function Buffs.RemoveIgnore(name)
-	if _G.settings.buffIgnore ~= nil then
+	_G.settings.buffIgnore = _G.settings.buffIgnore or {}
+	if Buffs.Ignore[name] == true then
+		_G.settings.buffIgnore[name] = false -- an explicit override of the default above
+	else
 		_G.settings.buffIgnore[name] = nil
-		Settings.Save()
 	end
+	Settings.Save()
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -116,13 +139,23 @@ local function EffectIcon(effect)
 	return effect:GetIcon()
 end
 
--- A debuff is not a self-buff. IsDebuff is not confirmed to exist on this client's Effect type,
--- so a missing method just means "keep it" rather than an error.
-local function EffectIsDebuff(effect)
+-- Buff / debuff / unknown, for the table's TYPE column. IsDebuff is no longer a FILTER (every
+-- effect is tracked either way, see the header) -- it is only a label now, which is why a client
+-- without the method, or one that throws from it, degrades to Unknown instead of dropping the
+-- effect. The pcall is per-effect rather than relying on Read's outer one: a throw here must cost
+-- this one effect's label, not abandon the whole enumeration mid-walk.
+local function EffectKind(effect)
 	if effect.IsDebuff == nil then
-		return false
+		return Buffs.Kind.Unknown
 	end
-	return effect:IsDebuff() == true
+	local ok, isDebuff = pcall(function() return effect:IsDebuff() end)
+	if not ok then
+		return Buffs.Kind.Unknown
+	end
+	if isDebuff == true then
+		return Buffs.Kind.Debuff
+	end
+	return Buffs.Kind.Buff
 end
 
 -- Returns { [name] = iconIdOrFalse } for everything currently on the player, or nil if the
@@ -170,11 +203,15 @@ function Buffs.Read()
 			local effect = effects:Get(i)
 			if effect ~= nil then
 				local name = EffectName(effect)
-				if name ~= nil and name ~= "" and not Buffs.IsIgnored(name)
-					and not EffectIsDebuff(effect)
-				then
+				if name ~= nil and name ~= "" and not Buffs.IsIgnored(name) then
 					if Buffs.Icons[name] == nil then
 						Buffs.Icons[name] = EffectIcon(effect) or false
+					end
+					-- Re-probed while it reads Unknown, so a client that only answers once the
+					-- effect is fully applied still gets a real label on a later poll; once it
+					-- has answered, the cached value stands.
+					if Buffs.Kinds[name] == nil or Buffs.Kinds[name] == Buffs.Kind.Unknown then
+						Buffs.Kinds[name] = EffectKind(effect)
 					end
 					present[name] = Buffs.Icons[name]
 				end
@@ -334,6 +371,7 @@ function Buffs.Stats(session, fromSec, toSec)
 			apps = apps,
 			longestGap = gap,
 			icon = Buffs.Icons[name] or nil,
+			kind = Buffs.Kinds[name] or Buffs.Kind.Unknown,
 			initials = Buffs.Initials(name),
 			intervals = intervals,
 		}

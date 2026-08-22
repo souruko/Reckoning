@@ -109,7 +109,10 @@ end
 check("morale: every bucket carries a bar (carry-forward works)", barsVisible == N,
   "bars=" .. barsVisible .. "/" .. N)
 check("morale: no bar overflows the plot, edges sit on top", barBad == 0, "bad=" .. barBad)
-check("morale: axis label shows peak in points", g.moraleAxisLabel:GetText():match("^MORALE [%d,]+$") ~= nil,
+-- "MORALE 500,000" with settings.abbreviateNumbers off, "MORALE 500.0k" with it on (the
+-- default) -- Format.Number gained that branch with the options panel.
+check("morale: axis label shows peak in points",
+  g.moraleAxisLabel:GetText():match("^MORALE [%d,%.]+k?m?$") ~= nil,
   g.moraleAxisLabel:GetText())
 
 -- 3. views without morale hide the whole morale apparatus

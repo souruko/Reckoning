@@ -12,23 +12,51 @@ LiveMeter = class(Frame)
 
 local TABS = { "done", "taken", "healOut", "healIn" }
 local TAB_LABELS = { done = "Done", taken = "Taken", healOut = "Heal out", healIn = "Heal in" }
--- The sparkline takes the active tab's own series colour, so the band and the headline number
--- below it are obviously about the same thing.
-local TAB_COLORS = {
-	done = Theme.Hex.DamageDone, taken = Theme.Hex.DamageTaken,
-	healOut = Theme.Hex.HealingDone, healIn = Theme.Hex.HealingTaken,
-}
 
--- docs/IMPLEMENTATION_PLAN.md suggested ~5Hz (0.2s); bumped to 0.1s (10Hz) per direct feedback.
-local REFRESH_INTERVAL = 0.1
+-- The sparkline takes the active tab's own series colour, so the band and the headline number
+-- below it are obviously about the same thing. RESOLVED PER CALL, not a module-level table of
+-- hexes: that table was built once at load and could never see a palette-preset change
+-- (Constants.lua's Theme.Series -- this is the exact trap the options panel's Palette page
+-- introduced, and it was a live bug in the draft before this).
+local function TabColor(key)
+	return Theme.Series(key)
+end
+
+-- docs/IMPLEMENTATION_PLAN.md suggested ~5Hz (0.2s); bumped to 0.1s (10Hz) per direct feedback,
+-- and now a setting (options window, Live meter page: 2 / 5 / 10 Hz). Read inside Update() rather
+-- than captured here, so a change takes effect on the next tick.
+local DEFAULT_HZ = 10
+
+local function RefreshInterval()
+	local hz = tonumber(_G.settings and _G.settings.refreshHz) or DEFAULT_HZ
+	if hz <= 0 then
+		hz = DEFAULT_HZ
+	end
+	return 1 / hz
+end
 
 -- Redesign geometry (REDESIGN_SPEC.md section 8). The tab row loses 2px and the sparkline is
 -- paid for out of the body's existing height -- the window's 260x186 footprint does not change.
 local TAB_ROW_HEIGHT = 22
-local SPARK_SECONDS = 30 -- one column per second of the last half-minute
+local SPARK_WIDTH = 240   -- the body's full content width
+local SPARK_MAX_SECONDS = 60 -- the pool is built at the setting's UPPER BOUND, never per window:
+                             -- growing it later would mean creating Controls at refresh time
 local SPARK_HEIGHT = 16
-local SPARK_COLUMN = 8   -- 30 columns x 8px = the body's full 240px content width
-local SPARK_BAR = 6      -- leaving 2px of air between columns
+local SPARK_BAR_GAP = 2   -- air between columns
+local SPARK_BAR_MIN = 2
+
+-- Seconds of history the band covers (settings.sparklineWindow, 10-60). Clamped to the pool so a
+-- hand-edited save can never ask for a column that was never built. The 60 ceiling is deliberate:
+-- 240px / 60 is 4px per column, and below that the band stops reading as a band.
+local function SparkSeconds()
+	local seconds = tonumber(_G.settings and _G.settings.sparklineWindow) or 30
+	if seconds < 1 then
+		seconds = 1
+	elseif seconds > SPARK_MAX_SECONDS then
+		seconds = SPARK_MAX_SECONDS
+	end
+	return seconds
+end
 
 ---------------------------------------------------------------------------------------------------
 -- Per-tab data providers -- one function per tab, all returning the same
@@ -248,6 +276,7 @@ function LiveMeter:BuildAnalysisButton()
 		else
 			analysis:SetVisible(true)
 			analysis:Activate()
+			analysis.postButton:Raise()
 		end
 	end
 	button.MouseEnter = function() button:SetForeColor(Theme.Color(Theme.Hex.Accent200)) end
@@ -344,16 +373,16 @@ function LiveMeter:BuildBody()
 	self.lineLabels[3].sub = self:BodyLabel(x, 128, w, 10, Font.Verdana10, Theme.Hex.DimText, Turbine.UI.ContentAlignment.TopRight)
 end
 
--- 30 pooled columns, one per second of the last half-minute, drawn as a filled band rather than
--- a line: 16px of height cannot express a polyline, and the shape of the last 30 seconds is all
--- this is for.
+-- Pooled columns, one per second of the window, drawn as a filled band rather than a line: 16px
+-- of height cannot express a polyline, and the shape of the last N seconds is all this is for.
+-- The pool is SPARK_MAX_SECONDS deep whatever the current window is -- see that constant.
 function LiveMeter:BuildSparkline(x, y)
 	self.sparkColumns = {}
-	for i = 1, SPARK_SECONDS do
+	for i = 1, SPARK_MAX_SECONDS do
 		local column = Turbine.UI.Control()
 		column:SetParent(self.body)
-		column:SetPosition(x + (i - 1) * SPARK_COLUMN, y + SPARK_HEIGHT)
-		column:SetSize(SPARK_BAR, 0)
+		column:SetPosition(x, y + SPARK_HEIGHT)
+		column:SetSize(SPARK_BAR_MIN, 0)
 		column:SetVisible(false)
 		column:SetMouseVisible(false)
 		self.sparkColumns[i] = column
@@ -365,13 +394,30 @@ end
 -- One column per whole second, read straight off session.buckets for the ACTIVE TAB's category,
 -- ending at the fight's most recent second. Seconds before the fight started, and seconds with
 -- no events, are simply absent -- a gap in the band is a real lull, not missing data.
+--
+-- Column pitch is recomputed per refresh from the current window (240px / N), not a constant:
+-- settings.sparklineWindow can change between two refreshes and the band must always fill the
+-- body's width exactly. Columns past the window are hidden, never destroyed.
 function LiveMeter:RefreshSparkline(session)
+	local seconds = SparkSeconds()
+	local show = (_G.settings == nil) or (_G.settings.sparkline ~= false)
+
+	if not show then
+		for i = 1, SPARK_MAX_SECONDS do
+			self.sparkColumns[i]:SetVisible(false)
+		end
+		return
+	end
+
+	local pitch = SPARK_WIDTH / seconds
+	local barWidth = math.max(SPARK_BAR_MIN, math.floor(pitch) - SPARK_BAR_GAP)
+
 	local key = self.activeTab
 	local lastSecond = math.floor(session:Duration())
 
 	local values, maxValue = {}, 0
-	for i = 1, SPARK_SECONDS do
-		local second = lastSecond - SPARK_SECONDS + i
+	for i = 1, seconds do
+		local second = lastSecond - seconds + i
 		local bucket = (second >= 0) and session.buckets[second] or nil
 		local value = bucket and (bucket[key] or 0) or 0
 		values[i] = value
@@ -381,20 +427,21 @@ function LiveMeter:RefreshSparkline(session)
 	end
 
 	-- Every visible column this refresh is the same colour (the active tab never changes mid-loop)
-	-- -- resolved once outside the loop rather than once per column (up to 30 calls/refresh at
+	-- -- resolved once outside the loop rather than once per column (up to 60 calls/refresh at
 	-- 10Hz otherwise).
-	local color = Theme.Color(TAB_COLORS[key])
-	for i = 1, SPARK_SECONDS do
+	local color = Theme.Color(TabColor(key))
+	for i = 1, SPARK_MAX_SECONDS do
 		local column = self.sparkColumns[i]
 		local height = 0
-		if values[i] > 0 and maxValue > 0 then
+		if i <= seconds and values[i] > 0 and maxValue > 0 then
 			-- at least 1px, so a small second next to a huge one still shows something
 			height = math.max(1, math.floor(values[i] / maxValue * SPARK_HEIGHT))
 		end
 
 		if height > 0 then
-			column:SetPosition(self.sparkX + (i - 1) * SPARK_COLUMN, self.sparkY + SPARK_HEIGHT - height)
-			column:SetSize(SPARK_BAR, height)
+			column:SetPosition(self.sparkX + math.floor((i - 1) * pitch),
+				self.sparkY + SPARK_HEIGHT - height)
+			column:SetSize(barWidth, height)
 			column:SetBackColor(color)
 			column:SetVisible(true)
 		else
@@ -468,23 +515,88 @@ function LiveMeter:ActiveSession()
 	return self.idleSession
 end
 
+-- How long the player has been out of combat, for the idle fade. Measured from the last fight's
+-- own combat clock rather than from a timestamp this file keeps, so it survives a /plugins
+-- refresh mid-lull and cannot drift from what Sessions.lua thinks the fight's end was.
+function LiveMeter:IdleSeconds()
+	if Sessions.current ~= nil then
+		return 0
+	end
+	local last = Sessions.list[1]
+	if last == nil then
+		return nil -- nothing fought yet this play session: the fade has no clock to run against
+	end
+	return Turbine.Engine.GetGameTime() - last.combatEndTime
+end
+
+-- Whole-window opacity and the idle fade. SetOpacity on a Turbine.UI.Window with no BackColor of
+-- its own is the ONE use of it this codebase has confirmed working (VitalSelf's own
+-- incombat/outcombat fade); the banned case is SetOpacity as a tint over a solid Control fill,
+-- which is what Theme.Mix exists for. Frame keeps its fill on a child Control, so this is the
+-- confirmed shape.
+function LiveMeter:ApplyFade()
+	local inCombat = (Sessions.current ~= nil)
+	local idle = self:IdleSeconds()
+
+	if not inCombat and _G.settings.idleFadeEnabled == true and idle ~= nil
+		and idle >= (_G.settings.idleFadeAfter or 20) then
+		self:SetVisible(false)
+		return false
+	end
+
+	self:SetVisible(true)
+
+	local percent = inCombat and (_G.settings.opacityCombat or 100) or (_G.settings.opacityIdle or 55)
+	self:SetOpacity(percent / 100)
+
+	-- "Click-through when faded" applies to the dimmed out-of-combat state, not to the fully
+	-- faded one (which is hidden and cannot be clicked either way).
+	self:SetMouseVisible(inCombat or _G.settings.clickThroughFaded ~= true)
+	return true
+end
+
+-- Re-reads every live-meter setting and repaints. Called from the options window; safe to call
+-- at any time, and does not rebuild a single Control.
+--
+-- ApplyBorders is called HERE rather than left to Refresh: Refresh returns early when the meter
+-- is disabled or fully faded, and the border toggle has to land whether or not the window is
+-- currently drawing anything.
+function LiveMeter:ApplySettings()
+	self:ApplyBorders()
+	self:Refresh()
+end
+
 function LiveMeter:Refresh()
 	if not _G.settings.liveMeterEnabled then
 		self:SetVisible(false)
 		return
 	end
 
-	self:SetVisible(true)
+	if not self:ApplyFade() then
+		return -- faded out entirely; nothing to repaint behind it
+	end
 
 	local session = self:ActiveSession()
 	local lines = PROVIDERS[self.activeTab](session)
 
 	self.captionLabel:SetText(lines.headline.caption)
-	-- Swapped per feedback: the rate (DPS/HPS) is the prominent Verdana20 number now, the raw
-	-- total moves to the small LucidaConsole12 corner -- same headline shape for every tab, so
-	-- this swap applies uniformly across done/taken/healOut/healIn.
-	self.valueLabel:SetText(lines.headline.rate)
-	self.rateLabel:SetText(lines.headline.value)
+
+	-- settings.liveBarValue (options window, Live meter page) picks which number gets the big
+	-- Verdana20 slot. "Both" is the default and is today's shipped headline -- the rate prominent
+	-- with the raw total in the small LucidaConsole12 corner, which was set by direct feedback.
+	-- The design handoff defaults this key to "Rate"; defaulting to "Both" instead is a deliberate
+	-- deviation so that turning the feature on changes nothing until asked (see CLAUDE.md).
+	local mode = _G.settings.liveBarValue or "Both"
+	if mode == "Total" then
+		self.valueLabel:SetText(lines.headline.value)
+		self.rateLabel:SetText(lines.headline.rate)
+	elseif mode == "Rate" then
+		self.valueLabel:SetText(lines.headline.rate)
+		self.rateLabel:SetText("")
+	else
+		self.valueLabel:SetText(lines.headline.rate)
+		self.rateLabel:SetText(lines.headline.value)
+	end
 
 	local rows = { lines.second, lines.stat, lines.max }
 	for i = 1, 3 do
@@ -514,7 +626,7 @@ end
 
 function LiveMeter:Update()
 	local now = Turbine.Engine.GetGameTime()
-	if now - self.lastRefresh < REFRESH_INTERVAL then
+	if now - self.lastRefresh < RefreshInterval() then
 		return
 	end
 	self.lastRefresh = now

@@ -140,6 +140,14 @@ function Events.heartbeat:Update()
 	-- nothing to attribute the last quarter-second of uptime to.
 	Buffs.Poll(now)
 	Sessions.Tick(now)
+
+	-- Backstop for the post button's overlay quickslot: it is a separate top-level Window and so
+	-- does not follow the analysis window's visibility, which is toggled from at least four places
+	-- (/reck show|hide|move, the live meter's Details button, the close button, Escape). This only
+	-- re-positions -- it never calls Activate(), which would take chat focus four times a second.
+	if analysis ~= nil and analysis.SyncPostOverlay ~= nil then
+		analysis:SyncPostOverlay(false)
+	end
 end
 
 function Events.Shutdown()

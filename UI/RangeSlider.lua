@@ -179,6 +179,25 @@ function RangeSlider:LayoutHandles()
 	Place(self.handleB, bx)
 end
 
+-- Changes how many stops the track has (settings.bucketWidth, via Graph:SetBucketCount). The
+-- range is clamped, not reset: the caller has usually just clamped it too, and re-clamping here
+-- keeps the handles inside the track whichever order the two happen in.
+function RangeSlider:SetBucketCount(count)
+	if count < 2 then
+		count = 2
+	end
+	self.bucketCount = count
+
+	if self.rangeTo > count then
+		self.rangeTo = count
+	end
+	if self.rangeFrom >= self.rangeTo then
+		self.rangeFrom = math.max(1, self.rangeTo - 1)
+	end
+
+	self:LayoutHandles()
+end
+
 -- Sets the range without firing OnChange -- for the caller resetting to full fight, or
 -- restoring a range after a session/view switch.
 function RangeSlider:SetRange(from, to)

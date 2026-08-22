@@ -11,14 +11,16 @@ RECK_ROOT=${RECK_ROOT:-$(cd "$here/../.." && pwd)}
 export RECK_ROOT
 
 echo "== luac -p =="
-for f in $(find "$RECK_ROOT" -name '*.lua' -not -path '*/.git/*' -not -path '*/tools/*' | sort); do
-	luac5.1 -p "$f" || exit 1
-done
+# -exec, not `for f in $(find ...)`: the live plugin path contains spaces ("The Lord of the Rings
+# Online"), and word-splitting the find output silently checked nothing and reported a bogus
+# "cannot open .../The" error. Only the no-space symlinked path used to work.
+find "$RECK_ROOT" -name '*.lua' -not -path '*/.git/*' -not -path '*/tools/*' \
+	-exec luac5.1 -p {} + || exit 1
 echo "  all files parse under Lua 5.1"
 echo
 
 status=0
-for t in slice graph buffs lifecycle analysis windows load; do
+for t in slice graph buffs lifecycle chatpost analysis windows options load; do
 	echo "== $t =="
 	if (cd "$here" && lua5.1 "${t}_test.lua" > /tmp/reck_$t.out 2>&1); then
 		tail -1 /tmp/reck_$t.out

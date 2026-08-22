@@ -134,8 +134,12 @@ while t <= 1230 and closedAt == nil do
 end
 
 check("a session under a running HoT still closes", closedAt ~= nil, tostring(closedAt))
-check("...5s after the last COMBAT event, not the last heal",
-	closedAt ~= nil and closedAt >= 1210 and closedAt < 1211, tostring(closedAt))
+-- The silence window is settings.idleTimeout now (options window, Sessions page), not a
+-- hardcoded 5 -- read it rather than restating it, so changing the default cannot quietly make
+-- this assertion about the wrong number.
+local IDLE = _G.settings.idleTimeout
+check("...one idle timeout after the last COMBAT event, not the last heal",
+	closedAt ~= nil and closedAt >= 1205 + IDLE and closedAt < 1206 + IDLE, tostring(closedAt))
 
 local archived = Sessions.list[1]
 check("...and is archived", archived ~= nil)
@@ -146,8 +150,8 @@ check("...and is archived", archived ~= nil)
 check("...ending at the last hit (within one heartbeat), not the last tick",
 	archived ~= nil and archived.combatEndTime >= 1205 and archived.combatEndTime <= 1205.5,
 	archived and tostring(archived.combatEndTime))
-check("...so the close is exactly CLOSE_AFTER past the fight's end",
-	archived ~= nil and closedAt == archived.combatEndTime + 5,
+check("...so the close is exactly one idle timeout past the fight's end",
+	archived ~= nil and closedAt == archived.combatEndTime + IDLE,
 	archived and tostring(closedAt - archived.combatEndTime))
 check("...with the trailing heals still recorded in it",
 	archived ~= nil and archived:Total("healIn") > 0,
@@ -181,7 +185,7 @@ for i = 1, 8 do
 	Say(1402 + i * 0.5, HEAL_IN)
 	Tick(1402 + i * 0.5)
 end
-Tick(1408)
+Tick(1403 + _G.settings.idleTimeout)
 
 check("a 1s fight padded out by heal ticks is discarded, not archived",
 	table.getn(Sessions.list) == 0, tostring(table.getn(Sessions.list)))
@@ -224,6 +228,50 @@ Say(1702, HIT_ON_ME, Turbine.ChatType.EnemyCombat)
 check("...and damage still opens a session", Sessions.current ~= nil)
 
 _G.lp.IsInCombat = realIsInCombat
+
+---------------------------------------------------------------------------------------------------
+-- 7. settings.mergeFights decides whether a lull splits one fight into two
+---------------------------------------------------------------------------------------------------
+-- On (the default): a gap shorter than the idle timeout is still one fight. Off: the session
+-- closes as soon as the client's own combat flag drops.
+
+combatFlag = true
+Reset(1800)
+Say(1801, HIT_ON_ME, Turbine.ChatType.EnemyCombat)
+Say(1805, HIT_ON_ME, Turbine.ChatType.EnemyCombat)
+Tick(1805)
+combatFlag = false
+Tick(1807)
+Tick(1809)
+check("mergeFights on: a lull shorter than the timeout keeps one fight open",
+	Sessions.current ~= nil)
+
+_G.settings.mergeFights = false
+combatFlag = true
+Reset(1900)
+Say(1901, HIT_ON_ME, Turbine.ChatType.EnemyCombat)
+Say(1905, HIT_ON_ME, Turbine.ChatType.EnemyCombat)
+Tick(1905)
+check("mergeFights off: the fight stays open while the combat flag is up", Sessions.current ~= nil)
+
+-- The flag drops; the session must close well before the idle timeout would have closed it.
+combatFlag = false
+Tick(1906)
+check("...and closes once the flag drops, without waiting out the idle timeout",
+	Sessions.current == nil and table.getn(Sessions.list) == 1,
+	tostring(table.getn(Sessions.list)))
+
+-- The floor: damage opens a session on the first hit, but the combat flag is only re-read on the
+-- tick and the client takes a moment to raise it. Without UNMERGED_FLOOR the very next tick would
+-- close a fight that had only just started.
+combatFlag = false
+Reset(2000)
+Say(2001, HIT_ON_ME, Turbine.ChatType.EnemyCombat)
+Tick(2001.25)
+check("...but a fight that just started is not closed by the flag still being false",
+	Sessions.current ~= nil)
+_G.settings.mergeFights = true
+combatFlag = true
 
 ---------------------------------------------------------------------------------------------------
 
