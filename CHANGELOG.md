@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 - unreleased
+## 0.4.0 - unreleased
 
 **Reckoning has a real settings window.** Type `/reck options` (or click **Open options** in the
 Plugin Manager) and you get a proper Reckoning window instead of three rows on the Plugin
@@ -81,14 +81,21 @@ group them, or type "debuff" in the search box to see only those. If something o
 noise, `/reck buffs ignore <name>` still hides it (and `/reck buffs unignore <name>` now also works
 on the ones Reckoning hides by default, like Riding).
 
-**Search boxes on the skill table and the self-effects table.** Type any part of a skill, damage
-type, attacker or effect name to narrow the list down to matching rows.
+**Fixed: a heal cast out of combat started a "fight", and heal-over-time ticks kept it running.**
+A fight now begins and ends with combat rather than with any event Reckoning happens to see, so a
+short scuffle padded out by lingering heal ticks is measured as the short scuffle it was -- and
+healing yourself between pulls no longer opens a fight at all.
+
+## 0.3.0
+
+**Search boxes on the skill table and the self-buff table.** Type any part of a skill, damage
+type, attacker or buff name to narrow the list down to matching rows.
 
 **Both tables sort by any column.** Click a heading to sort by it, click the same heading again to
 reverse the order.
 
-**A draggable splitter between the skill table and the SELF EFFECTS row.** Drag it to give either
-section more room, and it remembers where you put it. The section's collapse arrow is gone --
+**A draggable splitter between the skill table and the SELF BUFFS row.** Drag it to give either
+section more room, and it remembers where you put it. The buff section's collapse arrow is gone --
 dragging the splitter to the bottom does the same job.
 
 **The analysis window can now be as tall as your screen**, instead of stopping at a fixed height.

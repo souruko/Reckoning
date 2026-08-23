@@ -51,7 +51,7 @@ check("options panel stub constructed", optionsPanel ~= nil)
 check("options window constructed", optionsWindow ~= nil)
 check("options window constructed", optionsWindow ~= nil)
 check("LocalPlayer.name monkey-patched", LocalPlayer.name == "Luxtheninth")
-check("version is 0.3.0 in Constants", Reckoning.Version == "0.3.0")
+check("version is 0.4.0 in Constants", Reckoning.Version == "0.4.0")
 check("Buffs global exists before Events", Buffs ~= nil and Buffs.PollInterval == 0.25)
 check("new settings defaults merged",
   type(_G.settings.chartedBuffs) == "table" and type(_G.settings.buffIgnore) == "table")
