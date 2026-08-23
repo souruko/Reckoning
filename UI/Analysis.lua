@@ -451,9 +451,19 @@ function Analysis:BuildPostButton()
 		window:SyncPostOverlay(true)
 	end
 
-	-- Pressing this window raises it, which would bury the overlay -- so put the overlay back on
-	-- top in the same gesture. This is what keeps POST clickable without a per-frame Activate()
-	-- (and the focus-stealing that comes with one); see UI/PostButton.lua's header.
+	-- Anything that brings this window to the front buries the overlay, so put it back on top in
+	-- the same gesture. This is CombatAnalysis's StatOverviewWindow:Activate() override
+	-- (StatOverviewWindow.lua:56-68), hooked to the real `Activated` event instead of an override:
+	-- the client raises the window itself on a click, without routing through any method call
+	-- here, and mouse events do not bubble, so the window's own MouseDown only sees presses that
+	-- miss every child. The event sees them all. See UI/PostButton.lua's header for the full story.
+	self.Activated = function()
+		window.postButton:Raise()
+	end
+
+	-- Kept as well: a press that lands on the window's own bare area. Harmless overlap, and it is
+	-- the one path that still works if `Activated` turns out not to fire the way Thurallor's use
+	-- of it implies.
 	self.MouseDown = function()
 		window.postButton:Raise()
 	end

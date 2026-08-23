@@ -1,6 +1,10 @@
 --=================================================================================================
--- LiveMeter -- window 1, 260x186. The always-on number you watch mid-fight.
+-- LiveMeter -- window 1, 260x186 (160x76 in compact mode). The always-on number you watch mid-fight.
 -- See docs/DESIGN.md "1. Live meter".
+--
+-- settings.compactMode strips it to the combat clock, the tab row and ONE number -- see
+-- LiveMeter:ApplyMode and the three Layout* helpers beside it, which are the single place the two
+-- shapes are described. Compact is a quarter of the full window's area.
 --
 -- Permanently visible whenever settings.liveMeterEnabled is true, per direct user feedback
 -- overriding docs/DESIGN.md's original "dims and holds the last fight 8s, then hides": it now
@@ -12,6 +16,14 @@ LiveMeter = class(Frame)
 
 local TABS = { "done", "taken", "healOut", "healIn" }
 local TAB_LABELS = { done = "Done", taken = "Taken", healOut = "Heal out", healIn = "Heal in" }
+
+-- Compact mode's own labels. The tab strip is what sets the window's minimum width -- four tabs
+-- have to fit their widest label -- so shortening these is the only thing that makes a narrower
+-- meter possible at all. "Heal out"/"Heal in" are the two that cost width (8 chars, ~56px by this
+-- codebase's own chars*7 estimate); DONE and TAKEN already fit and keep their full words, which is
+-- why only the heal pair is abbreviated. 5 characters is the widest of the four, so a 45px tab
+-- holds any of them with room to spare. ASCII only, like every other glyph here.
+local TAB_LABELS_COMPACT = { done = "Done", taken = "Taken", healOut = "H out", healIn = "H in" }
 
 -- The sparkline takes the active tab's own series colour, so the band and the headline number
 -- below it are obviously about the same thing. RESOLVED PER CALL, not a module-level table of
@@ -38,6 +50,23 @@ end
 -- Redesign geometry (REDESIGN_SPEC.md section 8). The tab row loses 2px and the sparkline is
 -- paid for out of the body's existing height -- the window's 260x186 footprint does not change.
 local TAB_ROW_HEIGHT = 22
+
+-- The two shapes settings.compactMode picks between (LiveMeter:ApplyMode). Both are fixed; nothing
+-- here is user-resizable, so there are exactly two sets of numbers and no layout arithmetic in
+-- between. Compact is 45px per tab, which TAB_LABELS_COMPACT is chosen to fit.
+local FULL_WIDTH     = 260
+local FULL_HEIGHT    = 186
+-- 160 is the floor the tab strip allows: 4 tabs x 40px, and TAB_LABELS_COMPACT's widest entry is
+-- 5 characters (~35px by the chars*7 estimate), so the cells still hold their text with a little
+-- slack. Going narrower means shortening the headings again, not adjusting anything here.
+local COMPACT_WIDTH  = 160
+local COMPACT_HEIGHT = 76  -- 26 header + 22 tab row + 28 body (2px air + 24px value row + 2px air)
+
+-- Header layout. The compact header drops the "IN COMBAT"/"IDLE" text entirely -- the accent tick
+-- beside it already carries that state by colour -- and pulls the clock hard left. That is what
+-- buys the room for the Details button at 180px wide; keeping the text would leave nothing for it.
+local BUTTON_WIDTH   = 55
+local HEADER_PAD     = 8
 local SPARK_WIDTH = 240   -- the body's full content width
 local SPARK_MAX_SECONDS = 60 -- the pool is built at the setting's UPPER BOUND, never per window:
                              -- growing it later would mean creating Controls at refresh time
@@ -208,14 +237,15 @@ local PROVIDERS = { done = DoneLine, taken = TakenLine, healOut = HealOutLine, h
 function LiveMeter:Constructor()
 	Frame.Constructor(self, {
 		key = "liveMeter", title = nil, closable = false,
-		width = 260, height = 186, headerHeight = 26,
+		width = FULL_WIDTH, height = FULL_HEIGHT, headerHeight = 26,
 	})
 
-	-- tab row (22px) sits directly under the header; body fills the rest of the client.
+	-- tab row (22px) sits directly under the header; body fills the rest of the client. Built at
+	-- the FULL shape whatever settings.compactMode says -- ApplyMode below resizes it in one place.
 	self.body = Turbine.UI.Control()
 	self.body:SetParent(self.client)
 	self.body:SetPosition(0, TAB_ROW_HEIGHT)
-	self.body:SetSize(260, 160 - TAB_ROW_HEIGHT)
+	self.body:SetSize(FULL_WIDTH, FULL_HEIGHT - 26 - TAB_ROW_HEIGHT)
 	self.body:SetMouseVisible(false)
 
 	self.lastRefresh = 0
@@ -232,6 +262,10 @@ function LiveMeter:Constructor()
 	self:BuildCombatHeader()
 	self:BuildBody()
 	self:BuildTabs()
+
+	-- After BuildTabs, which ends in SelectTab -> Refresh -> RefreshSparkline: the sparkline would
+	-- otherwise show its columns after ApplyMode had already hidden them.
+	self:ApplyMode()
 
 	self:SetWantsUpdates(true)
 end
@@ -257,30 +291,38 @@ function LiveMeter:BuildCombatHeader()
 	self.clockLabel:SetText("00:00")
 end
 
+-- `analysis` is a root-level global (Main.lua) constructed after LiveMeter -- read at call time,
+-- not captured anywhere, so construction order between the two windows doesn't matter. Toggles:
+-- a second click closes the window it opened. A method rather than a closure because compact
+-- mode's headline row is a second way in (BuildBody's valueHit) and both must behave identically.
+function LiveMeter:ToggleAnalysis()
+	if analysis:IsVisible() then
+		analysis:SetVisible(false)
+	else
+		analysis:SetVisible(true)
+		analysis:Activate()
+		analysis.postButton:Raise()
+	end
+end
+
 function LiveMeter:BuildAnalysisButton()
+	local meter = self
+
 	local button = Turbine.UI.Label()
 	button:SetParent(self.header)
 	button:SetFont(Font.Verdana10)
 	button:SetText("Details")
 	button:SetForeColor(Theme.Color(Theme.Hex.DimText))
 	button:SetPosition(95, 0)
-	button:SetSize(55, 26)
+	button:SetSize(BUTTON_WIDTH, self.headerHeight)
 	button:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleCenter)
 
-	-- `analysis` is a root-level global (Main.lua) constructed after LiveMeter -- read at click
-	-- time, not captured here, so construction order between the two windows doesn't matter.
-	-- Toggles: a second click closes the window it opened.
-	button.MouseClick = function()
-		if analysis:IsVisible() then
-			analysis:SetVisible(false)
-		else
-			analysis:SetVisible(true)
-			analysis:Activate()
-			analysis.postButton:Raise()
-		end
-	end
+	button.MouseClick = function() meter:ToggleAnalysis() end
 	button.MouseEnter = function() button:SetForeColor(Theme.Color(Theme.Hex.Accent200)) end
 	button.MouseLeave = function() button:SetForeColor(Theme.Color(Theme.Hex.DimText)) end
+
+	-- On self, not a local: compact mode moves it to the window's right edge (LayoutHeader).
+	self.analysisButton = button
 end
 
 function LiveMeter:HeaderLabel(x, w, font, colorHex, align)
@@ -297,7 +339,7 @@ end
 
 function LiveMeter:BuildTabs()
 	self.tabControls = {}
-	local tabWidth = 260 / table.getn(TABS)
+	local tabWidth = FULL_WIDTH / table.getn(TABS)
 	local meter = self
 
 	for i = 1, table.getn(TABS) do
@@ -340,6 +382,7 @@ end
 
 function LiveMeter:BuildBody()
 	local x, w = 10, 240
+	local meter = self
 
 	-- caption 12 / headline 24 / sparkline 16 / divider 1 / three stat rows 16 / sub-line 10,
 	-- all inside the body the window already had. The headline number is Verdana20 rather than
@@ -348,14 +391,31 @@ function LiveMeter:BuildBody()
 	self.valueLabel = self:BodyLabel(x, 18, 150, 24, Font.Verdana20, Theme.Hex.Text, Turbine.UI.ContentAlignment.BottomLeft)
 	self.rateLabel = self:BodyLabel(x + 150, 18, 90, 24, Font.LucidaConsole12, Theme.Hex.Accent300, Turbine.UI.ContentAlignment.BottomRight)
 
+	-- Compact mode's second way into the analysis window: the whole headline row is a click target,
+	-- so the number itself opens Details. A transparent Control (never given a SetBackColor) laid
+	-- over the two labels -- the same hover-wrapper-around-mouse-invisible-children shape as
+	-- Frame's close button and the analysis table's header cells. Created AFTER the labels so it
+	-- sits above them; self.body being mouse-invisible does not stop a mouse-visible child getting
+	-- the click (the tabs, children of the mouse-invisible self.client, already prove that).
+	-- Positioned/shown by ApplyMode; hidden in the full mode, where the header button is enough.
+	local hit = Turbine.UI.Control()
+	hit:SetParent(self.body)
+	hit:SetPosition(x, 2)
+	hit:SetSize(w, 24)
+	hit:SetVisible(false)
+	hit.MouseClick = function() meter:ToggleAnalysis() end
+	hit.MouseEnter = function() meter.valueLabel:SetForeColor(Theme.Color(Theme.Hex.Accent200)) end
+	hit.MouseLeave = function() meter.valueLabel:SetForeColor(Theme.Color(Theme.Hex.Text)) end
+	self.valueHit = hit
+
 	self:BuildSparkline(x, 45)
 
-	local divider = Turbine.UI.Control()
-	divider:SetParent(self.body)
-	divider:SetPosition(x, 65)
-	divider:SetSize(w, 1)
-	divider:SetBackColor(Theme.Color(Theme.Hex.MeterDivider))
-	divider:SetMouseVisible(false)
+	self.divider = Turbine.UI.Control()
+	self.divider:SetParent(self.body)
+	self.divider:SetPosition(x, 65)
+	self.divider:SetSize(w, 1)
+	self.divider:SetBackColor(Theme.Color(Theme.Hex.MeterDivider))
+	self.divider:SetMouseVisible(false)
 
 	-- 19px pitch (16px row + 3px air) instead of the old flush 16px -- the three stat rows used
 	-- to butt directly against each other with no gap at all, per feedback that the whole block
@@ -400,7 +460,12 @@ end
 -- body's width exactly. Columns past the window are hidden, never destroyed.
 function LiveMeter:RefreshSparkline(session)
 	local seconds = SparkSeconds()
-	local show = (_G.settings == nil) or (_G.settings.sparkline ~= false)
+
+	-- Compact mode has no room for the band, and this guard is what keeps it gone: Refresh runs up
+	-- to 10 times a second, so without it every tick would re-show the columns ApplyMode hid --
+	-- straight over the headline number, in the 28px body.
+	local show = not self.compact
+		and ((_G.settings == nil) or (_G.settings.sparkline ~= false))
 
 	if not show then
 		for i = 1, SPARK_MAX_SECONDS do
@@ -561,8 +626,119 @@ end
 -- ApplyBorders is called HERE rather than left to Refresh: Refresh returns early when the meter
 -- is disabled or fully faded, and the border toggle has to land whether or not the window is
 -- currently drawing anything.
+-- settings.compactMode: the meter keeps only what you watch mid-fight -- the combat clock, the tab
+-- row and one number -- at 160x76 instead of 260x186. Everything else is HIDDEN, never
+-- torn down: nothing in this codebase has a confirmed-safe way to detach a child Control (see the
+-- SetParent(nil) note in CLAUDE.md), and a pure visibility flip is reversible for free.
+--
+-- Early-returns when the mode has not actually changed, so the options window can call this as
+-- often as it likes. self.compact starts nil, so the Constructor's first call always runs.
+function LiveMeter:ApplyMode()
+	local compact = (_G.settings.compactMode == true)
+	if self.compact == compact then
+		return
+	end
+	self.compact = compact
+
+	-- Frame:Resize handles the background, the four border edges, the header, the header rule and
+	-- self.client -- it touches no subclass child, which is why everything below re-lays out the
+	-- meter's own content itself.
+	local width  = compact and COMPACT_WIDTH or FULL_WIDTH
+	local height = compact and COMPACT_HEIGHT or FULL_HEIGHT
+	Frame.Resize(self, width, height)
+	self.body:SetSize(width, height - self.headerHeight - TAB_ROW_HEIGHT)
+
+	self:LayoutHeader(compact, width)
+	self:LayoutTabs(compact, width)
+	self:LayoutBody(compact, width)
+
+	-- Only the widgets compact mode actually SHOWS are re-laid out above. The caption, sparkline,
+	-- divider and stat rows keep their full-width coordinates the whole time and are simply hidden
+	-- -- they are never visible at 160px, so there is nothing there to get wrong.
+	self.captionLabel:SetVisible(not compact)
+	self.divider:SetVisible(not compact)
+	-- Compact shows ONE number. The corner cell (the total, in the default "Both") goes with the
+	-- rest of the detail -- see LayoutBody, where the big slot takes the whole row instead.
+	self.rateLabel:SetVisible(not compact)
+	for i = 1, 3 do
+		self.lineLabels[i].label:SetVisible(not compact)
+		self.lineLabels[i].value:SetVisible(not compact)
+	end
+	self.lineLabels[3].sub:SetVisible(not compact)
+	self.valueHit:SetVisible(compact)
+
+	-- Only entering compact needs the loop: RefreshSparkline sets every column's visibility itself
+	-- on the next refresh, so leaving compact restores the band without any help from here.
+	if compact then
+		for i = 1, SPARK_MAX_SECONDS do
+			self.sparkColumns[i]:SetVisible(false)
+		end
+	end
+end
+
+-- Tick + clock + Details, in the room the mode leaves for them. Compact drops the IN COMBAT/IDLE
+-- text and pulls the clock to the left edge; the button goes to the right edge either way it is
+-- laid out, but at 260 it keeps the mid-header slot it has always had.
+function LiveMeter:LayoutHeader(compact, width)
+	self.combatLabel:SetVisible(not compact)
+
+	if compact then
+		self.combatTick:SetPosition(HEADER_PAD, 8)
+		self.clockLabel:SetPosition(HEADER_PAD + 8, 0)
+		self.clockLabel:SetSize(44, self.headerHeight)
+		self.clockLabel:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
+		self.analysisButton:SetPosition(width - HEADER_PAD - BUTTON_WIDTH, 0)
+	else
+		self.combatTick:SetPosition(10, 8)
+		self.clockLabel:SetPosition(160, 0)
+		self.clockLabel:SetSize(90, self.headerHeight)
+		self.clockLabel:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleRight)
+		self.analysisButton:SetPosition(95, 0)
+	end
+end
+
+-- The tab strip always spans the full window width, four equal cells. Compact swaps in the short
+-- label set -- that swap is what lets the window be 160px at all, since the widest label is what
+-- the tab has to hold, and it is the strip (not the header or the body) that sets the floor.
+function LiveMeter:LayoutTabs(compact, width)
+	local labels = compact and TAB_LABELS_COMPACT or TAB_LABELS
+	local tabWidth = width / table.getn(TABS)
+
+	for i = 1, table.getn(TABS) do
+		local t = self.tabControls[TABS[i]]
+		t.control:SetPosition((i - 1) * tabWidth, 0)
+		t.control:SetSize(tabWidth, TAB_ROW_HEIGHT)
+		t.label:SetText(string.upper(labels[TABS[i]]))
+		t.label:SetSize(tabWidth, TAB_ROW_HEIGHT - 2)
+		t.underline:SetPosition(0, TAB_ROW_HEIGHT - 2)
+		t.underline:SetSize(tabWidth, 2)
+	end
+end
+
+-- The headline and the click target over it. Compact loses the caption above the number, so the
+-- row moves up into the 28px body -- and it loses the corner cell entirely, so the big slot spans
+-- the whole content width instead of the full mode's 150-of-240.
+function LiveMeter:LayoutBody(compact, width)
+	local inset = compact and HEADER_PAD or 10
+	local content = width - inset * 2
+	local y = compact and 2 or 18
+	local valueWidth = compact and content or 150
+
+	self.valueLabel:SetPosition(inset, y)
+	self.valueLabel:SetSize(valueWidth, 24)
+	self.valueLabel:SetForeColor(Theme.Color(Theme.Hex.Text)) -- clear a stale valueHit hover tint
+	if not compact then
+		self.rateLabel:SetPosition(inset + valueWidth, y)
+		self.rateLabel:SetSize(content - valueWidth, 24)
+	end
+
+	self.valueHit:SetPosition(inset, y)
+	self.valueHit:SetSize(content, 24)
+end
+
 function LiveMeter:ApplySettings()
 	self:ApplyBorders()
+	self:ApplyMode()
 	self:Refresh()
 end
 
@@ -579,7 +755,11 @@ function LiveMeter:Refresh()
 	local session = self:ActiveSession()
 	local lines = PROVIDERS[self.activeTab](session)
 
-	self.captionLabel:SetText(lines.headline.caption)
+	-- Compact mode hides the caption (the selected tab already says which series this is), so
+	-- there is nothing to write into it.
+	if not self.compact then
+		self.captionLabel:SetText(lines.headline.caption)
+	end
 
 	-- settings.liveBarValue (options window, Live meter page) picks which number gets the big
 	-- Verdana20 slot. "Both" is the default and is today's shipped headline -- the rate prominent
@@ -587,23 +767,34 @@ function LiveMeter:Refresh()
 	-- The design handoff defaults this key to "Rate"; defaulting to "Both" instead is a deliberate
 	-- deviation so that turning the feature on changes nothing until asked (see CLAUDE.md).
 	local mode = _G.settings.liveBarValue or "Both"
+	local big, corner
 	if mode == "Total" then
-		self.valueLabel:SetText(lines.headline.value)
-		self.rateLabel:SetText(lines.headline.rate)
+		big, corner = lines.headline.value, lines.headline.rate
 	elseif mode == "Rate" then
-		self.valueLabel:SetText(lines.headline.rate)
-		self.rateLabel:SetText("")
+		big, corner = lines.headline.rate, ""
 	else
-		self.valueLabel:SetText(lines.headline.rate)
-		self.rateLabel:SetText(lines.headline.value)
+		big, corner = lines.headline.rate, lines.headline.value
 	end
 
-	local rows = { lines.second, lines.stat, lines.max }
-	for i = 1, 3 do
-		self.lineLabels[i].label:SetText(rows[i].label)
-		self.lineLabels[i].value:SetText(rows[i].value)
+	self.valueLabel:SetText(big)
+
+	-- Compact keeps the big slot's pick and drops the corner cell entirely, so the setting still
+	-- decides WHICH number you get -- there is just only one of them.
+	if not self.compact then
+		self.rateLabel:SetText(corner)
 	end
-	self.lineLabels[3].sub:SetText(lines.max.sub or "")
+
+	-- The three stat rows and the max-hit sub-line are the detail you read after a fight, not
+	-- during one -- compact mode drops them, and skipping the writes keeps eight SetText calls off
+	-- a path that runs up to 10 times a second.
+	if not self.compact then
+		local rows = { lines.second, lines.stat, lines.max }
+		for i = 1, 3 do
+			self.lineLabels[i].label:SetText(rows[i].label)
+			self.lineLabels[i].value:SetText(rows[i].value)
+		end
+		self.lineLabels[3].sub:SetText(lines.max.sub or "")
+	end
 
 	self:RefreshSparkline(session)
 

@@ -65,6 +65,9 @@ DEFAULTS = {
 	refreshHz          = 10,   -- 2 | 5 | 10
 	clockThroughAvoids = true,
 	announceSummary    = false,
+	-- Strips the meter down to the clock, the tab row and the headline number (260x76 instead of
+	-- 260x186). A display mode on the same window -- nothing is torn down, see LiveMeter:ApplyMode.
+	compactMode        = false,
 
 	-- death window
 	deathStayOpen      = false,

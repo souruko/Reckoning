@@ -16,20 +16,42 @@
 -- Window with no BackColor of its own -- and position that window in SCREEN coordinates directly
 -- over the themed button (StatOverview/StatOverviewPanel.lua:213-247).
 --
--- The catch, and the reason an earlier version of this file shipped a POST button that could not
--- be clicked at all: two top-level windows compete for z-order. Reckoning calls analysis:Activate()
--- when the window is shown, which raises it above the overlay and buries the quickslot.
--- CombatAnalysis survives that by re-calling chatSendWindow:Activate() from its **per-frame**
--- Update() (StatOverviewWindow.lua:133-152) -- and that is exactly why its own README has a line
--- about no longer "stealing focus away from the chat window", because Activate() takes focus.
+-- The catch, and the reason two versions of this file shipped a POST button that could not be
+-- clicked at all: two top-level windows compete for z-order. ANY click on the analysis window
+-- raises it above the overlay and buries the quickslot -- and the client does that raise itself,
+-- without routing through anything this code calls.
 --
--- So the overlay is re-raised on INTERACTION, not on a timer: whenever the analysis window is
--- shown, and whenever the user presses the mouse anywhere on it. Pressing the analysis window is
--- the only thing that realistically buries the overlay, and it is also what a user does
--- immediately before reaching for POST -- so this self-heals without ever grabbing focus while
--- the window simply sits open. The 4Hz heartbeat only re-POSITIONS the overlay (cheap, and no
--- Activate), as a backstop for the window being shown or hidden from any of the several places
--- that can do it.
+-- The first attempt hung the re-raise on the analysis window's own `self.MouseDown`. That does
+-- not work, and the reason is worth knowing: Turbine mouse events do NOT bubble to a parent, so
+-- a press that lands on any mouse-visible CHILD (a tab, a chip, a session row, a table header,
+-- the header itself) never reaches the window's own handler -- while still raising the window.
+-- Since a user always clicks something before reaching for POST, the overlay was buried more or
+-- less permanently. That non-bubbling is also exactly why CombatAnalysis hand-forwards a
+-- `WindowManager.MouseWasPressed(window)` call out of ~60 separate mouse handlers
+-- (UI/WindowManager.lua:340) -- it walks up to the top-level window and calls Activate() on it.
+--
+-- CombatAnalysis's actual re-raise is that call landing in its OVERRIDDEN
+-- StatOverviewWindow:Activate() (StatOverviewWindow.lua:56-68), which does the base activate and
+-- then chatSendWindow:Activate(). (Its Update() does the same thing, but only on the last frame
+-- of the minimize animation -- the body is gated on `not self:GetWantsUpdates()`. There is no
+-- per-frame Activate; an earlier comment here said there was, and that was misread.)
+--
+-- Reckoning gets the same funnel without 60 forwarding calls, by hooking the window's real
+-- `Activated` event instead: it fires however the window came to the front, including a client-
+-- initiated raise from a click on a child. That is a confirmed-real Window event (Thurallor's
+-- Common/Utils/Utils_13.lua:657 hooks it for exactly this "the window just became active"
+-- meaning, alongside the Deactivated that several other installed plugins use).
+--
+-- Two backstops on top of it, because a dead POST button is a silent failure:
+--   * the themed button underneath is mouse-visible, and its MouseEnter re-raises. If the overlay
+--     is ever buried anyway, the hover that reaches the button *is* the proof of it -- when the
+--     overlay is on top, the button cannot receive a MouseEnter at all -- so the pointer arriving
+--     at POST fixes the z-order before the click that follows it.
+--   * the 4Hz heartbeat still only re-POSITIONS (SyncOverlay), never activates.
+--
+-- Activate() takes keyboard focus, which is why it is on activation and hover rather than a
+-- timer, and why the overlay forwards Escape back to the tracked window (Frame's own KeyDown
+-- cannot fire while the overlay holds focus).
 --
 -- If the button is ever dead again, Raise() is the thing to check first, and adding a call to it
 -- is nearly always the fix -- not a timer.
@@ -65,7 +87,17 @@ function PostButton:Constructor(params)
 	self:SetParent(params.parent)
 	self:SetSize(BTN_WIDTH, BTN_HEIGHT)
 	self:SetBackColor(Theme.Color(Theme.Hex.ActiveTab))
-	self:SetMouseVisible(false)
+	-- Mouse-visible, even though the quickslot on top is what actually fires the post: a hover
+	-- that reaches THIS control means the overlay is buried (when it is not, the quickslot eats
+	-- the event), so it is both the detector and the fix. See the header note.
+	self:SetMouseVisible(true)
+	self.MouseEnter = function()
+		self:Raise()
+		self:Tint(Theme.Hex.Hover, Theme.Hex.Accent200)
+	end
+	self.MouseLeave = function() self:Refresh() end
+	-- Also stops a press on POST reaching the header underneath and starting a window drag.
+	self.MouseDown = function() self:Raise() end
 
 	self.label = Turbine.UI.Label()
 	self.label:SetParent(self)
@@ -138,6 +170,17 @@ function PostButton:BuildOverlay()
 	self.overlay:SetMouseVisible(true)
 	self.overlay:SetVisible(true)
 
+	-- Raising the overlay takes keyboard focus off the analysis window, so Frame's own Escape
+	-- handler cannot fire while POST is on top. Forward it, or Escape silently stops closing the
+	-- window after the first hover.
+	self.overlay:SetWantsKeyEvents(true)
+	self.overlay.KeyDown = function(sender, args)
+		if args.Action == Turbine.UI.Lotro.Action.Escape
+			and button.trackWindow ~= nil and button.trackWindow.Close ~= nil then
+			button.trackWindow:Close()
+		end
+	end
+
 	self.slot = Turbine.UI.Lotro.Quickslot()
 	self.slot:SetParent(self.overlay)
 	self.slot:SetSize(BTN_WIDTH, BTN_HEIGHT)
@@ -150,6 +193,12 @@ function PostButton:BuildOverlay()
 	-- the themed button underneath it.
 	self.slot.MouseEnter = function() button:Tint(Theme.Hex.Hover, Theme.Hex.Accent200) end
 	self.slot.MouseLeave = function() button:Refresh() end
+
+	-- CombatAnalysis's own quickslot MouseDown forwards to WindowManager.MouseWasPressed, which
+	-- ends up back in its Activate() override re-raising the send window (StatOverviewPanel.lua:233
+	-- -> StatOverviewWindow.lua:67) -- i.e. the slot stays on top across its own click. Same thing,
+	-- one call.
+	self.slot.MouseDown = function() button:Raise() end
 
 	-- Without this, a user who drags the alias off the slot is left with a dead button until
 	-- reload. Both CombatAnalysis and PrimePlugins/RaidTools guard the same way.
@@ -209,16 +258,22 @@ function PostButton:SyncOverlay(force)
 	end
 
 	-- Raise on the transition into view only, never on every sync -- the heartbeat calls this
-	-- continuously and Activate() takes keyboard focus.
+	-- continuously and Activate() takes keyboard focus. Activate directly rather than through
+	-- Raise(), which would come straight back in here.
 	if appearing then
-		self:Raise()
+		self.overlay:Activate()
 	end
 end
 
--- Brings the overlay back above the analysis window. Called when the window is shown and when the
--- mouse is pressed on it -- pressing the window is what buries the overlay, and it is also what a
--- user does immediately before reaching for POST, so the button self-heals.
+-- Brings the overlay back above the analysis window. Called from the window's Activated event
+-- (however it came to the front), from a hover or press on the themed button underneath, and from
+-- the handful of places that show the window explicitly.
+--
+-- It syncs geometry FIRST. Raise() is often called at the very moment the window becomes visible,
+-- before any SyncOverlay has run for that state -- the old version tested self.overlayShown and
+-- silently did nothing in exactly that case, leaving the raise to the next heartbeat tick.
 function PostButton:Raise()
+	self:SyncOverlay(false)
 	if self.overlayShown then
 		self.overlay:Activate()
 	end

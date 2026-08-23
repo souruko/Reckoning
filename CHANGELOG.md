@@ -1,6 +1,28 @@
 # Changelog
 
-## 0.4.0 - unreleased
+## 0.5.0
+
+**The live meter has a compact mode.** Turn it on under `/reck options` → Live meter and the meter
+shrinks to a slim strip: the fight clock, the four tabs, and one number. Nothing else. It takes up
+about a quarter of the space the full meter does, so it can sit somewhere useful without covering
+anything you need to see.
+
+- Everything it drops is only hidden. Untick the box and the sparkline, the running total, the
+  three stat lines and the largest-hit readout all come straight back exactly as they were.
+- The tabs shorten to fit the narrower window — **Heal out** and **Heal in** read as **H OUT** and
+  **H IN**.
+- Your **Bar value** setting still decides *which* number you get; there is simply only one of it,
+  so on the default setting compact mode shows your damage per second.
+- **Details** still opens the analysis window from the header — and in compact mode you can click
+  the number itself to do the same thing.
+
+**Fixed: the POST button in the analysis window could stop working.** Clicking anything in the
+window first — a tab, a target chip, a session in the list — left POST dead until you closed and
+reopened it. It stays clickable now, however you got there.
+
+**Fixed: Escape stopped closing the analysis window** once you had hovered over POST.
+
+## 0.4.0
 
 **Reckoning has a real settings window.** Type `/reck options` (or click **Open options** in the
 Plugin Manager) and you get a proper Reckoning window instead of three rows on the Plugin

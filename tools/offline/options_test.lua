@@ -923,6 +923,44 @@ check("click-through applies only to the faded state", (function()
   _G.settings.clickThroughFaded = false
   return faded == false and fighting == true
 end)())
+
+-- Compact mode, driven through the real checkbox rather than by poking _G.settings: the point of
+-- the check is that the control writes, saves once, and that ApplyLive actually reaches
+-- LiveMeter:ApplyMode -- poking the setting would prove none of that.
+Click(w.railRows.live.row)
+local livePage = w.pages.live
+local compactBox = nil
+for i = 1, #livePage._children do
+  local child = livePage._children[i]
+  if child.GetText ~= nil and child:GetText() == " Compact mode" then compactBox = child end
+end
+check("found the Compact mode checkbox", compactBox ~= nil)
+
+local widthBefore, heightBefore = liveMeter:GetSize()
+compactBox:SetChecked(true)
+local compactSaves = CountSaves(function() compactBox.CheckedChanged() end)
+check("the Compact mode checkbox writes its setting", _G.settings.compactMode == true)
+check("...and saves exactly once", compactSaves == 1, tostring(compactSaves))
+check("...and shrinks the live meter to 160x76",
+  select(1, liveMeter:GetSize()) == 160 and select(2, liveMeter:GetSize()) == 76,
+  select(1, liveMeter:GetSize()) .. "x" .. select(2, liveMeter:GetSize()))
+check("...and the stat rows and sparkline go with it", (function()
+  if liveMeter.lineLabels[1].label:IsVisible() or liveMeter.captionLabel:IsVisible() then
+    return false
+  end
+  for i = 1, #liveMeter.sparkColumns do
+    if liveMeter.sparkColumns[i]:IsVisible() then return false end
+  end
+  return liveMeter.valueHit:IsVisible()
+end)())
+
+compactBox:SetChecked(false)
+compactBox.CheckedChanged()
+check("unticking it restores the full meter",
+  select(1, liveMeter:GetSize()) == widthBefore and select(2, liveMeter:GetSize()) == heightBefore
+  and liveMeter.captionLabel:IsVisible() and not liveMeter.valueHit:IsVisible(),
+  select(1, liveMeter:GetSize()) .. "x" .. select(2, liveMeter:GetSize()))
+
 Sessions.current = nil
 
 ---------------------------------------------------------------------------------------------------
@@ -1035,13 +1073,17 @@ _G.settings.opacityIdle = 25
 _G.settings.density = "Compact"
 _G.settings.palettePreset = "Muted"
 _G.settings.deathAutoHide = 29
+_G.settings.compactMode = true
 local okDefaults, errDefaults = pcall(function() w:ApplyDefaults() end)
 check("Defaults runs clean", okDefaults, okDefaults and "" or tostring(errDefaults))
 check("...and every setting is back to its default",
   _G.settings.opacityIdle == DEFAULTS.opacityIdle
   and _G.settings.density == DEFAULTS.density
   and _G.settings.palettePreset == DEFAULTS.palettePreset
-  and _G.settings.deathAutoHide == DEFAULTS.deathAutoHide)
+  and _G.settings.deathAutoHide == DEFAULTS.deathAutoHide
+  and _G.settings.compactMode == DEFAULTS.compactMode)
+check("...and Defaults put the live meter back to its full height",
+  select(2, liveMeter:GetSize()) == 186, tostring(select(2, liveMeter:GetSize())))
 check("...and the controls re-read it rather than showing the old value",
   slider.value == DEFAULTS.deathAutoHide, tostring(slider.value))
 check("...and the series colours went back with it",

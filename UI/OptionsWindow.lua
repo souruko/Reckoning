@@ -677,6 +677,12 @@ BUILDERS["live"] = function(window)
 
 	page:Section("Live meter")
 
+	-- First on the page because it changes the shape of everything under it: compact mode hides
+	-- the sparkline and the three stat rows, so the sparkline settings below are inert while it is
+	-- on. LiveMeter:ApplyMode does the whole switch, reached through ApplyLive.
+	page:Check("compactMode", "Compact mode",
+		{ hint = "clock, tabs and the number only", apply = ApplyLive })
+
 	-- liveTab is stored as an INDEX (1-4), matching LiveMeter's own TABS order -- so these
 	-- segment values are numbers, not the tab keys.
 	page:Segment("liveTab", "Tab on open", {

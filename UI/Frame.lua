@@ -97,8 +97,9 @@ function Frame:BuildBorder(width, height, color)
 end
 
 -- Resizes the chrome (background, 4 border edges, header width, client) to a new size.
--- Fixed-size windows (live meter, death cause) never call this; only a resizable subclass
--- (the analysis window) does, after the user drags its resize gripper.
+-- The death window never calls this; the analysis window does after a resize-gripper drag, and the
+-- live meter does when settings.compactMode switches it between its two fixed shapes. Chrome only
+-- -- it touches no subclass child, so a caller that owns content has to re-lay it out itself.
 function Frame:Resize(width, height)
 	self:SetSize(width, height)
 	self.background:SetSize(width, height)

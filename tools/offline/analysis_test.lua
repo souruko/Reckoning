@@ -892,6 +892,37 @@ pb.overlay._activated = false
 w.MouseDown(w, { Button = LEFT })
 check("pressing the window re-raises the overlay", pb.overlay._activated == true)
 
+-- ...but a press on a mouse-visible CHILD never reaches that handler (Turbine does not bubble),
+-- while still raising the window -- which is what left POST dead in-game. The window's Activated
+-- event is the funnel that catches every one of those, so it must re-raise too.
+pb.overlay._activated = false
+w.Activated(w, {})
+check("the window's Activated event re-raises the overlay", pb.overlay._activated == true)
+
+-- Second backstop: the themed button underneath can only receive a hover when the overlay is
+-- NOT covering it, i.e. exactly when it is buried. That hover has to fix it before the click.
+pb.overlay._activated = false
+pb.MouseEnter(pb, {})
+check("hovering the themed button re-raises the overlay", pb.overlay._activated == true)
+pb.MouseLeave(pb, {})
+
+-- Raise() must sync geometry itself: it is called at the moment the window becomes visible,
+-- before any heartbeat SyncOverlay has run for that state.
+w:SetVisible(false)
+w:SyncPostOverlay(false)
+pb.overlay._activated = false
+w:SetVisible(true)
+pb:Raise()
+check("Raise sizes the overlay it is raising", select(1, pb.overlay:GetSize()) > 0)
+check("Raise activates even when the last sync predates the show", pb.overlay._activated == true)
+
+-- The overlay holds keyboard focus once raised, so Frame's own Escape handler cannot fire.
+w:SetVisible(true)
+pb.overlay.KeyDown(pb.overlay, { Action = Turbine.UI.Lotro.Action.Escape })
+check("Escape reaches the window through the overlay", w:IsVisible() == false)
+w:SetVisible(true)
+w:SyncPostOverlay(true)
+
 -- The channel button names the destination, so a misdirected post is visible before it is sent.
 check("channel button shows the channel",
   pb.channelLabel:GetText() == ChatPost.ChannelShort("fellowship"), pb.channelLabel:GetText())

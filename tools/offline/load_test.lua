@@ -51,10 +51,13 @@ check("options panel stub constructed", optionsPanel ~= nil)
 check("options window constructed", optionsWindow ~= nil)
 check("options window constructed", optionsWindow ~= nil)
 check("LocalPlayer.name monkey-patched", LocalPlayer.name == "Luxtheninth")
-check("version is 0.4.0 in Constants", Reckoning.Version == "0.4.0")
+check("version is 0.5.0 in Constants", Reckoning.Version == "0.5.0")
 check("Buffs global exists before Events", Buffs ~= nil and Buffs.PollInterval == 0.25)
 check("new settings defaults merged",
-  type(_G.settings.chartedBuffs) == "table" and type(_G.settings.buffIgnore) == "table")
+  type(_G.settings.chartedBuffs) == "table" and type(_G.settings.buffIgnore) == "table"
+  and _G.settings.compactMode == false)
+check("the live meter booted in the shape compactMode asks for",
+  select(2, liveMeter:GetSize()) == 186, tostring(select(2, liveMeter:GetSize())))
 check("the removed buff-collapse setting is gone", DEFAULTS.buffsOpen == nil)
 
 -- table-valued defaults must be fresh copies, not aliases of DEFAULTS
