@@ -1,6 +1,6 @@
 --=================================================================================================
 -- Frame -- shared window chrome. No Turbine.UI.Lotro.Window anywhere (docs/DESIGN.md
--- "Controls") -- every Reckoning window hand-builds its frame from this base class instead:
+-- "Controls") -- every RedBook window hand-builds its frame from this base class instead:
 -- a solid background Control, 1px border Controls, a header with a title and close glyph, and
 -- manual drag (MouseDown/MouseMove/MouseUp storing the offset, VitalSelf/UI/Vital.lua's
 -- move-overlay pattern, applied directly to the header instead of a separate move-mode toggle).
@@ -172,7 +172,7 @@ function Frame:BuildHeader(title, width, ruleColor)
 		closeIcon:SetSize(CLOSE_ICON, CLOSE_ICON)
 		closeIcon:SetPosition(math.floor((CLOSE_SIZE - CLOSE_ICON) / 2), math.floor((CLOSE_SIZE - CLOSE_ICON) / 2))
 		closeIcon:SetBlendMode(Turbine.UI.BlendMode.Overlay)
-		closeIcon:SetBackground("Reckoning/Resources/cross.tga")
+		closeIcon:SetBackground("RedBook/Resources/cross.tga")
 		closeIcon:SetMouseVisible(false)
 
 		local frame = self

@@ -2,15 +2,15 @@
 -- a real Session built from the repo's reference logs, on a Turbine stub that asserts on
 -- non-numeric / negative SetSize args. Checks geometry invariants rather than pixels.
 local env = dofile("stub.lua"); local ROOT = env.ROOT
-import "Reckoning.Utils.Type"; import "Reckoning.Utils.Class"; import "Reckoning.Constants"
-Trigger = {}; import "Reckoning.Parse.en"; import "Reckoning.Settings"
+import "RedBook.Utils.Type"; import "RedBook.Utils.Class"; import "RedBook.Constants"
+Trigger = {}; import "RedBook.Parse.en"; import "RedBook.Settings"
 _G.lp = { GetName=function() return "Luxtheninth" end, GetMorale=function() return 5e5 end,
   GetMaxMorale=function() return 9e5 end, GetTarget=function() return nil end,
   IsInCombat=function() return true end }  -- heals only count in combat, see Sessions.lua
 LocalPlayer = _G.lp; LocalPlayer.name = LocalPlayer:GetName()
 Settings.Load()
-import "Reckoning.Session"; import "Reckoning.Sessions"; import "Reckoning.Events"
-import "Reckoning.UI.RangeSlider"; import "Reckoning.UI.AnalysisGraph"
+import "RedBook.Session"; import "RedBook.Sessions"; import "RedBook.Events"
+import "RedBook.UI.RangeSlider"; import "RedBook.UI.AnalysisGraph"
 
 local clock = 1000
 local function Feed(path, ct)

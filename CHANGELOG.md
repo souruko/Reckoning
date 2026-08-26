@@ -1,8 +1,31 @@
 # Changelog
 
+## 0.6.0
+
+**Reckoning is now called RedBook.** Same plugin, new name — nothing about what it does has
+changed.
+
+Two things you will notice straight away:
+
+- **The command is `/redbook`**, with `/rb` as a short alias. Everything that used to be
+  `/reck something` is now `/redbook something` (or `/rb something`) — `/rb options`, `/rb dump`,
+  `/rb post`, and the rest. The old `/reck` no longer does anything.
+- **The plugin's folder must be renamed too.** Rename the `Reckoning` folder in your Plugins
+  directory to `RedBook`, then `/plugins refresh` and `/plugins load RedBook`. The game finds a
+  plugin by its folder name, so this step is not optional — and it is worth deleting the old
+  `Reckoning` folder afterwards rather than leaving both in place.
+
+**Your settings carry over.** Window positions, sizes, the analysis window's splitter, your
+charted effects, your ignore list and every option you have set are read across from the old name
+the first time RedBook loads, and saved under the new one from then on. You should not have to set
+anything up again.
+
+The stock colour palette is now called **RedBook** in the Palette page instead of **Reckoning**.
+The colours themselves are unchanged, and if you had it selected it stays selected.
+
 ## 0.5.0
 
-**The live meter has a compact mode.** Turn it on under `/reck options` → Live meter and the meter
+**The live meter has a compact mode.** Turn it on under `/redbook options` → Live meter and the meter
 shrinks to a slim strip: the fight clock, the four tabs, and one number. Nothing else. It takes up
 about a quarter of the space the full meter does, so it can sit somewhere useful without covering
 anything you need to see.
@@ -24,8 +47,8 @@ reopened it. It stays clickable now, however you got there.
 
 ## 0.4.0
 
-**Reckoning has a real settings window.** Type `/reck options` (or click **Open options** in the
-Plugin Manager) and you get a proper Reckoning window instead of three rows on the Plugin
+**RedBook has a real settings window.** Type `/redbook options` (or click **Open options** in the
+Plugin Manager) and you get a proper RedBook window instead of three rows on the Plugin
 Manager's own panel: a category list down the left -- Windows, Appearance, Palette, Live meter,
 Death window, Self buffs, Sessions -- and about thirty settings grouped behind it. Escape or the
 x closes it, and it remembers where you put it.
@@ -42,7 +65,7 @@ What you can now change:
   entirely once you have been out of combat for a while, and whether it still catches your mouse
   while faded. Big numbers can be shortened to `12.4k` / `1.2m`, and window borders can be turned
   off.
-- **Palette** -- four colour sets for the damage, healing and morale series: **Reckoning**,
+- **Palette** -- four colour sets for the damage, healing and morale series: **RedBook**,
   **High contrast**, **Colour-blind safe** and **Muted**. A preview strip shows the change before
   you commit to it, and the whole plugin follows -- the live meter's sparkline, the analysis
   plot, the tables and even the colours in a chat post. Damage bars can also be coloured by
@@ -88,7 +111,7 @@ The post matches what the window is showing. Scope the time slider to the last 3
 post covers those 30 seconds; click a target chip and it covers that target; switch to the healing
 tab and it posts your healing instead.
 
-`/reck post` prints the exact same line into your own chat window only, with its length, so you
+`/redbook post` prints the exact same line into your own chat window only, with its length, so you
 can check it before sending anything to anyone.
 
 Colour can be turned off on the options window's Palette page. Chat has a length limit and the colour codes count
@@ -100,11 +123,11 @@ anything else the game puts on your character all show up with the same uptime, 
 longest-gap numbers, and can be charted on the graph the same way. The section is called SELF
 EFFECTS now, and a new **TYPE** column says whether each one is a buff or a debuff -- click it to
 group them, or type "debuff" in the search box to see only those. If something on the list is just
-noise, `/reck buffs ignore <name>` still hides it (and `/reck buffs unignore <name>` now also works
-on the ones Reckoning hides by default, like Riding).
+noise, `/redbook buffs ignore <name>` still hides it (and `/redbook buffs unignore <name>` now also works
+on the ones RedBook hides by default, like Riding).
 
 **Fixed: a heal cast out of combat started a "fight", and heal-over-time ticks kept it running.**
-A fight now begins and ends with combat rather than with any event Reckoning happens to see, so a
+A fight now begins and ends with combat rather than with any event RedBook happens to see, so a
 short scuffle padded out by lingering heal ticks is measured as the short scuffle it was -- and
 healing yourself between pulls no longer opens a fight at all.
 
@@ -172,8 +195,8 @@ the header tells you which slice you are looking at. "RESET RANGE" puts it back.
 uptime, how many times it was applied, and the longest stretch you went without it, for every
 buff you had during the fight. Click a row to chart it -- up to three at a time -- and it gets
 its own timeline under the graph showing exactly when it was up. Click the header to collapse the
-section. Mounts and travel skills are filtered out; `/reck buffs ignore <name>` filters out
-anything else you don't care about, and `/reck buffs` lists what is being tracked. The table
+section. Mounts and travel skills are filtered out; `/redbook buffs ignore <name>` filters out
+anything else you don't care about, and `/redbook buffs` lists what is being tracked. The table
 scrolls when a fight tracked more buffs than fit in the space it was given, instead of just
 cutting the list off.
 
@@ -218,7 +241,7 @@ Fixed: the analysis window's skill table failed to load (`attempt to call field 
 -- `Turbine.UI.ScrollView` isn't a real class. Switched to the real `Turbine.UI.ListBox` +
 `Turbine.UI.Lotro.ScrollBar` pattern.
 
-Fixed: no combat was ever recorded (`/reck dump` always said "no session data yet"). Two bugs
+Fixed: no combat was ever recorded (`/redbook dump` always said "no session data yet"). Two bugs
 stacked on top of each other -- the chat listener read `args.Type` instead of the real
 `args.ChatType`, and separately `LocalPlayer.name` (used to tell "my own damage" from everyone
 else's) was never actually set to a real name, since it isn't a real Turbine property. Both
@@ -235,10 +258,10 @@ Changed: the live meter now stays on screen permanently whenever enabled, instea
 seconds after a fight ends. It shows the live fight, the last finished one, or a zeroed idle
 state if nothing's been fought yet, dimming when out of combat rather than disappearing.
 
-Added `/reck testdeath` -- pops the death window with synthesized data, for checking the window
+Added `/redbook testdeath` -- pops the death window with synthesized data, for checking the window
 itself works independently of whether a real death has actually been detected.
 
-Fixed: the death window still never appeared on a real death, even though `/reck testdeath`
+Fixed: the death window still never appeared on a real death, even though `/redbook testdeath`
 proved the window itself worked. Defeat/incapacitate lines ("The X incapacitated you.", "You
 succumb to your wounds.") arrive on their own chat channel, separate from the one regular
 damage/healing lines use -- they were being filtered out before ever reaching the parser. Found

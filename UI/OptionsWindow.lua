@@ -1,5 +1,5 @@
 --=================================================================================================
--- OptionsWindow -- window 4, 560x452. Opened by /reck options (and by the Plugin Manager stub's
+-- OptionsWindow -- window 4, 560x452. Opened by /redbook options (and by the Plugin Manager stub's
 -- button). Frame chrome, a 146px category rail, seven pages in one reused ListBox, and a footer
 -- with Defaults and Close. See design_handoff_options_panel/README.md (direction 1b) and
 -- SETTINGS_KEYS.md, which is the authority for every key, range and label string.
@@ -96,7 +96,7 @@ function OptionsWindow:Constructor()
 		-- not worth another round of that. The dim version tag is the same inline <rgb=> trick
 		-- the analysis window's title uses -- Frame turns markup on for every title it renders.
 		key = "options", closable = true,
-		title = "Reckoning - Options  <rgb=" .. Theme.Hex.DimText .. ">v" .. Reckoning.Version .. "</rgb>",
+		title = "RedBook - Options  <rgb=" .. Theme.Hex.DimText .. ">v" .. RedBook.Version .. "</rgb>",
 		width = W, height = H, headerHeight = HEADER_H,
 	})
 
@@ -230,7 +230,7 @@ function OptionsWindow:BuildFooter()
 	hint:SetParent(footer)
 	hint:SetFont(Font.LucidaConsole12)
 	hint:SetForeColor(Theme.Color(Theme.Hex.Disabled))
-	hint:SetText("/reck options  ·  /reck reset")
+	hint:SetText("/redbook options  ·  /redbook reset")
 	hint:SetPosition(10, 0)
 	hint:SetSize(280, FOOTER_H)
 	hint:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
@@ -370,7 +370,7 @@ BUILDERS["windows"] = function(window)
 	page:Section("Windows")
 	page:Check("liveMeterEnabled", "Live meter", { hint = "shows in combat", apply = ApplyLive })
 	page:Check("deathCauseEnabled", "Death cause window", { hint = "on defeat", apply = ApplyDeath })
-	page:Check("analysisAutoOpen", "Open analysis after every fight", { hint = "/reck" })
+	page:Check("analysisAutoOpen", "Open analysis after every fight", { hint = "/redbook" })
 	page:Check("lockWindows", "Lock positions",
 		{ hint = "headers stop dragging", apply = OptionsWindow.ApplyAll })
 
@@ -961,7 +961,7 @@ BUILDERS["buffs"] = function(window)
 	tail:Grow(28)
 
 	-- Pooled chips, two rows' worth. Overflow is reported as a count rather than silently
-	-- dropped -- the list is editable from /reck buffs too, so it can grow past what fits here.
+	-- dropped -- the list is editable from /redbook buffs too, so it can grow past what fits here.
 	local chips = {}
 	local chipTop = tail.y
 
@@ -999,7 +999,7 @@ BUILDERS["buffs"] = function(window)
 		crossIcon:SetPosition(0, 0)
 		crossIcon:SetSize(12, 12)
 		crossIcon:SetBlendMode(Turbine.UI.BlendMode.Overlay)
-		crossIcon:SetBackground("Reckoning/Resources/cross.tga")
+		crossIcon:SetBackground("RedBook/Resources/cross.tga")
 		crossIcon:SetMouseVisible(false)
 
 		chips[i] = { chip = chip, inset = inset, label = label, cross = cross, name = nil }
@@ -1157,9 +1157,9 @@ BUILDERS["buffs"] = function(window)
 
 		local total = table.getn(names)
 		if total == 0 then
-			overflowLabel:SetText("Nothing ignored. /reck buffs list shows what is being tracked.")
+			overflowLabel:SetText("Nothing ignored. /redbook buffs list shows what is being tracked.")
 		elseif total > shown then
-			overflowLabel:SetText("+" .. (total - shown) .. " more -- see /reck buffs list")
+			overflowLabel:SetText("+" .. (total - shown) .. " more -- see /redbook buffs list")
 		else
 			overflowLabel:SetText("")
 		end

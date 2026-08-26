@@ -161,7 +161,7 @@ function Sessions.Close()
 	-- REVERTED (see CLAUDE.md "Build status"): this used to call collectgarbage() here, reasoned
 	-- from CombatAnalysis's own "free state, then collect" pattern. Wrong call -- LOTRO plugins
 	-- share ONE Lua VM across every loaded addon, not one per plugin, so that call forced a full
-	-- stop-the-world sweep of every other addon's heap too, not just Reckoning's own few MB. In
+	-- stop-the-world sweep of every other addon's heap too, not just RedBook's own few MB. In
 	-- practice, reported in-game as a much longer death loading screen plus 5-10s of
 	-- unresponsiveness right after -- entirely consistent with a client-wide GC pause landing at
 	-- the worst possible moment (~5s after the fatal hit, right as the player releases spirit and

@@ -1,6 +1,6 @@
-# Handoff: Reckoning — analysis window redesign
+# Handoff: RedBook — analysis window redesign
 
-For a Claude Code session working in **`souruko/Reckoning`** (`main`), a LOTRO plugin written
+For a Claude Code session working in **`souruko/RedBook`** (`main`), a LOTRO plugin written
 in Lua 5.1 against the Turbine UI API. Read this file first, then `REDESIGN_SPEC.md` (the
 implementation plan, file by file) and `GRAPH_RESEARCH.md` (how to draw a line in this API,
 with a probe checklist).
@@ -32,7 +32,7 @@ sparkline; the death window marks the biggest single hit as well as the killing 
 
 ## About the design files
 
-`mock/Reckoning Analyzer.dc.html` is a **design reference built in HTML**, not code to port.
+`mock/RedBook Analyzer.dc.html` is a **design reference built in HTML**, not code to port.
 Open it in a browser (it needs its sibling `support.js`; no build step, no network).
 
 It contains two things, and the distinction matters:
@@ -177,7 +177,7 @@ lanes share one lookup (§6). **The mock cannot show real icons** — it draws t
 tiles as stand-ins, sized and tinted exactly as the real Controls will be, so nothing shifts
 when the art lands. No other assets; everything else is a coloured rect or a label. If you take
 the sprite route for the polyline (`GRAPH_RESEARCH.md` §4) you will author ~17 `.tga` files into
-`Reckoning/RESOURCES/`.
+`RedBook/RESOURCES/`.
 
 ## Bugs found while measuring the current UI
 
@@ -200,8 +200,8 @@ mock:
 4. `Buffs.lua` polling, buff table, charted lanes, icons.
 5. Tab order/centring, table columns, KPI cards, layout stack.
 6. Live meter and death-cause passes.
-7. Version bump in `Reckoning.plugin`, `Reckoning.plugincompendium`, `Constants.lua`
-   (`Reckoning.Version`), and a player-facing `CHANGELOG.md` entry.
+7. Version bump in `RedBook.plugin`, `RedBook.plugincompendium`, `Constants.lua`
+   (`RedBook.Version`), and a player-facing `CHANGELOG.md` entry.
 
 ## Files in this bundle
 
@@ -213,6 +213,6 @@ mock:
   undocumented `SetRotation` finding (evidence in `souruko/Gibberish3`, and its two traps), the
   `Turbine.UI.Graphic` one-control-at-a-time constraint, the Overlay-blend tinting trick, and a
   seven-item probe checklist before committing to rotation.
-- `mock/Reckoning Analyzer.dc.html` + `mock/support.js` — the interactive design reference.
+- `mock/RedBook Analyzer.dc.html` + `mock/support.js` — the interactive design reference.
   Open the HTML directly in a browser.
 - `source-repo.md` — repo, branch and the screen-to-source-file map the mock was built from.

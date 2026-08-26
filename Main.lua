@@ -6,10 +6,10 @@ import "Turbine.Gameplay"
 import "Turbine.UI"
 import "Turbine.UI.Lotro"
 
-import "Reckoning.Utils.Type"
-import "Reckoning.Utils.Class"
+import "RedBook.Utils.Type"
+import "RedBook.Utils.Class"
 
-import "Reckoning.Constants"
+import "RedBook.Constants"
 
 -- Trigger.ParseCombatChat (Parse/en.lua) is `function Trigger.ParseCombatChat(...)` --
 -- it attaches to an existing table rather than declaring its own global, so Trigger must
@@ -17,9 +17,9 @@ import "Reckoning.Constants"
 -- is declared before UTILS/COMBATCHATPARSE/en.lua.
 Trigger = {}
 
-import "Reckoning.Parse.en"
+import "RedBook.Parse.en"
 
-import "Reckoning.Settings"
+import "RedBook.Settings"
 
 ---------------------------------------------------------------------
 --== Globals ===--
@@ -49,15 +49,15 @@ Settings.Load()
 -- Session (the class) before Sessions (the manager, which instantiates it) before Events
 -- (which dispatches into the manager and needs Sessions/LocalPlayer/Trigger already defined).
 
-import "Reckoning.Session"
-import "Reckoning.Sessions"
-import "Reckoning.Buffs"
-import "Reckoning.Events"
+import "RedBook.Session"
+import "RedBook.Sessions"
+import "RedBook.Buffs"
+import "RedBook.Events"
 
--- Root level, not UI/: both Main.lua (for /reck post) and UI/PostButton.lua need it, and only a
+-- Root level, not UI/: both Main.lua (for /redbook post) and UI/PostButton.lua need it, and only a
 -- root-package global is visible from both (see CLAUDE.md's package-scope note). Pure string
 -- building -- it imports nothing and touches no Turbine.UI.
-import "Reckoning.ChatPost"
+import "RedBook.ChatPost"
 
 -- Close every still-open buff interval the moment a session closes. Registered here, before any
 -- window is constructed, so it runs ahead of the windows' own OnClosed callbacks and none of
@@ -70,7 +70,7 @@ Sessions.OnClosed(function(s) Buffs.CloseSession(s) end)
 -- Frame/Bar/Row (chrome primitives) first, then each window module as it's built. Reads
 -- Theme/Font (Constants.lua) and _G.settings.windows (Settings.lua), both already loaded above.
 
-import "Reckoning.UI"
+import "RedBook.UI"
 
 liveMeter = UI.LiveMeter()
 deathCause = UI.DeathCause()
@@ -81,7 +81,7 @@ analysis = UI.Analysis()
 optionsWindow = UI.OptionsWindow()
 
 -- The Plugin Manager still calls GetOptionsPanel and still wants a ListBox. UI/Options.lua is a
--- one-line stub pointing at /reck options now -- every real setting lives in optionsWindow.
+-- one-line stub pointing at /redbook options now -- every real setting lives in optionsWindow.
 optionsPanel = UI.Options()
 
 plugin.GetOptionsPanel = function(self)
@@ -152,15 +152,15 @@ local function DumpSession(s)
 	-- Memory readout first, session data or not -- lets a lag report be checked against real
 	-- numbers ("does Lua-side memory climb fight over fight?") instead of just going by feel.
 	-- collectgarbage("count") returns KB and is cheap enough to call from a shell command.
-	Turbine.Shell.WriteLine(string.format("Reckoning: Lua memory in use: %.0f KB", collectgarbage("count")))
+	Turbine.Shell.WriteLine(string.format("RedBook: Lua memory in use: %.0f KB", collectgarbage("count")))
 
 	if s == nil then
-		Turbine.Shell.WriteLine("Reckoning: no session data yet.")
+		Turbine.Shell.WriteLine("RedBook: no session data yet.")
 		return
 	end
 
 	Turbine.Shell.WriteLine(string.format(
-		"Reckoning session: %s, %.0fs (%ds active)%s",
+		"RedBook session: %s, %.0fs (%ds active)%s",
 		s.startClock, s:Duration(), s:ActiveSeconds(), s.died and ", died" or ""))
 
 	DumpCategory("Damage done", s.agg.done)
@@ -175,7 +175,7 @@ end
 -- enable flag (same effect as the options panel checkboxes) -- "analysis" is the one window
 -- that's genuinely opened/closed by hand.
 local function UnknownWindow(name)
-	Turbine.Shell.WriteLine("Reckoning: unknown window '" .. name .. "'. Use live | death | analysis | options.")
+	Turbine.Shell.WriteLine("RedBook: unknown window '" .. name .. "'. Use live | death | analysis | options.")
 end
 
 local function ShowWindow(name)
@@ -193,12 +193,12 @@ local function ShowWindow(name)
 		-- Same path the options window's own checkbox takes, so the meter reappears now rather
 		-- than on its next throttled Update().
 		liveMeter:ApplySettings()
-		Turbine.Shell.WriteLine("Reckoning: live meter enabled.")
+		Turbine.Shell.WriteLine("RedBook: live meter enabled.")
 	elseif name == "death" then
 		_G.settings.deathCauseEnabled = true
 		Settings.Save()
 		deathCause:ApplySettings()
-		Turbine.Shell.WriteLine("Reckoning: death cause window enabled.")
+		Turbine.Shell.WriteLine("RedBook: death cause window enabled.")
 	else
 		UnknownWindow(name)
 	end
@@ -263,10 +263,10 @@ local function TestDeath()
 	session.endTime = Turbine.Engine.GetGameTime()
 
 	deathCause:Show(session)
-	Turbine.Shell.WriteLine("Reckoning: triggered a test death popup.")
+	Turbine.Shell.WriteLine("RedBook: triggered a test death popup.")
 end
 
--- `/reck buffs` -- what self-effect tracking is currently seeing, and the ignore list that shapes
+-- `/redbook buffs` -- what self-effect tracking is currently seeing, and the ignore list that shapes
 -- it. The default Buffs.Ignore entries are a best guess at the client's own effect names and are
 -- not verified against a running game, so this command (not that table) is the real mechanism for
 -- keeping mounts and travel skills out of the uptime table.
@@ -276,9 +276,9 @@ local function BuffsCommand(action, name)
 		local rows = Buffs.Stats(session, nil, nil)
 
 		if table.getn(rows) == 0 then
-			Turbine.Shell.WriteLine("Reckoning: no self-effects tracked yet (nothing fought, or every effect is ignored).")
+			Turbine.Shell.WriteLine("RedBook: no self-effects tracked yet (nothing fought, or every effect is ignored).")
 		else
-			Turbine.Shell.WriteLine("Reckoning: self-effects in the most recent fight --")
+			Turbine.Shell.WriteLine("RedBook: self-effects in the most recent fight --")
 			for i = 1, table.getn(rows) do
 				local row = rows[i]
 				Turbine.Shell.WriteLine(string.format("  %s [%s]: %s uptime (%s), %d applied, longest gap %ds, icon=%s(%s)",
@@ -314,18 +314,18 @@ local function BuffsCommand(action, name)
 	end
 
 	if name == "" then
-		Turbine.Shell.WriteLine("Reckoning: /reck buffs ignore <name> | unignore <name> | list")
+		Turbine.Shell.WriteLine("RedBook: /redbook buffs ignore <name> | unignore <name> | list")
 		return
 	end
 
 	if action == "ignore" then
 		Buffs.AddIgnore(name)
-		Turbine.Shell.WriteLine("Reckoning: ignoring self-effect '" .. name .. "'.")
+		Turbine.Shell.WriteLine("RedBook: ignoring self-effect '" .. name .. "'.")
 	elseif action == "unignore" then
 		Buffs.RemoveIgnore(name)
-		Turbine.Shell.WriteLine("Reckoning: no longer ignoring '" .. name .. "'.")
+		Turbine.Shell.WriteLine("RedBook: no longer ignoring '" .. name .. "'.")
 	else
-		Turbine.Shell.WriteLine("Reckoning: /reck buffs ignore <name> | unignore <name> | list")
+		Turbine.Shell.WriteLine("RedBook: /redbook buffs ignore <name> | unignore <name> | list")
 	end
 end
 
@@ -343,7 +343,7 @@ local function ResetAll()
 	optionsWindow:RefreshPages()
 	OptionsWindow.ApplyAll()
 
-	Turbine.Shell.WriteLine("Reckoning: settings reset to defaults.")
+	Turbine.Shell.WriteLine("RedBook: settings reset to defaults.")
 end
 
 -- Prints the post the analysis window currently has armed, to YOUR chat window only.
@@ -356,7 +356,7 @@ end
 local function PostPreview()
 	local session = analysis and analysis.selectedSession or (Sessions.current or Sessions.list[1])
 	if session == nil then
-		Turbine.Shell.WriteLine("Reckoning: no session data yet.")
+		Turbine.Shell.WriteLine("RedBook: no session data yet.")
 		return
 	end
 
@@ -371,7 +371,7 @@ local function PostPreview()
 
 	local line = ChatPost.BuildLine(session, preset, view, who, fromSec, toSec)
 	if line == nil then
-		Turbine.Shell.WriteLine("Reckoning: nothing to post for the current view"
+		Turbine.Shell.WriteLine("RedBook: nothing to post for the current view"
 			.. (preset == "death" and " (this fight had no death)." or "."))
 		return
 	end
@@ -381,7 +381,7 @@ local function PostPreview()
 	-- immediately. The character count stays because it is what diagnosed the "prohibited because
 	-- of a content, size, or mixed-alphabet restriction" refusal in the first place.
 	Turbine.Shell.WriteLine(string.format(
-		"Reckoning: %s -> %s, %d chars (limit %d):",
+		"RedBook: %s -> %s, %d chars (limit %d):",
 		ChatPost.PresetLabel(preset), ChatPost.ChannelLabel(_G.settings.postChannel),
 		string.len(line), ChatPost.MAX_MESSAGE))
 	Turbine.Shell.WriteLine(line)
@@ -404,7 +404,7 @@ function command:Execute(_, str)
 	end
 
 	if cmd == "" or cmd == "help" then
-		Turbine.Shell.WriteLine("Reckoning v" .. Reckoning.Version .. ": /reck help | options | dump | post | buffs [list|ignore <name>|unignore <name>] | testdeath | show [live|death|analysis|options] | hide [live|death|analysis|options] | move <live|death|analysis|options> | reset")
+		Turbine.Shell.WriteLine("RedBook v" .. RedBook.Version .. ": /redbook help | options | dump | post | buffs [list|ignore <name>|unignore <name>] | testdeath | show [live|death|analysis|options] | hide [live|death|analysis|options] | move <live|death|analysis|options> | reset")
 	elseif cmd == "options" or cmd == "config" then
 		optionsWindow:Toggle()
 	elseif cmd == "dump" then
@@ -422,11 +422,17 @@ function command:Execute(_, str)
 	elseif cmd == "reset" then
 		ResetAll()
 	else
-		Turbine.Shell.WriteLine("Reckoning: unknown command '" .. cmd .. "'. Try /reck help.")
+		Turbine.Shell.WriteLine("RedBook: unknown command '" .. cmd .. "'. Try /redbook help.")
 	end
 end
 
-Turbine.Shell.AddCommand("reck", command)
+-- Two registrations of the SAME command object: the full name and a short alias. Turbine's
+-- AddCommand may or may not accept a semicolon-separated alias list -- nothing in the plugin
+-- source this codebase checks its assumptions against uses that form, so this takes the shape
+-- with no unknown in it and registers twice instead. RemoveCommand is then called once per
+-- registration in plugin.Unload (see the note there).
+Turbine.Shell.AddCommand("redbook", command)
+Turbine.Shell.AddCommand("rb", command)
 
 ---------------------------------------------------------------------
 --== Lifecycle ===--
@@ -434,7 +440,11 @@ Turbine.Shell.AddCommand("reck", command)
 
 plugin.Unload = function(self)
 	Settings.Save()
-	Turbine.Shell.RemoveCommand(command)
+	-- Once per AddCommand above. Whether RemoveCommand drops every registration of an object or
+	-- just one is not established here, so both calls are made and both are pcall'd: a second
+	-- removal that finds nothing left must not abort the rest of this teardown.
+	pcall(Turbine.Shell.RemoveCommand, command)
+	pcall(Turbine.Shell.RemoveCommand, command)
 	Events.Shutdown()
 	Session.ShutdownMorale()
 	UI.LiveMeter.ShutdownTarget()

@@ -1,7 +1,7 @@
 --=================================================================================================
 -- Options -- the Plugin Manager stub, returned via plugin.GetOptionsPanel.
 --
--- Every real setting moved to UI/OptionsWindow.lua (/reck options), which is a proper Reckoning
+-- Every real setting moved to UI/OptionsWindow.lua (/redbook options), which is a proper RedBook
 -- window with the plugin's own chrome and grouping. The Plugin Manager still calls
 -- GetOptionsPanel and still wants a Turbine.UI.ListBox back, so this stays -- reduced to a
 -- one-line pointer plus a button that opens the real thing.
@@ -24,7 +24,7 @@ function Options:Constructor()
 	local title = Turbine.UI.Label()
 	title:SetParent(body)
 	title:SetFont(Font.TrajanPro16)
-	title:SetText("Reckoning v" .. Reckoning.Version)
+	title:SetText("RedBook v" .. RedBook.Version)
 	title:SetForeColor(Theme.Color(Theme.Hex.Text))
 	title:SetPosition(10, 6)
 	title:SetSize(400, 26)
@@ -33,14 +33,14 @@ function Options:Constructor()
 	local hint = Turbine.UI.Label()
 	hint:SetParent(body)
 	hint:SetFont(Font.Verdana12)
-	hint:SetText("Settings live in Reckoning's own window. Type /reck options.")
+	hint:SetText("Settings live in RedBook's own window. Type /redbook options.")
 	hint:SetForeColor(Theme.Color(Theme.Hex.MutedText))
 	hint:SetPosition(10, 34)
 	hint:SetSize(400, 20)
 	hint:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
 
 	-- Turbine.UI.Lotro.Button, not a hand-built Control: this panel is drawn on the Plugin
-	-- Manager's own ground, where Reckoning's palette has nothing to sit against, so the stock
+	-- Manager's own ground, where RedBook's palette has nothing to sit against, so the stock
 	-- widget is the one that looks right here (and it is the one thing this panel still does).
 	local open = Turbine.UI.Lotro.Button()
 	open:SetParent(body)

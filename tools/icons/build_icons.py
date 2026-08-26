@@ -28,7 +28,7 @@ from PIL import Image
 
 REPO = "https://raw.githubusercontent.com/phosphor-icons/core/main/assets"
 OUT = Path(__file__).resolve().parents[2] / "Resources"
-TMP = Path(tempfile.mkdtemp(prefix="reckoning-icons-"))
+TMP = Path(tempfile.mkdtemp(prefix="redbook-icons-"))
 
 WHITE = (255, 255, 255)
 

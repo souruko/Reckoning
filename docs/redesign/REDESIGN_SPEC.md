@@ -1,6 +1,6 @@
-# Reckoning — redesign spec (Lua side)
+# RedBook — redesign spec (Lua side)
 
-Companion to `Reckoning Analyzer.dc.html` (design doc: `1a` redesigned analysis window,
+Companion to `RedBook Analyzer.dc.html` (design doc: `1a` redesigned analysis window,
 `1b` live meter, `1c` death cause; `0a–0c` are the current UI recreated from source).
 Everything below is expressed against the files as they stand at `main` (`Constants.lua`,
 `Session.lua`, `UI/Analysis.lua`, `UI/AnalysisGraph.lua`).
@@ -216,7 +216,7 @@ end
   Only effects on the local player are ever read, so this stays inside the plugin's
   "local player only" scope (`docs/DESIGN.md` "Scope").
 - Filter list: skip effects whose name matches the tracked-out set (travel skills, mounts) —
-  ship a small `Buffs.Ignore` table, user-extensible via `/reck buffs ignore <name>`.
+  ship a small `Buffs.Ignore` table, user-extensible via `/redbook buffs ignore <name>`.
 - Derived per range `[t0, t1]` (clip every interval to the range first):
   - `uptime` = Σ clipped lengths; `uptimePct` = uptime ÷ (t1 − t0)
   - `apps` = intervals *starting* inside the range
@@ -341,5 +341,5 @@ Small, both keep their exact footprint (260×186, 380×200):
 3. Range slider wired to `Slice`, everything rescoping.
 4. `Buffs.lua` polling + buff table + lanes.
 5. Live meter / death cause touch-ups.
-6. Version bump in `Reckoning.plugin`, `Reckoning.plugincompendium`, `Constants.lua`
-   (`Reckoning.Version`) plus a player-facing `CHANGELOG.md` entry.
+6. Version bump in `RedBook.plugin`, `RedBook.plugincompendium`, `Constants.lua`
+   (`RedBook.Version`) plus a player-facing `CHANGELOG.md` entry.

@@ -21,12 +21,12 @@ DEFAULTS = {
 	-- Analysis window's SELF BUFFS section. Strings only, never a Turbine.UI.Color: chartedBuffs
 	-- is an ordered list of at most 3 buff NAMES (the lane colour is derived from its position
 	-- in that list at render time, so no colour is ever serialised), and buffIgnore is a
-	-- [name] = true set extended by `/reck buffs ignore <name>`.
+	-- [name] = true set extended by `/redbook buffs ignore <name>`.
 	chartedBuffs      = {},
 	buffIgnore        = {},
 	-- Chat posting (ChatPost.lua, UI/PostButton.lua). All four are scalars, so none of them needs
 	-- the fresh-{}-on-merge treatment the two tables above do.
-	postChannel       = "say",     -- a ChatPost.Channels key; /reck post is the local preview
+	postChannel       = "say",     -- a ChatPost.Channels key; /redbook post is the local preview
 	postPreset        = "summary", -- "summary" | "death"
 	-- No postRows: the summary posts the largest hit rather than a skill list, so there is
 	-- nothing left to size. postColor governs the real post, budgeted against MAX_MESSAGE.
@@ -38,7 +38,7 @@ DEFAULTS = {
 	-- ---------------------------------------------------------------------------------------
 
 	-- appearance
-	palettePreset      = "Reckoning", -- a KEY into Theme.Presets; a name, never a colour
+	palettePreset      = "RedBook", -- a KEY into Theme.Presets; a name, never a colour
 	opacityCombat      = 100,  -- 40-100
 	opacityIdle        = 55,   -- 20-100
 	idleFadeEnabled    = true,
@@ -184,13 +184,36 @@ function Settings.FixColors()
 	end
 end
 
+-- The plugin was called "Reckoning" through v0.5.0, and PluginData is keyed by that name -- so a
+-- save written before the rename lives under the old key and a plain Load("RedBook") would read
+-- nothing and hand every player a factory-fresh settings table. Read the new key first and fall
+-- back to the old one exactly once; the next Settings.Save() writes under the new key, so the old
+-- one is read at most once per character and then goes unused (deliberately left in place rather
+-- than deleted -- PluginData has no delete call, and an orphaned blob costs nothing).
+local LEGACY_DATA_KEY = "Reckoning"
+
+-- Presets are keyed by NAME, and the stock preset's name changed with the plugin's. ClampSettings
+-- would already fall back to DEFAULTS.palettePreset for an unrecognised name, and since the two
+-- presets are byte-identical that lands on the right colours either way -- this map is here so the
+-- rename is explicit rather than relying on that fallback, and so a future preset rename has an
+-- obvious place to go.
+local LEGACY_PRESETS = { ["Reckoning"] = "RedBook" }
+
 function Settings.Load()
-	local saved = Turbine.PluginData.Load(Turbine.DataScope.Character, "Reckoning")
+	local saved = Turbine.PluginData.Load(Turbine.DataScope.Character, "RedBook")
+	if type(saved) ~= "table" then
+		saved = Turbine.PluginData.Load(Turbine.DataScope.Character, LEGACY_DATA_KEY)
+	end
 
 	if type(saved) == "table" then
 		_G.settings = saved
 	else
 		_G.settings = {}
+	end
+
+	local renamed = LEGACY_PRESETS[_G.settings.palettePreset]
+	if renamed ~= nil then
+		_G.settings.palettePreset = renamed
 	end
 
 	-- Read unknown keys defensively: merge in anything the save predates. Table-valued defaults
@@ -214,7 +237,7 @@ function Settings.Load()
 end
 
 -- Resets every setting to DEFAULTS (see the table-copy note above -- table-valued defaults get
--- a fresh table, not DEFAULTS' own). Used by /reck reset.
+-- a fresh table, not DEFAULTS' own). Used by /redbook reset.
 function Settings.ResetToDefaults()
 	_G.settings = {}
 	for key, value in pairs(DEFAULTS) do
@@ -230,7 +253,7 @@ function Settings.ResetToDefaults()
 end
 
 function Settings.Save()
-	Turbine.PluginData.Save(Turbine.DataScope.Character, "Reckoning", _G.settings)
+	Turbine.PluginData.Save(Turbine.DataScope.Character, "RedBook", _G.settings)
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -238,7 +261,7 @@ end
 ---------------------------------------------------------------------------------------------------
 
 -- Which root-level global owns each _G.settings.windows key. Lives here rather than in Main.lua
--- because both callers of the reset below are elsewhere: /reck move <name> and the options
+-- because both callers of the reset below are elsewhere: /redbook move <name> and the options
 -- window's per-window Reset buttons.
 local WINDOW_GLOBALS = {
 	liveMeter = "liveMeter", deathCause = "deathCause",
@@ -252,7 +275,7 @@ end
 
 -- Puts one window back at (200, 200) and clears whatever size and splitter position it had saved.
 -- There must be exactly one definition of what "Reset" does to a window, because two surfaces
--- offer it (/reck move, and a button per row on the options window's Windows page).
+-- offer it (/redbook move, and a button per row on the options window's Windows page).
 --
 -- Returns false for an unknown key or a window that does not exist yet, so a caller can tell a
 -- typo apart from a successful reset.

@@ -263,9 +263,9 @@ function Analysis:Constructor()
 		-- _RefreshTexts, "Brand  <rgb=#5C6076>3.8.0</rgb>"), the only confirmed-working
 		-- precedent anywhere in these plugins for a de-emphasized run of text inside one
 		-- Turbine.UI.Label. Uses Theme.Hex.DimText rather than Gibberish's own hex so it stays
-		-- inside Reckoning's own palette.
+		-- inside RedBook's own palette.
 		key = "analysis", closable = true,
-		title = "Reckoning  <rgb=" .. Theme.Hex.DimText .. ">" .. Reckoning.Version .. "</rgb>",
+		title = "RedBook  <rgb=" .. Theme.Hex.DimText .. ">" .. RedBook.Version .. "</rgb>",
 		width = MIN_WIDTH, height = DEFAULT_HEIGHT, headerHeight = HEADER_HEIGHT,
 	})
 
@@ -598,7 +598,7 @@ function Analysis:OnSessionsDropped()
 	self:RefreshContent()
 end
 
--- Back to the shipped size and position, for /reck reset.
+-- Back to the shipped size and position, for /redbook reset.
 function Analysis:ResetGeometry()
 	self:Resize(MIN_WIDTH, DEFAULT_HEIGHT)
 	self:SetPosition(200, 200)
@@ -796,7 +796,7 @@ function Analysis:RefreshRail()
 			widgets.control:SetPosition(0, (i - 1) * RAIL_ROW_HEIGHT)
 			widgets.name:SetText(s:DisplayName() .. (s.died and " · died" or ""))
 			widgets.meta:SetText(s.startClock .. " · " .. Format.Clock(s:Duration()) .. " · " .. Format.Rate(s:Rate("done")))
-			widgets.pin:SetBackground(s.pinned and "Reckoning/Resources/pin_on.tga" or "Reckoning/Resources/pin_off.tga")
+			widgets.pin:SetBackground(s.pinned and "RedBook/Resources/pin_on.tga" or "RedBook/Resources/pin_off.tga")
 			self:RefreshRailRow(widgets)
 		end
 	end
@@ -1243,7 +1243,7 @@ function Analysis:BuildSearchBox(parent, placeholderText)
 	searchIcon:SetPosition(6, math.floor((SEARCH_HEIGHT - 2 - SEARCH_ICON) / 2))
 	searchIcon:SetSize(SEARCH_ICON, SEARCH_ICON)
 	searchIcon:SetBlendMode(Turbine.UI.BlendMode.Overlay)
-	searchIcon:SetBackground("Reckoning/Resources/search.tga")
+	searchIcon:SetBackground("RedBook/Resources/search.tga")
 	searchIcon:SetMouseVisible(false)
 
 	local fieldLeft = 6 + SEARCH_ICON + 4
@@ -1289,7 +1289,7 @@ function Analysis:BuildSearchBox(parent, placeholderText)
 	clearIcon:SetSize(SEARCH_ICON, SEARCH_ICON)
 	clearIcon:SetPosition(math.floor((16 - SEARCH_ICON) / 2), math.floor(((SEARCH_HEIGHT - 2) - SEARCH_ICON) / 2))
 	clearIcon:SetBlendMode(Turbine.UI.BlendMode.Overlay)
-	clearIcon:SetBackground("Reckoning/Resources/cross.tga")
+	clearIcon:SetBackground("RedBook/Resources/cross.tga")
 	clearIcon:SetMouseVisible(false)
 
 	clear.MouseEnter = function() clear:SetBackColor(Theme.Color(Theme.Hex.Hover)) end

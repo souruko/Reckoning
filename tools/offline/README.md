@@ -22,7 +22,7 @@ So these go through the real entry points instead:
 
 - `load_test.lua` loads **`Main.lua` itself**, top to bottom, constructing all four windows and
   the Plugin Manager stub, then drives a whole fight through `Turbine.Chat.Received` and
-  `Events.heartbeat:Update()` and runs every `/reck` subcommand.
+  `Events.heartbeat:Update()` and runs every `/redbook` subcommand.
 - the rest construct the **real classes** (`Graph`, `RangeSlider`, `Analysis`, `LiveMeter`,
   `DeathCause`, `OptionsWindow`, `OptionsPage`, `Slider`, `Segment`) and call their real methods.
 - `options_test.lua` in particular never pokes `_G.settings` and calls a refresh: it fires the

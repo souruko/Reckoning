@@ -3,8 +3,8 @@
 -- sorting and the skill/buff splitter -- checking that the block stack stays consistent and the
 -- numbers agree with what Session:Slice says they should be.
 local env = dofile("stub.lua"); local ROOT = env.ROOT
-import "Reckoning.Constants"
-Trigger = {}; import "Reckoning.Parse.en"; import "Reckoning.Settings"
+import "RedBook.Constants"
+Trigger = {}; import "RedBook.Parse.en"; import "RedBook.Settings"
 
 local effectSet = {}
 local function MakeEffect(name, icon, debuff)
@@ -24,8 +24,8 @@ _G.lp = {
 }
 LocalPlayer = _G.lp; LocalPlayer.name = LocalPlayer:GetName()
 Settings.Load()
-import "Reckoning.Session"; import "Reckoning.Sessions"; import "Reckoning.Buffs"
-import "Reckoning.Events"; import "Reckoning.ChatPost"; import "Reckoning.UI"
+import "RedBook.Session"; import "RedBook.Sessions"; import "RedBook.Buffs"
+import "RedBook.Events"; import "RedBook.ChatPost"; import "RedBook.UI"
 
 local fails = 0
 local function check(label, ok, detail)

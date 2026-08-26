@@ -12,12 +12,12 @@
 local env = dofile("stub.lua")
 local ROOT = env.ROOT
 
-import "Reckoning.Utils.Type"
-import "Reckoning.Utils.Class"
-import "Reckoning.Constants"
+import "RedBook.Utils.Type"
+import "RedBook.Utils.Class"
+import "RedBook.Constants"
 Trigger = {}
-import "Reckoning.Parse.en"
-import "Reckoning.Settings"
+import "RedBook.Parse.en"
+import "RedBook.Settings"
 
 _G.lp = {
 	GetName = function() return "Luxtheninth" end,
@@ -32,10 +32,10 @@ LocalPlayer.name = LocalPlayer:GetName()
 
 Settings.Load()
 
-import "Reckoning.Session"
-import "Reckoning.Sessions"
-import "Reckoning.Events"
-import "Reckoning.ChatPost"
+import "RedBook.Session"
+import "RedBook.Sessions"
+import "RedBook.Events"
+import "RedBook.ChatPost"
 
 local fails = 0
 local function check(label, got, want)

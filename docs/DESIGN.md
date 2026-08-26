@@ -1,4 +1,4 @@
-# Reckoning — combat analyser for LOTRO
+# RedBook — combat analyser for LOTRO
 
 Design documentation for the plugin mocked up in `Combat Analyzer.dc.html`.
 Everything below is grounded in the real client API and in the combat-chat parser
@@ -237,7 +237,7 @@ The morale line is a dashed overlay on its own 0–max axis, labelled at the rig
 
 ## Window 4 — options
 
-`/reck options`, and the **Open options** button on the Plugin Manager stub. 560 × 452: a 146px
+`/redbook options`, and the **Open options** button on the Plugin Manager stub. 560 × 452: a 146px
 category rail on the left, seven pages on the right in one reused `ListBox`, and a footer with
 **Defaults** and **Close**. Built from the `design_handoff_options_panel/` bundle (direction 1b);
 `SETTINGS_KEYS.md` in that bundle is the authority for every key, range and label string.
@@ -293,7 +293,7 @@ Square corners, flat fill — nothing in the mockup needs a rounded rect:
 
 ## Persistence
 
-Follow the `VitalSelf` pattern: `Turbine.PluginData.Save(Turbine.DataScope.Character, "Reckoning", settings)`.
+Follow the `VitalSelf` pattern: `Turbine.PluginData.Save(Turbine.DataScope.Character, "RedBook", settings)`.
 
 - `Turbine.UI.Color` does **not** survive serialization — it returns as a plain
   `{R,G,B}` table. Rebuild every color key on load (a `FixColors()` equivalent)

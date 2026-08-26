@@ -27,13 +27,13 @@ local function check(label, ok, detail)
   print(string.format("%-58s %s%s", label, ok and "OK" or "**FAIL**", detail and ("  " .. detail) or ""))
 end
 
--- Main.lua does `import "Reckoning.UI"` and then `UI.LiveMeter()`. The stub has no per-directory
+-- Main.lua does `import "RedBook.UI"` and then `UI.LiveMeter()`. The stub has no per-directory
 -- package environments, so give `UI` the bare globals those files declare, the way the game's
 -- own package scope would.
 local realImport = _G.import
 _G.import = function(path)
-  if path == "Reckoning.UI" then
-    realImport("Reckoning.UI")
+  if path == "RedBook.UI" then
+    realImport("RedBook.UI")
     _G.UI = { LiveMeter = LiveMeter, DeathCause = DeathCause, Analysis = Analysis,
               OptionsWindow = OptionsWindow, Options = Options }
     return
@@ -42,7 +42,7 @@ _G.import = function(path)
   return realImport(path)
 end
 
-local ok, err = pcall(function() realImport("Reckoning.Main") end)
+local ok, err = pcall(function() realImport("RedBook.Main") end)
 check("Main.lua loads top to bottom", ok, ok and "" or tostring(err))
 if not ok then os.exit(1) end
 
@@ -51,7 +51,7 @@ check("options panel stub constructed", optionsPanel ~= nil)
 check("options window constructed", optionsWindow ~= nil)
 check("options window constructed", optionsWindow ~= nil)
 check("LocalPlayer.name monkey-patched", LocalPlayer.name == "Luxtheninth")
-check("version is 0.5.0 in Constants", Reckoning.Version == "0.5.0")
+check("version is 0.6.0 in Constants", RedBook.Version == "0.6.0")
 check("Buffs global exists before Events", Buffs ~= nil and Buffs.PollInterval == 0.25)
 check("new settings defaults merged",
   type(_G.settings.chartedBuffs) == "table" and type(_G.settings.buffIgnore) == "table"
@@ -115,14 +115,14 @@ end
 for _, cmd in ipairs({ "help", "dump", "post", "buffs", "buffs list", "testdeath",
                        "show analysis", "hide analysis", "move analysis" }) do
   local okCmd, errCmd = Run(cmd)
-  check("/reck " .. cmd, okCmd, okCmd and "" or tostring(errCmd))
+  check("/redbook " .. cmd, okCmd, okCmd and "" or tostring(errCmd))
 end
 local okIg = Run("buffs ignore Writ of Health")
-check("/reck buffs ignore <name> keeps the name's case and spaces",
+check("/redbook buffs ignore <name> keeps the name's case and spaces",
   okIg and _G.settings.buffIgnore["Writ of Health"] == true)
 local okUn = Run("buffs unignore Writ of Health")
-check("/reck buffs unignore <name>", okUn and _G.settings.buffIgnore["Writ of Health"] == nil)
--- /reck post must survive every preset and channel, including the ones that legitimately have
+check("/redbook buffs unignore <name>", okUn and _G.settings.buffIgnore["Writ of Health"] == nil)
+-- /redbook post must survive every preset and channel, including the ones that legitimately have
 -- nothing to say -- it runs against whatever session state happens to exist, so a nil post is a
 -- normal outcome it has to print through rather than throw on.
 for _, preset in ipairs({ "summary", "death" }) do
@@ -130,7 +130,7 @@ for _, preset in ipairs({ "summary", "death" }) do
     _G.settings.postPreset = preset
     _G.settings.postChannel = channel
     local okPost, errPost = Run("post")
-    check("/reck post (" .. preset .. " -> " .. channel .. ")", okPost,
+    check("/redbook post (" .. preset .. " -> " .. channel .. ")", okPost,
       okPost and "" or tostring(errPost))
   end
 end
@@ -144,14 +144,48 @@ check("postColor defaulted on", _G.settings.postColor == true)
 check("the removed postRows setting is gone", DEFAULTS.postRows == nil)
 
 local okReset = Run("reset")
-check("/reck reset", okReset)
-check("/reck reset restored the shipped window size",
+check("/redbook reset", okReset)
+check("/redbook reset restored the shipped window size",
   select(1, analysis:GetSize()) == 1080 and select(2, analysis:GetSize()) == 820,
   select(1, analysis:GetSize()) .. "x" .. select(2, analysis:GetSize()))
+
+-- The rename (Reckoning -> RedBook, v0.6.0). The command name, the PluginData key and the stock
+-- palette preset all carried the old name, and the first two are the ones a player would notice
+-- immediately if they were missed.
+local registered = {}
+for _, entry in ipairs(Turbine.Shell.Commands) do registered[entry.name] = entry.command end
+check("/redbook is registered", registered["redbook"] ~= nil)
+check("/rb alias is registered", registered["rb"] ~= nil)
+check("both names share one command object", registered["redbook"] == registered["rb"])
+check("the old /reck name is gone", registered["reck"] == nil)
+
+check("Settings.Save writes under the RedBook key", (function()
+  Turbine.PluginData.Store = {}
+  Settings.Save()
+  return Turbine.PluginData.Store["RedBook"] ~= nil
+      and Turbine.PluginData.Store["Reckoning"] == nil
+end)())
+
+-- A save written before the rename lives under the old key. Loading must find it rather than
+-- silently hand the player a factory-fresh settings table.
+check("a pre-rename save is adopted from the legacy key", (function()
+  Turbine.PluginData.Store = { Reckoning = { liveTab = 3, palettePreset = "Reckoning" } }
+  Settings.Load()
+  return _G.settings.liveTab == 3
+end)())
+check("the old palette preset name maps to the new one",
+  _G.settings.palettePreset == "RedBook", tostring(_G.settings.palettePreset))
+check("a RedBook save wins over a stale legacy one", (function()
+  Turbine.PluginData.Store = { Reckoning = { liveTab = 3 }, RedBook = { liveTab = 2 } }
+  Settings.Load()
+  return _G.settings.liveTab == 2
+end)())
 
 -- unload
 local okUnload, errUnload = pcall(function() plugin.Unload() end)
 check("plugin.Unload runs clean", okUnload, okUnload and "" or tostring(errUnload))
+check("plugin.Unload removes both command registrations", Turbine.Shell.Removed == 2,
+  tostring(Turbine.Shell.Removed))
 
 print("")
 if fails == 0 then print("ALL LOAD CHECKS PASSED") else print(fails .. " CHECK(S) FAILED"); os.exit(1) end

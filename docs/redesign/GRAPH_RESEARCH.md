@@ -95,7 +95,7 @@ seg:SetRotation(seg.rotation)                        -- re-apply, always last
 ```
 
 47 segments per series instead of 94 rects, and a genuine diagonal. Probe checklist, in this
-order (30 minutes with `/reck debug` and one throwaway window):
+order (30 minutes with `/redbook debug` and one throwaway window):
 
 1. Does `SetRotation` exist on `Turbine.UI.Control`, or only on `Window`? (Gibberish3 only
    proves `Window`. If it's Window-only, each segment becomes a Window — heavier, and worth
@@ -117,7 +117,7 @@ way, which is why A is worth building first.
 ## 4. Option C — a slope sprite atlas
 
 No rotation needed. Author one white 32×32 `.tga` per slope bucket (say 16 buckets from −75°
-to +75°, plus a flat one), ship them in `Reckoning/RESOURCES/`, then per segment pick the
+to +75°, plus a flat one), ship them in `RedBook/RESOURCES/`, then per segment pick the
 nearest bucket and stretch the sprite over the segment's bounding box:
 
 ```lua
@@ -125,7 +125,7 @@ seg:SetSize(w, h)
 seg:SetStretchMode(2)                                  -- scale image to control
 seg:SetBlendMode(Turbine.UI.BlendMode.Overlay)         -- so SetBackColor tints it
 seg:SetBackColor(colour)
-seg:SetBackground("Reckoning/RESOURCES/slope_08.tga")  -- path, not a shared Graphic
+seg:SetBackground("RedBook/RESOURCES/slope_08.tga")  -- path, not a shared Graphic
 ```
 
 - Works on documented API only, gives smooth antialiased diagonals, and the Overlay + BackColor

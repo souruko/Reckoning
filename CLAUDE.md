@@ -5,7 +5,7 @@ repository.
 
 ## What this is
 
-Reckoning is a Lord of the Rings Online (LotRO) plugin written in Lua. It reads the combat
+RedBook is a Lord of the Rings Online (LotRO) plugin written in Lua. It reads the combat
 chat log and reports on the local player's own combat via three windows: an always-on live
 meter, a death post-mortem, and a post-combat analysis window. It runs inside the game via the
 Turbine plugin engine -- there is no build step, package manager, linter, or test runner.
@@ -26,18 +26,65 @@ immediately live in the game. Reload to see a change:
 
 ```
 /plugins refresh
-/plugins load Reckoning
+/plugins load RedBook
 ```
 
 Runtime errors surface in the LotRO chat window; there is no other log.
 
 ## Version bumps
 
-The version appears in **three** places and must be kept in sync: `Reckoning.plugin`
-(`<Version>`), `Reckoning.plugincompendium` (`<Version>`), and `Constants.lua`
-(`Reckoning.Version`). `CHANGELOG.md` gets a matching entry, written for players rather than
+The version appears in **three** places and must be kept in sync: `RedBook.plugin`
+(`<Version>`), `RedBook.plugincompendium` (`<Version>`), and `Constants.lua`
+(`RedBook.Version`). `CHANGELOG.md` gets a matching entry, written for players rather than
 developers. `tools/offline/load_test.lua` asserts the `Constants.lua` value, so a half-done bump
 fails there.
+
+## The rename (Reckoning -> RedBook, v0.6.0)
+
+The plugin was called **Reckoning** through v0.5.0. v0.6.0 renamed it to **RedBook** -- every
+package path, every user-facing string, the two manifest files, the slash command, the
+`Turbine.PluginData` key and the stock palette preset. Nothing about what the plugin does changed.
+Four things about that rename are load-bearing rather than cosmetic:
+
+- **The on-disk folder name IS the package name.** Turbine resolves `import "RedBook.Session"`
+  against the plugin's own directory, so the folder under `Plugins/` must be `RedBook`, not
+  `Reckoning`. Nothing in this repository can enforce that -- the folder name is not tracked by
+  git -- so a checkout into a differently-named directory fails at load with an import error, not
+  with anything that reads like a rename problem. The offline harness has the same dependency and
+  routes around it: `tools/offline/run.sh` derives `REDBOOK_ROOT` from its own location, so the
+  tests pass from a directory of any name. **Do not "fix" a failing in-game load by editing the
+  import paths back** -- check the folder name first.
+- **`Turbine.PluginData` is keyed by name, so the rename orphaned every existing save.**
+  `Settings.Load()` reads `"RedBook"` first and falls back to `LEGACY_DATA_KEY` (`"Reckoning"`)
+  exactly once; the next `Settings.Save()` writes under the new key only. PluginData has no delete
+  call, so the old blob is left in place rather than cleaned up -- it is read at most once per
+  character and then never again. If a future rename happens, this is the pattern to repeat, and
+  the legacy key list is the thing to extend rather than replace.
+- **`/redbook` and `/rb` are two `AddCommand` registrations of the same command object.**
+  Turbine's `AddCommand` may well accept a semicolon-separated alias list -- that form shows up in
+  LotRO API references -- but nothing in the plugin source this codebase checks its assumptions
+  against actually uses it, and this repository's whole history is bugs from trusting a plausible
+  Turbine shape (see the three "guessed the shape of a Turbine object" entries below). Two plain
+  registrations have no unknown in them. The matching cost is on teardown: whether
+  `RemoveCommand(command)` drops every registration of an object or just one is equally
+  unestablished, so `plugin.Unload` calls it twice and `pcall`s both, and a second removal that
+  finds nothing left is a no-op rather than an aborted teardown. `load_test.lua` pins the count.
+- **The stock palette preset is `"RedBook"` now, and preset names are save data.**
+  `Settings.Load`'s `LEGACY_PRESETS` maps the old name onto the new one. `ClampSettings` would
+  already have caught an unrecognised name and fallen back to `DEFAULTS.palettePreset`, and since
+  the two presets are byte-identical that lands on the right colours either way -- the map exists
+  so the rename is explicit rather than load-bearing on that fallback, and so a future preset
+  rename has an obvious home.
+
+`tools/offline/load_test.lua` covers all four of the checkable ones (both command names registered
+and sharing one object, `/reck` gone, saves written under the new key, a pre-rename save adopted
+from the legacy key, a current save winning over a stale legacy one, the preset name mapped, and
+both registrations removed on unload). `tools/offline/stub.lua` grew a real key/value
+`PluginData.Store` and a `Shell.Commands` registry to make those checkable at all -- both are
+additive, and `Load` still returns nil for a key nothing was saved under, which is what every
+other harness relies on. **Not yet confirmed in-game**: that the legacy-key read actually finds a
+real pre-rename save (the stub proves the branch runs and picks the right table, not that
+`PluginData.Load` behaves this way against the real store), and that both command names register.
 
 ## Build status
 
@@ -196,7 +243,7 @@ be wrong:
   contradicted by Gibberish3's own code, which the round-5 grep had missed: its
   `ResolveTimerIcon` (`UTILS/Functions.lua`) returns a plain effect-icon id completely unwrapped,
   only ever rewriting *string* paths, for an unrelated external-image feature. Round 4's own
-  diagnostic (`/reck buffs`, still in `Main.lua`, prints each tracked buff's `row.icon` value and
+  diagnostic (`/redbook buffs`, still in `Main.lua`, prints each tracked buff's `row.icon` value and
   Lua type) confirmed real data was never the problem: every tracked buff's icon is a real number
   in the `0x41000000`-`0x42000000` range, the same "0x41-prefixed" asset-id format used
   everywhere else in this environment that a bare `SetBackground(numericId)` is confirmed
@@ -470,7 +517,7 @@ plain function and the table-of-functions shape that convention leaves behind --
 chain-don't-clobber reasoning `Events.lua` already applies to `Turbine.Chat.Received`. Restored on
 unload via `Session.ShutdownMorale()`, called from `Main.lua`'s `plugin.Unload`. Offline-verified
 (all five non-`load` harnesses set up `_G.lp` with `GetMorale`/`GetMaxMorale` before `import
-"Reckoning.Session"`, exactly the order this hook needs, so `tools/offline/run.sh` exercises the
+"RedBook.Session"`, exactly the order this hook needs, so `tools/offline/run.sh` exercises the
 cache-population path already; the event-firing path itself cannot be exercised offline since the
 stub's `_G.lp` is a plain table, not a real Turbine object that invokes the field on change).
 **Not yet confirmed in-game** -- specifically, whether `_G.lp.MoraleChanged`/`MaxMoraleChanged`
@@ -492,7 +539,7 @@ poor match for. `CombatAnalysis` has the same "free state, then `collectgarbage(
 that call was added to `Sessions.Close()`, right after `TrimRing()`, gated to the real-archive
 path only.
 
-**This was wrong, and made things measurably worse.** `/reck dump`'s new memory readout (added in
+**This was wrong, and made things measurably worse.** `/redbook dump`'s new memory readout (added in
 the same pass) showed nothing alarming on its own -- 4192 KB in one session, 2710 KB fresh after a
 reload, not a runaway climb. What came back instead was a much more specific and much worse
 symptom: the death loading screen taking 2-3x longer than normal, then 5-10s of total
@@ -501,7 +548,7 @@ would produce -- it is exactly what a **client-wide** GC pause would produce. LO
 ONE Lua VM across every loaded addon, not one per plugin (this install has a lot of them --
 RaidTools, LootLogs, CombatAnalysis, Thurallor, Darf, TbdBars, and more). `collectgarbage()` with
 no arguments forces a full stop-the-world collection of *that whole shared heap*, not just
-Reckoning's own few MB -- and `Sessions.Close()` fires it ~5s after the last combat event, which
+RedBook's own few MB -- and `Sessions.Close()` fires it ~5s after the last combat event, which
 for a death is often right around when the player releases spirit and the real zone-transition
 loading screen begins. A full sweep of a heap that likely spans tens of MB across every other
 addon, landing at exactly that moment, is sufficient on its own to explain both symptoms. Reverted
@@ -513,13 +560,13 @@ shared-VM cost, only that nobody happened to report it. Precedent in a sibling p
 call is *accepted syntax*, never that it is *cheap* -- that has to be checked against what the
 call actually does process-wide, not just against whether another plugin also calls it. If a
 future change wants to nudge GC at all, `collectgarbage("count")` (read-only, already used by
-`/reck dump`) is safe; anything that actually forces work (`collectgarbage()` bare or
+`/redbook dump`) is safe; anything that actually forces work (`collectgarbage()` bare or
 `"collect"`) needs to be weighed against the fact that it is never scoped to this plugin's own
 heap, no matter how it's justified.
 
-The `/reck dump` memory readout itself is not reverted -- it is read-only and the only real
+The `/redbook dump` memory readout itself is not reverted -- it is read-only and the only real
 diagnostic available here (no profiler exists for this environment), and it's what caught this.
-If lag reports come in again, get a `/reck dump` reading at the start of a session and again after
+If lag reports come in again, get a `/redbook dump` reading at the start of a session and again after
 several fights before assuming growth is the shape of the problem -- the one data point gathered
 so far does not show it.
 
@@ -555,7 +602,7 @@ uncaught throw there is not a one-off cost -- it's every subsequent line for as 
 caused it stays true, which is a very plausible shape for "unresponsive for 5-10s." The dispatch
 body is now a separate `Dispatch(args)` local function called via `pcall(Dispatch, args)`,
 deliberately *not* wrapping the call to `previousChatReceived` (another plugin's own handler,
-chained ahead of ours) -- only Reckoning's own logic. This is meant as a backstop for whatever the
+chained ahead of ours) -- only RedBook's own logic. This is meant as a backstop for whatever the
 next instance of this exact bug shape turns out to be, not a replacement for finding and fixing
 real instances when they're found, the same trade this codebase already makes everywhere else
 defensive (`Buffs.lua`: "a failed read is a no-op, never mistaken for real data").
@@ -574,7 +621,7 @@ would need to be found.
 **The options panel became window 4** (`design_handoff_options_panel/`: `README.md`,
 `IMPLEMENTATION_PLAN.md`, `SETTINGS_KEYS.md`, and an interactive HTML mock covering four
 directions -- **1b, "Rail & pages", is the one built**; 1c and 1d are explicitly out of scope).
-`/reck options` opens a 560x452 `Frame` with a category rail and seven pages, and the Plugin
+`/redbook options` opens a 560x452 `Frame` with a category rail and seven pages, and the Plugin
 Manager panel shrank to a stub with an **Open options** button. Roughly thirty new settings landed
 with it; `Settings.lua`'s `DEFAULTS` is the single list, and `SETTINGS_KEYS.md` is the authority
 for every range and label string. Things worth knowing before touching any of it:
@@ -609,7 +656,7 @@ for every range and label string. Things worth knowing before touching any of it
   `palettePreset` would put a nil hex into `Theme.Color`, and an unknown `numberFont` a nil font
   into `SetFont`.
 - **`Settings.ResetWindow(windowKey)` is the single definition of what "Reset" does to a window**
-  -- `/reck move <name>` and the options window's per-row Reset buttons both call it. It is the one
+  -- `/redbook move <name>` and the options window's per-row Reset buttons both call it. It is the one
   place allowed to *replace* `_G.settings.windows[key]` rather than mutate it, because clearing the
   saved size and split is the point; everywhere else must still mutate (see `Frame`'s drag handler
   and the bug it used to cause).
@@ -685,7 +732,7 @@ have caught a wrong field name on the real chat event object. `Events.lua` read 
 which doesn't exist (the real field is `args.ChatType` -- confirmed against Gibberish3, LootLogs,
 and CombatAnalysis, all three of which use it identically). `nil ~= Turbine.ChatType.X` is always
 true, so every chat line was silently discarded before ever reaching the parser: plugin loaded
-fine, UI drew fine, `/reck dump` after a real fight reported "no session data yet". Fixed, plus
+fine, UI drew fine, `/redbook dump` after a real fight reported "no session data yet". Fixed, plus
 added the `args.Message == nil` guard those same three plugins all have before touching the text.
 **Lesson for next time**: anywhere this codebase reads a field off a Turbine-supplied event
 object (`args.*`) without a same-directory precedent already confirmed working (mouse events were
@@ -720,7 +767,7 @@ this codebase constructed itself.
 
 **The predicted third bug did show up, and it was exactly that shape.** With both bugs above
 fixed, regular damage/heal tracking worked correctly in-game (confirmed with real accumulated
-numbers), but the death window never appeared -- even though `/reck testdeath` (which calls
+numbers), but the death window never appeared -- even though `/redbook testdeath` (which calls
 `DeathCause:Show()` directly, bypassing detection) proved the window itself was fine. The user
 captured a real combat log to a file and shared it; `Trigger.ParseCombatChat("The Utûgi Destroyer
 incapacitated you.")` parsed correctly and `Sessions.OnSelfDefeat` fired correctly when tested
@@ -742,7 +789,7 @@ combine multiple channel types into one tab, so "it appeared in the Enemy tab" d
 
 ## Load order
 
-`Reckoning.plugin` names `Reckoning.Main` as the package entry point. `Main.lua` imports drive
+`RedBook.plugin` names `RedBook.Main` as the package entry point. `Main.lua` imports drive
 everything else:
 
 ```
@@ -753,22 +800,22 @@ Main.lua  ->  Constants.lua  ->  (Trigger = {} declared)  ->  Parse/en.lua  ->  
 ```
 
 `Utils/Class.lua` / `Utils/Type.lua` are vendored unchanged from `VitalSelf` (renamed package
-paths only, `VitalSelf.Utils.*` -> `Reckoning.Utils.*`) -- the shared Turbine OOP shim
+paths only, `VitalSelf.Utils.*` -> `RedBook.Utils.*`) -- the shared Turbine OOP shim
 (`class()`, `static_class()`, `abstract_class()`, `final_class()`, metatable single
-inheritance + mixins). Treat them as vendored, not Reckoning-specific.
+inheritance + mixins). Treat them as vendored, not RedBook-specific.
 
 ## Architecture
 
 | File | Role |
 |---|---|
-| `Main.lua` | Import order, `_G.lp` / `LocalPlayer` globals, settings load, `/reck` shell command, `plugin.Unload`. |
+| `Main.lua` | Import order, `_G.lp` / `LocalPlayer` globals, settings load, the `/redbook` (alias `/rb`) shell command, `plugin.Unload`. |
 | `Constants.lua` | `L` (localisation), `EventCode` / `AvoidType` / `CritType` / `DamageType` enums mirroring the parser's return codes, `Font` table (only the faces/sizes the design actually uses), `Theme` palette + `Theme.Color(hex)`, `Format` (`Number`/`Percent`/`Rate`/`Clock`, plus `CharCount`/`Truncate` -- UTF-8-safe, shared by the analysis window's picker chips and `ChatPost`'s line cap), `Icon.Size`/`Icon.Apply` (setting a numeric effect-icon id as a Control's background, modelled on Gibberish3's `IconElement` -- see "Build status" below). |
-| `Settings.lua` | `Settings.Load()` / `Settings.Save()` / `Settings.FixColors()` via `Turbine.PluginData`, `DEFAULTS` as single source of truth, `COLOR_KEYS` for colour rebuild. |
+| `Settings.lua` | `Settings.Load()` / `Settings.Save()` / `Settings.FixColors()` via `Turbine.PluginData`, `DEFAULTS` as single source of truth, `COLOR_KEYS` for colour rebuild. `LEGACY_DATA_KEY` / `LEGACY_PRESETS` carry a pre-v0.6.0 save across the Reckoning -> RedBook rename. |
 | `Parse/en.lua` | `Trigger.ParseCombatChat` -- ported **verbatim** from `souruko/Gibberish3` (`UTILS/COMBATCHATPARSE/en.lua`). Do not rewrite it; `de.lua` / `fr.lua` are later drop-ins with the same signature. |
 | `Session.lua` | The `Session` class -- one fight's aggregate (`agg.done/taken/healOut/healIn`, `buckets`, `lastTaken` ring). One `Add*`/`On*` method per event kind: `AddDone`, `AddTaken`, `AddHealOut`, `AddHealIn`, `AddTempMoraleLoss`, `OnDefeat`, `OnRevive`. Each `buckets[second]` entry also carries a `<field>ByWho[counterpartName] = amount` table alongside its pooled scalar (`done`/`taken`/`healOut`/`healIn`) -- added so the analysis window's graph can respect the target/source picker; the pooled scalar is always exactly the sum of its own `ByWho` table (`AddToBucket()` updates both together, in one place, so they can't drift apart). Verified offline (a synthetic multi-target fight, checked the per-target and pooled sums against hand-computed expectations). |
 | `Sessions.lua` | The manager singleton (not a class): `Sessions.current` / `Sessions.list` (a ring of `settings.sessionsKept` -- 10/25/50 -- pinned exempt) / `Sessions.selected`; opens a `Session` lazily on the first own **combat** event, closes it after `settings.idleTimeout` seconds of combat silence via `Sessions.Tick()`, discards anything whose *combat* span is under `settings.minFightLength`. With `settings.mergeFights` off it instead closes as soon as the client's combat flag drops (with a 1s floor -- `UNMERGED_FLOOR` -- because damage opens a session before the flag has come up). `Sessions.CheckZone`/`DropUnpinned`/`ClearAll`/`SelectFallback` back `settings.dropOnZoneChange` and the options window's **Clear data**. `Sessions.OnClosed` / `Sessions.OnSelfDefeat` are the callback lists Phase 3/4 UI hooks into. **A session starts and ends with combat, not with any parsed event** -- see the heal-gating note in Build status. |
 | `Events.lua` | Wraps `Turbine.Chat.Received` (chaining to whatever was already registered), strips `<rgb=#......>` tags and trims before calling `Trigger.ParseCombatChat`, dispatches into `Sessions.*`. Also hosts the heartbeat (`Events.heartbeat`, a bare `Turbine.UI.Window` with `SetWantsUpdates(true)`) that drives `Sessions.Tick()`, since session-close-on-silence has to run even when chat is quiet. `Events.Shutdown()` restores the previous `Turbine.Chat.Received` and stops the heartbeat -- called from `plugin.Unload`. The heartbeat also calls `analysis:SyncPostOverlay(false)`: the post button's quickslot overlay is a separate top-level Window that does not follow the analysis window's visibility, which is toggled from at least four places. It only re-*positions* -- it must never call `Activate`, which takes chat focus. |
-| `Buffs.lua` | Self-**effect** uptime tracking -- **every** effect on the local player, benefit or not (the `IsDebuff` filter this file used to apply was dropped per direct user request: debuffs/DoTs on you are exactly what's worth reading next to a damage-taken graph). **`IsDebuff` is still read, but as a LABEL, not a filter**: `Buffs.Kinds[name]` caches `Buffs.Kind.Buff`/`.Debuff`/`.Unknown` at first sighting (re-probed as long as it reads Unknown, so a client that only answers once an effect is fully applied still gets a real label later), `Buffs.Stats` rows carry it as `row.kind`, and the analysis window renders it as the buff table's TYPE column. Three states, not a boolean, because `Effect:IsDebuff` is still not confirmed to exist here -- a missing or throwing method must read as Unknown (which is true) rather than silently labelling everything a buff (which would not be); the probe is `pcall`'d per effect rather than leaning on `Read`'s outer one, so a throw costs one label instead of abandoning the enumeration mid-walk. The module, its `session.buffs` field, `chartedBuffs`/`buffIgnore` and the `/reck buffs` command all keep the "buff" name -- read it as "tracked effect"; only the analysis window's user-facing label changed (SELF BUFFS -> SELF EFFECTS). The one remaining filter is the ignore list, which is the player's: `Buffs.Ignore` holds unverified best-guess defaults (mounts, travel), and `_G.settings.buffIgnore[name]` overrides them in **both** directions -- `true` ignores, `false` un-ignores a default, so `/reck buffs unignore Riding` actually works. Polls `_G.lp:GetEffects()` at 4Hz from Events.lua's heartbeat (**not** the live meter's Update, as the spec suggested -- that meter can be switched off and uptime must keep recording either way), opening/closing an interval per effect name on `session.buffs[name] = { intervals, apps }`. `Buffs.Stats(session, fromSec, toSec)` clips every interval to a range and returns uptime / uptime% / apps / longest gap, sorted. Data source is the live effect list, **not** parser event 17 -- event 17 carries no duration and no fade, so uptime from it would be a guess. Everything here is defensive (one pcall around the whole enumeration; a failed read is a no-op, never "everything faded"; the 0-vs-1-based index base of `EffectList:Get` is **detected**, by probing index 0, not assumed) because nothing in this codebase has touched `Turbine.Gameplay.EffectList` before -- see the three "guessed the shape of a Turbine object" bugs in Build status. |
+| `Buffs.lua` | Self-**effect** uptime tracking -- **every** effect on the local player, benefit or not (the `IsDebuff` filter this file used to apply was dropped per direct user request: debuffs/DoTs on you are exactly what's worth reading next to a damage-taken graph). **`IsDebuff` is still read, but as a LABEL, not a filter**: `Buffs.Kinds[name]` caches `Buffs.Kind.Buff`/`.Debuff`/`.Unknown` at first sighting (re-probed as long as it reads Unknown, so a client that only answers once an effect is fully applied still gets a real label later), `Buffs.Stats` rows carry it as `row.kind`, and the analysis window renders it as the buff table's TYPE column. Three states, not a boolean, because `Effect:IsDebuff` is still not confirmed to exist here -- a missing or throwing method must read as Unknown (which is true) rather than silently labelling everything a buff (which would not be); the probe is `pcall`'d per effect rather than leaning on `Read`'s outer one, so a throw costs one label instead of abandoning the enumeration mid-walk. The module, its `session.buffs` field, `chartedBuffs`/`buffIgnore` and the `/redbook buffs` command all keep the "buff" name -- read it as "tracked effect"; only the analysis window's user-facing label changed (SELF BUFFS -> SELF EFFECTS). The one remaining filter is the ignore list, which is the player's: `Buffs.Ignore` holds unverified best-guess defaults (mounts, travel), and `_G.settings.buffIgnore[name]` overrides them in **both** directions -- `true` ignores, `false` un-ignores a default, so `/redbook buffs unignore Riding` actually works. Polls `_G.lp:GetEffects()` at 4Hz from Events.lua's heartbeat (**not** the live meter's Update, as the spec suggested -- that meter can be switched off and uptime must keep recording either way), opening/closing an interval per effect name on `session.buffs[name] = { intervals, apps }`. `Buffs.Stats(session, fromSec, toSec)` clips every interval to a range and returns uptime / uptime% / apps / longest gap, sorted. Data source is the live effect list, **not** parser event 17 -- event 17 carries no duration and no fade, so uptime from it would be a guess. Everything here is defensive (one pcall around the whole enumeration; a failed read is a no-op, never "everything faded"; the 0-vs-1-based index base of `EffectList:Get` is **detected**, by probing index 0, not assumed) because nothing in this codebase has touched `Turbine.Gameplay.EffectList` before -- see the three "guessed the shape of a Turbine object" bugs in Build status. |
 | `Utils/Class.lua`, `Utils/Type.lua` | Vendored OOP shim, see above. |
 
 | `UI/Frame.lua` | `Frame` (extends `Turbine.UI.Window`) -- shared chrome every window subclasses: background + 1px border Controls, header with `TrajanPro13` title + close glyph, manual drag on the header, position persisted to `_G.settings.windows[key]`. The header drag fires an optional `frame.OnMoved` hook on every `MouseMove`, for subclasses owning a control positioned in **screen** coordinates (the analysis window's post-button overlay, its own top-level Window) -- deferring that to `MouseUp` would strand it for the whole drag. `Frame` knows nothing about what the hook does. |
@@ -776,12 +823,12 @@ inheritance + mixins). Treat them as vendored, not Reckoning-specific.
 | `UI/Row.lua` | `Row` -- a fixed-column-offset row of Labels for tables; pooled and reused across refreshes, never rebuilt per redraw. |
 | `UI/RangeSlider.lua` | `RangeSlider` -- the two-handle time-range control under the plot. Snaps to the graph's 48 bucket stops, not to pixels, so the numbers in the window and the marks on the plot agree exactly and only 48 distinct ranges per endpoint can ever be asked for. Drag uses the same MouseDown/MouseMove/MouseUp shape as `Frame:WireDrag` and the resize gripper -- confirmed-working precedent, no new assumption about mouse delivery. Handles clamp to `other handle -/+ 1`; a zero-width range would divide by zero everywhere downstream. |
 
-`UI/__init__.lua` imports Frame/Bar/Row in that order; `Main.lua` does `import "Reckoning.UI"`
+`UI/__init__.lua` imports Frame/Bar/Row in that order; `Main.lua` does `import "RedBook.UI"`
 once. **Cross-directory class visibility**: a bare `X = class(...)` assigned inside `UI/*.lua`
 is only visible to *other files in `UI/`* (same-directory sibling access, confirmed against
 `VitalSelf/UI/Vital.lua`, which is referenced from root-level `Main.lua` as `UI.Vital()`, not
 bare `Vital()`). Root-level files (`Main.lua`, `Constants.lua`, `Session.lua`, `Sessions.lua`,
-`Settings.lua`, `Events.lua` -- anything directly in `Reckoning/`) behave differently: a bare
+`Settings.lua`, `Events.lua` -- anything directly in `RedBook/`) behave differently: a bare
 global assigned there (`Trigger`, `L`, `EventCode`, `Theme`, `Font`, `Session`, `Sessions`, ...)
 *is* visible everywhere, because the root package's own environment is `_G` itself. So: Phase
 3-5 window classes (`LiveMeter`, `DeathCause`, `Analysis`) go in `UI/`, get instantiated from
@@ -817,8 +864,8 @@ turns out to be) in-game first, on a low-stakes control, before relying on it an
 
 | `UI/Options.lua` | `Options` (extends `Turbine.UI.ListBox`) -- the **Plugin Manager stub**, returned via `plugin.GetOptionsPanel`. Every real setting moved to `UI/OptionsWindow.lua`; this is one title, one line of text and an **Open options** button. The old panel is gone rather than kept in parallel, because two surfaces editing the same keys would reintroduce the exact problem the options window exists to remove (it had two commit models in one place -- checkboxes saved on change, the numeric box only on Accept). `Options:Refresh()` survives as a no-op so older callers stay valid. |
 | `UI/Controls.lua` | `Slider` (single-handle) and `Segment` (a strip of shared-edge cells), the two controls the options window needed that this codebase did not already have. `Slider`'s drag is `RangeSlider`'s idiom verbatim, including the rule the resize-gripper bug established: a handler reading `args.X` off the dragged control must move that control inside the same `MouseMove`. `OnChange` fires per value, `OnCommit` once on release -- callers save in `OnCommit` only. `Segment`'s cell width tries `Label:GetWidth()` and falls back to a `Format.CharCount(text) * 7 + 20` estimate if it reads implausibly small; nothing in this codebase had ever relied on text measurement (see `ChipWidth` in `UI/Analysis.lua`), so both paths are live and the wider one wins. |
-| `UI/OptionsPage.lua` | `OptionsPage` (extends `Turbine.UI.Control`) -- a y-cursor container so the seven pages read as declarative lists instead of 400 lines of `SetPosition`. `Section`/`Note`/`Check`/`Slider`/`Segment`/`Button`/`ButtonRow`, each returning its control, appending a 1px `RowBorder` rule and advancing the cursor. Every `Add*` registers a **refresher** (`OnRefresh`) that re-reads its own key -- `Refresh()` runs them all, which is what makes Defaults and `/reck reset` land on a page that was built minutes ago. `OptionsPage.Width` (402) is the pane's 412 less a 10px scrollbar gutter. A page can nest another `OptionsPage` inside itself (the Self buffs page does, so the ignore section's cursor need not know where the fixed-height picker above it ended). |
-| `UI/OptionsWindow.lua` | `OptionsWindow` (extends `Frame`, `key = "options"`, 560x452) -- window 4, `/reck options`. Rail (7 rows) + one reused `ListBox` pane + footer. `BUILDERS[pageKey]` builds a page lazily on first open and caches it; `page.Repaint()` (optional) re-reads anything that comes from live data rather than from `_G.settings` -- the saved-geometry readouts and the buff picker -- every time the page is shown. `OptionsWindow.ApplyAll()` is the single place that pushes settings into all four windows, guarded so a handler firing during load cannot reach a window that does not exist yet. `Update()` exists only to disarm the Sessions page's two-step **Clear data** button. |
+| `UI/OptionsPage.lua` | `OptionsPage` (extends `Turbine.UI.Control`) -- a y-cursor container so the seven pages read as declarative lists instead of 400 lines of `SetPosition`. `Section`/`Note`/`Check`/`Slider`/`Segment`/`Button`/`ButtonRow`, each returning its control, appending a 1px `RowBorder` rule and advancing the cursor. Every `Add*` registers a **refresher** (`OnRefresh`) that re-reads its own key -- `Refresh()` runs them all, which is what makes Defaults and `/redbook reset` land on a page that was built minutes ago. `OptionsPage.Width` (402) is the pane's 412 less a 10px scrollbar gutter. A page can nest another `OptionsPage` inside itself (the Self buffs page does, so the ignore section's cursor need not know where the fixed-height picker above it ended). |
+| `UI/OptionsWindow.lua` | `OptionsWindow` (extends `Frame`, `key = "options"`, 560x452) -- window 4, `/redbook options`. Rail (7 rows) + one reused `ListBox` pane + footer. `BUILDERS[pageKey]` builds a page lazily on first open and caches it; `page.Repaint()` (optional) re-reads anything that comes from live data rather than from `_G.settings` -- the saved-geometry readouts and the buff picker -- every time the page is shown. `OptionsWindow.ApplyAll()` is the single place that pushes settings into all four windows, guarded so a handler firing during load cannot reach a window that does not exist yet. `Update()` exists only to disarm the Sessions page's two-step **Clear data** button. |
 | `ChatPost.lua` | Turns a `Session` into a chat post. One output shape: **`BuildLine`** returns a single string within `MAX_MESSAGE`, optionally coloured -- the summary preset is a fixed shape (fight, range, view label, total, rate, hits, crit%, largest hit + its skill, DIED) with **no** per-skill list, and the death preset is the killing blow plus as many of `lastTaken` as the budget allows. `Alias(channelKey, line)` wraps it in the channel's slash verb. Pure string building, no `Turbine.UI`, so `tools/offline/chatpost_test.lua` exercises every branch. Root level (not `UI/`) because both `Main.lua` and `UI/PostButton.lua` need it. **ASCII only in post text** -- separators are `" - "`/`" | "`, never an em dash or middle dot: everywhere else a questionable glyph only has to survive *our* client's fonts (and this codebase has been caught twice already), but a post renders on other players' clients. Every interpolated name goes through `Clean()` (strips `[\r\n]+` and `<>`) -- a newline in a mob name would forge an extra chat line, since the whole post is one alias the client splits on `\n`. Lines are built as `{ text, hex }` segment lists so `Render()` can measure the *plain* length for the 240-char cap while emitting the tinted form, and coalesce adjacent same-colour runs into one tag pair. |
 | `UI/PostButton.lua` | `PostButton` (extends `Turbine.UI.Control`) -- the post control pair in the analysis window's header. `PostButton` itself is the themed **POST** button, with an invisible `Turbine.UI.Lotro.Quickslot` floating over it inside its own 0x0 opacity-0 top-level Window (`self.overlay`) -- that quickslot is what actually fires the post. `self.channel` beside it is a plain `Control` naming the destination (`SAY`/`FELL`/`RAID`/`KIN`) whose `MouseClick` opens the channel/preset `ContextMenu`. `Place(x, y)` positions all three (deliberately not an override of the native `SetPosition`); `SyncOverlay(force)` keeps the overlay on the button in **screen** coordinates; `Raise()` puts it back above the window after anything activates it. `PostButton.Width` is what `Analysis:LayoutHeaderExtras` reserves. See the note below -- every part of this shape is there because a simpler-looking one failed in-game. |
 
@@ -830,7 +877,7 @@ chat-send API in Turbine: `Turbine.Shell.WriteLine` prints only to your own wind
 holding a `Shortcut(ShortcutType.Alias, "/f <text>")` that the user clicks. `Arebel` explicitly
 tried firing one programmatically (`slot:Use()` / `:Execute()` / `:DoClick()`,
 `ParseGraph/Main.lua:7403-7428`); none of those methods exist and it falls back to telling the user
-to click. So: **no auto-post on combat end**, and `/reck post` can only ever print a local preview.
+to click. So: **no auto-post on combat end**, and `/redbook post` can only ever print a local preview.
 The alias is also a **static string**, so it must be rebuilt whenever view/filter/range/session/
 channel/preset changes -- `RefreshContent` is the single funnel all of those already pass through
 (CombatAnalysis calls its equivalent from six scattered sites for want of one).
@@ -876,7 +923,7 @@ sibling plugin's code over what this client actually does. All of them are worth
    re-activates from a **per-frame `Update()`** -- that was a misread. `StatOverviewWindow:Update`
    is gated on `not self:GetWantsUpdates()` and `WantsUpdates` is only ever true during the
    minimize/maximize animation, so that body runs on the animation's last frame, not every frame.)
-   Reckoning now gets the same funnel without 60 forwarding calls by hooking the window's real
+   RedBook now gets the same funnel without 60 forwarding calls by hooking the window's real
    **`Activated`** event (`Analysis:BuildPostButton`), which fires however the window came to the
    front, including a client-initiated raise from a click on a child -- a confirmed-real Window
    event (`Thurallor/Common/Utils/Utils_13.lua:657` hooks it for exactly this meaning, alongside
@@ -905,7 +952,7 @@ comment calling its approach a "hack" as a reason to look for a second precedent
 copy it.
 
 **Still not confirmed in-game**: that `Turbine.UI.ContextMenu`/`MenuItem` behave as
-CombatAnalysis's use implies -- nothing else in Reckoning had touched them. `tools/offline/stub.lua`'s
+CombatAnalysis's use implies -- nothing else in RedBook had touched them. `tools/offline/stub.lua`'s
 `SetOpacity` guard was narrowed from "never call it" to "never call it on a Control that has a
 `BackColor`", which is what the original lesson actually established. Offline-verified: the builder
 in full (`chatpost_test.lua` -- single-line, within the cap, balanced 6-digit tags, colour
@@ -913,10 +960,10 @@ stripping back to exactly the plain line, and the newline/angle-bracket injectio
 overlay tracking the window through drag, resize, show/hide, re-raise and shutdown
 (`analysis_test.lua` section 18).
 
-`/reck options` (alias `/reck config`),
-`/reck show|hide [live\|death\|analysis\|options]`, `/reck move <live\|death\|analysis\|options>`,
-`/reck testdeath`, `/reck reset`, `/reck post`,
-`/reck buffs [list|ignore <name>|unignore <name>]` are in
+`/redbook options` (alias `/redbook config`),
+`/redbook show|hide [live\|death\|analysis\|options]`, `/redbook move <live\|death\|analysis\|options>`,
+`/redbook testdeath`, `/redbook reset`, `/redbook post`,
+`/redbook buffs [list|ignore <name>|unignore <name>]` are in
 `Main.lua`. `options` toggles the settings window (window 4) -- the same thing the Plugin Manager
 stub's button does. `buffs` re-parses its arguments from the **raw** command string, not the lower-cased
 single-token parse the other subcommands use -- buff names are case-sensitive and contain spaces. `show`/`hide` for `live`/`death` only flip
@@ -942,7 +989,7 @@ also the fallback if the quickslot mechanism turns out to misbehave in-game.
 `_G.settings.windows` directly to `DEFAULTS.windows` (the same table object, since `windows = {}`
 in `DEFAULTS` is itself just a table value like any other and the merge did `_G.settings[key] =
 value`). Every window drag or resize was therefore also silently mutating `DEFAULTS.windows`,
-which `Settings.ResetToDefaults()` (added for `/reck reset`) would then have copied right back
+which `Settings.ResetToDefaults()` (added for `/redbook reset`) would then have copied right back
 out -- reset would have restored whatever the *current* window positions already were, not the
 real defaults. Fixed by giving any table-valued default a fresh `{}` on merge instead of the
 `DEFAULTS` table itself. Worth remembering if a future setting is table-shaped: table defaults
@@ -964,7 +1011,7 @@ need this same fresh-copy treatment, not a bare reference.
   than declaring its own global. Mirrors Gibberish3's `Variables.lua`.
 - `L` -- localisation table. `L.DirectDamage` is the fallback skill name for a hit with no
   named skill. **Gibberish3 itself never defines this key** (verified against the live
-  Gibberish3 install: dead in the source `Parse/en.lua` was ported from) -- Reckoning defines
+  Gibberish3 install: dead in the source `Parse/en.lua` was ported from) -- RedBook defines
   it directly in `Constants.lua` instead of leaving `skillName` nil.
 
 ## The parser and its wiring
@@ -989,7 +1036,11 @@ that are not written down in the design bundle and are easy to miss, both applie
 ## Persistence
 
 Follow the `VitalSelf` pattern: `Turbine.PluginData.Save(Turbine.DataScope.Character,
-"Reckoning", _G.settings)`, done in `Settings.Save()`.
+"RedBook", _G.settings)`, done in `Settings.Save()`.
+
+- **The data key is the plugin's name, and the plugin has been renamed once.** `Settings.Load()`
+  reads `"RedBook"` and falls back to `"Reckoning"` for a save written before v0.6.0 -- see "The
+  rename" above for why that fallback is one-way and why the old blob is left behind.
 
 - `Turbine.UI.Color` does **not** survive serialization -- it returns as a plain `{R,G,B}`
   table. `Settings.FixColors()` rebuilds every key listed in `COLOR_KEYS` on load. That list is
@@ -1054,11 +1105,11 @@ checks against the real classes and the real `Main.lua`. It is not a substitute 
 plugin -- it cannot tell you whether anything actually *draws* -- but everything it catches is a
 reload you don't have to spend.
 
-Beyond that: `/reck dump` (in `Main.lua`) prints the current or most
+Beyond that: `/redbook dump` (in `Main.lua`) prints the current or most
 recent session's totals to chat -- the in-game way to re-check the event pipeline against
 `reference/Combat_20260819_1.txt` / `reference/Enemy_20260819_1.txt` (read the two logs by eye
 and compare). See "Build status" above for how Phase 1 was checked offline before any in-game
-load existed to run `/reck dump` against.
+load existed to run `/redbook dump` against.
 
 `reference/Enemy_20260819_2.txt` is a real user-captured log added specifically because it
 contains the local player being defeated and reviving four separate times ("The X incapacitated

@@ -8,13 +8,13 @@
 -- The stub asserts on non-numeric or negative SetSize/SetPosition arguments, and records
 -- position/size/visibility/colour per instance, so a probe can check real layout arithmetic.
 
-local ROOT = os.getenv("RECK_ROOT") or "/home/user/Reckoning"
+local ROOT = os.getenv("REDBOOK_ROOT") or "/home/user/RedBook"
 
 local loaded = {}
 _G.import = function(path)
 	if loaded[path] then return end
 	loaded[path] = true
-	local rel = path:gsub("^Reckoning%.", ""):gsub("%.", "/")
+	local rel = path:gsub("^RedBook%.", ""):gsub("%.", "/")
 	local file = ROOT .. "/" .. rel .. ".lua"
 	local f = io.open(file, "r")
 	if f == nil then
@@ -29,8 +29,8 @@ end
 _G.plugin = {}
 
 -- The OOP shim has to exist before any Turbine class is declared with it.
-import "Reckoning.Utils.Type"
-import "Reckoning.Utils.Class"
+import "RedBook.Utils.Type"
+import "RedBook.Utils.Class"
 
 ------------------------------------------------------------------ Turbine.UI.Control
 local Control = class()
@@ -206,10 +206,24 @@ Turbine = {
 	},
 	Shell = {
 		WriteLine = function(...) print(...) end,
-		AddCommand = function() end, RemoveCommand = function() end,
+		-- Records the names a plugin registers under, so a harness can assert them. Main.lua
+		-- registers the same command object twice (full name + short alias); the removal side
+		-- counts calls for the same reason.
+		Commands = {}, Removed = 0,
+		AddCommand = function(name, cmd)
+			table.insert(Turbine.Shell.Commands, { name = name, command = cmd })
+		end,
+		RemoveCommand = function() Turbine.Shell.Removed = Turbine.Shell.Removed + 1 end,
 	},
 	ShellCommand = function() return {} end,
-	PluginData = { Load = function() return nil end, Save = function() end },
+	-- A real key/value store rather than a Load that always returns nil, so a harness can plant a
+	-- save under one key and check which key the plugin actually reads. Load still returns nil for
+	-- a key nothing was saved under, which is what every existing harness relies on.
+	PluginData = {
+		Store = {},
+		Load = function(_, key) return Turbine.PluginData.Store[key] end,
+		Save = function(_, key, value) Turbine.PluginData.Store[key] = value end,
+	},
 	DataScope = { Character = 1 },
 	Gameplay = {},
 }

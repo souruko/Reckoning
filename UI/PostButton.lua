@@ -36,7 +36,7 @@
 -- of the minimize animation -- the body is gated on `not self:GetWantsUpdates()`. There is no
 -- per-frame Activate; an earlier comment here said there was, and that was misread.)
 --
--- Reckoning gets the same funnel without 60 forwarding calls, by hooking the window's real
+-- RedBook gets the same funnel without 60 forwarding calls, by hooking the window's real
 -- `Activated` event instead: it fires however the window came to the front, including a client-
 -- initiated raise from a click on a child. That is a confirmed-real Window event (Thurallor's
 -- Common/Utils/Utils_13.lua:657 hooks it for exactly this "the window just became active"
@@ -57,7 +57,7 @@
 -- is nearly always the fix -- not a timer.
 --
 -- NOT YET CONFIRMED IN-GAME: that Turbine.UI.ContextMenu / MenuItem behave as CombatAnalysis's
--- use implies (StatOverviewChatMenu.lua) -- nothing else in Reckoning had touched them.
+-- use implies (StatOverviewChatMenu.lua) -- nothing else in RedBook had touched them.
 --=================================================================================================
 
 PostButton = class(Turbine.UI.Control)

@@ -8,12 +8,12 @@
 -- never a hand-rolled dispatch: that shortcut is exactly what hid three bugs before.
 local env = dofile("stub.lua")
 
-import "Reckoning.Utils.Type"
-import "Reckoning.Utils.Class"
-import "Reckoning.Constants"
+import "RedBook.Utils.Type"
+import "RedBook.Utils.Class"
+import "RedBook.Constants"
 Trigger = {}
-import "Reckoning.Parse.en"
-import "Reckoning.Settings"
+import "RedBook.Parse.en"
+import "RedBook.Settings"
 
 -- The one stub value this whole file is about: Sessions.lua reads it (pcall'd) on every heartbeat
 -- tick, and heals are gated on the result.
@@ -32,9 +32,9 @@ LocalPlayer.name = LocalPlayer:GetName()
 
 Settings.Load()
 
-import "Reckoning.Session"
-import "Reckoning.Sessions"
-import "Reckoning.Events"
+import "RedBook.Session"
+import "RedBook.Sessions"
+import "RedBook.Events"
 
 local fails = 0
 local function check(label, ok, detail)

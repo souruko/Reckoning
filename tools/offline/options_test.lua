@@ -5,8 +5,8 @@
 -- calling a refresh, which is the shortcut that hid three bugs in this codebase before.
 local env = dofile("stub.lua"); local ROOT = env.ROOT
 
-import "Reckoning.Constants"
-Trigger = {}; import "Reckoning.Parse.en"; import "Reckoning.Settings"
+import "RedBook.Constants"
+Trigger = {}; import "RedBook.Parse.en"; import "RedBook.Settings"
 
 local morale = 500000
 local effectList = {}
@@ -30,8 +30,8 @@ effectList = { MakeEffect("Writ of Health", 0x41000001), MakeEffect("Bracing Gua
                MakeEffect("Fury of Battle", 0x41000002), MakeEffect("Warrior's Heart", nil) }
 
 Settings.Load()
-import "Reckoning.Session"; import "Reckoning.Sessions"; import "Reckoning.Buffs"
-import "Reckoning.Events"; import "Reckoning.ChatPost"; import "Reckoning.UI"
+import "RedBook.Session"; import "RedBook.Sessions"; import "RedBook.Buffs"
+import "RedBook.Events"; import "RedBook.ChatPost"; import "RedBook.UI"
 
 local fails = 0
 local function check(label, ok, detail)
@@ -397,13 +397,13 @@ print("== 8. palette presets reach every series ==")
 Click(w.railRows.palette.row)
 local palette = w.pages.palette
 check("palette lists every preset in Theme.PresetOrder order",
-  #Theme.PresetOrder == 4 and Theme.PresetOrder[1] == "Reckoning")
+  #Theme.PresetOrder == 4 and Theme.PresetOrder[1] == "RedBook")
 check("the default preset is byte-identical to the Theme.Hex series tokens",
-  Theme.Presets["Reckoning"].done == Theme.Hex.DamageDone
-  and Theme.Presets["Reckoning"].taken == Theme.Hex.DamageTaken
-  and Theme.Presets["Reckoning"].healOut == Theme.Hex.HealingDone
-  and Theme.Presets["Reckoning"].healIn == Theme.Hex.HealingTaken
-  and Theme.Presets["Reckoning"].morale == Theme.Hex.Morale)
+  Theme.Presets["RedBook"].done == Theme.Hex.DamageDone
+  and Theme.Presets["RedBook"].taken == Theme.Hex.DamageTaken
+  and Theme.Presets["RedBook"].healOut == Theme.Hex.HealingDone
+  and Theme.Presets["RedBook"].healIn == Theme.Hex.HealingTaken
+  and Theme.Presets["RedBook"].morale == Theme.Hex.Morale)
 
 -- The swatch rows are direct children of the page; the clickable ones are the mouse-visible
 -- Controls 30px tall.
@@ -817,7 +817,7 @@ end)())
 check("an unknown palette preset falls back rather than yielding a nil colour", (function()
   _G.settings.palettePreset = "Chartreuse"
   Settings.Clamp()
-  return _G.settings.palettePreset == "Reckoning" and Theme.Series("done") ~= nil
+  return _G.settings.palettePreset == "RedBook" and Theme.Series("done") ~= nil
 end)())
 
 ---------------------------------------------------------------------------------------------------
