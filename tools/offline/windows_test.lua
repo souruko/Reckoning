@@ -297,8 +297,8 @@ check("a temp-morale-only ring marks nothing and does not crash",
   not d.rows[1].tint:IsVisible() and d.rows[1].maxTag:GetText() == "")
 
 ------------------------------------------------------------------ rotation probe (/reck probe)
--- The probe window is a diagnostic, but it is still real UI construction, and the shipping
--- polyline arithmetic lives in it -- so it gets the same treatment as everything else here.
+-- The probe window is a diagnostic, but it is still real UI construction, so it gets the same
+-- treatment as everything else here.
 --
 -- The load-bearing check is the last one: the stub CLEARS a control's rotation on SetSize and
 -- SetBackground, exactly as the real engine does (Gibberish3's own comment), so a subject that
@@ -309,55 +309,18 @@ Turbine.Shell.WriteLine = function(text) said[#said + 1] = text end
 
 local probe = RotationProbe()
 
-check("probe: window is 480x546", probe:GetWidth() == 480 and probe:GetHeight() == 546,
+check("probe: window is 480x462", probe:GetWidth() == 480 and probe:GetHeight() == 462,
   probe:GetWidth() .. "x" .. probe:GetHeight())
-check("probe: the 2x2 built all four control/paint combinations",
-  probe.matrix[1].bar ~= nil and probe.matrix[2].bar ~= nil
-  and probe.matrix[3].bar ~= nil and probe.matrix[4].bar ~= nil)
-check("probe: the matrix squares are rotated 45",
-  math.abs(probe.matrix[1].bar:GetRotation().z - 45) < 1e-9,
-  tostring(probe.matrix[1].bar:GetRotation().z))
-check("probe: the angle cells built 90 / ancestry / four arbitrary / two thin bars",
-  #probe.angleBars == 8, #probe.angleBars .. " subjects")
+check("probe: all eight cells built", #probe.cells == 8, #probe.cells .. " cells")
+check("probe: no subject was refused", probe.refused == nil, tostring(probe.refused))
+check("probe: five rotated subjects (C, D, E, F, G -- A, B and H are not rotated)",
+  #probe.subjects == 5, #probe.subjects .. " rotated")
+check("probe: reports its API status in the window, not only to chat",
+  string.find(probe.statusLine:GetText(), "SetRotation") ~= nil, probe.statusLine:GetText())
 check("probe: prints a key to chat", #said >= 8, #said .. " lines")
 
-local set = probe.sets[probe.activeSet]
-check("probe: default flavour is Gibberish3's own (window + sprite)",
-  probe.activeSet == "window:sprite", probe.activeSet)
-
--- Reconstruct every polyline segment from what was actually handed to the engine -- position,
--- size and angle -- and check it lands back on the two data points it is supposed to join.
-local worst = 0
-for i = 1, #set.linePoints - 1 do
-  local bar = set.lineBars[i]
-  if bar ~= nil then
-    local px, py = bar:GetPosition()
-    local w, h = bar:GetSize()
-    local rot = bar:GetRotation()
-    local len = w - h                          -- PlaceSegment sizes to len + stroke
-    local rad = math.rad(rot.z)
-    local cx, cy = px + w / 2, py + h / 2
-    local ax, ay = cx - len / 2 * math.cos(rad), cy - len / 2 * math.sin(rad)
-    local bx, by = cx + len / 2 * math.cos(rad), cy + len / 2 * math.sin(rad)
-    local p0, p1 = set.linePoints[i], set.linePoints[i + 1]
-    worst = math.max(worst,
-      math.abs(ax - p0.x), math.abs(ay - p0.y), math.abs(bx - p1.x), math.abs(by - p1.y))
-  end
-end
-check("probe: every segment reconstructs onto its two data points", worst <= 1.5,
-  string.format("worst error %.2fpx", worst))
-
--- Switching flavour must hide the old set rather than leave two drawn on top of each other,
--- and must not build a second copy of a set it already has.
-probe:ShowFlavour("control", "plain")
-check("probe: flavour swap hides the previous set",
-  not set.bars[1]:IsVisible() and probe.activeSet == "control:plain")
-probe:ShowFlavour("window", "sprite")
-check("probe: returning to a built flavour reuses it", set.bars[1]:IsVisible()
-  and probe.sets["window:sprite"] == set)
-
--- Every subject's ROTATED extent must stay inside the control it was placed in, or a future
--- retune of an angle, a length or a lane silently overlaps its neighbours.
+-- Every subject's ROTATED extent must stay inside the cell it sits in, or a future retune of a
+-- length or an angle silently overlaps a neighbour or leaves the window.
 local function Extents(bar)
   local px, py = bar:GetPosition()
   local w, h = bar:GetSize()
@@ -367,7 +330,7 @@ local function Extents(bar)
 end
 
 local spilled = {}
-local function CheckContained(bar)
+for _, bar in ipairs(probe.subjects) do
   local cx, cy, halfW, halfH = Extents(bar)
   local pw, ph = bar:GetParent():GetSize()
   if cx - halfW < -0.5 or cy - halfH < -0.5 or cx + halfW > pw + 0.5 or cy + halfH > ph + 0.5 then
@@ -375,40 +338,25 @@ local function CheckContained(bar)
     spilled[#spilled + 1] = string.format("%.0fx%.0f in %dx%d", w, h, pw, ph)
   end
 end
-for _, bar in ipairs(probe.angleBars) do CheckContained(bar) end
-for _, built in pairs(probe.sets) do
-  for _, bar in ipairs(built.bars) do CheckContained(bar) end
-end
-check("probe: no subject's rotated extent leaves its parent", #spilled == 0,
+check("probe: no subject's rotated extent leaves its cell", #spilled == 0,
   table.concat(spilled, ", "))
 
--- The thin-bar cell decides the whole rework, so it runs under the most favourable configuration
--- available: its subjects hang off the Frame's own Window (all-Window ancestry, nothing in the
--- chain that clips -- Controls clip, Windows do not). They must also stay clear of their own
--- unrotated twins in the failure case where rotation is ignored entirely, which means comparing
--- them in the same coordinate space: the twins live in the cell's Control ground, the subjects in
--- window coordinates.
-local thinLaneOk, thinParentOk = true, true
-for i = 1, 2 do
-  local subject, ghost = probe.thinCell.subjects[i], probe.thinCell.ghosts[i]
-  if subject:GetParent() ~= probe then thinParentOk = false end
-  local ghostWindowY = select(2, ghost:GetParent():GetPosition()) + probe.headerHeight
-    + select(2, ghost:GetPosition()) + select(2, ghost:GetSize())
-  if select(2, subject:GetPosition()) < ghostWindowY + 20 then thinLaneOk = false end
+-- A rotated subject must never overlap its own unrotated twin, INCLUDING in the failure case where
+-- rotation is ignored entirely and the subject renders at its full unrotated width. That is the
+-- case the probe has actually been in for three rounds, so it is the one the layout must survive.
+local overlapping = 0
+for _, bar in ipairs(probe.subjects) do
+  local w = bar:GetSize()
+  if bar:GetPosition() < 62 + w / 2 then overlapping = overlapping + 1 end
 end
-check("probe: the deciding cell's bars hang off the window, not a clipping Control", thinParentOk)
-check("probe: the deciding cell's bars sit clear of their twins", thinLaneOk)
+check("probe: no subject overlaps its twin even unrotated", overlapping == 0,
+  overlapping .. " overlapping")
 
 local unrotated = 0
-for _, bar in ipairs(probe.angleBars) do
-  if bar:IsVisible() and bar:GetRotation() == nil then unrotated = unrotated + 1 end
+for _, bar in ipairs(probe.subjects) do
+  if bar:GetRotation() == nil then unrotated = unrotated + 1 end
 end
-for _, built in pairs(probe.sets) do
-  for _, bar in ipairs(built.bars) do
-    if bar:IsVisible() and bar:GetRotation() == nil then unrotated = unrotated + 1 end
-  end
-end
-check("probe: no visible subject lost its rotation to a later SetSize/SetBackground",
+check("probe: no subject lost its rotation to a later SetSize/SetBackground",
   unrotated == 0, unrotated .. " unrotated")
 
 Turbine.Shell.WriteLine = realWrite

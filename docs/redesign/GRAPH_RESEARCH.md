@@ -228,22 +228,49 @@ geometry has to. (It does: a segment control centred on its midpoint has a rotat
 x-extent of `len*|cos|`, which is smaller than the unrotated one. A segment can never reach past
 the bounding box of the data it draws.)
 
-### Round two
+### Round two, and what it settled
 
-Same command, subjects that cannot hide the difference:
+Subjects that could not hide the difference: solid squares and an asymmetric icon.
+
+**Settled: the control's own rect does not rotate.** The solid squares at 45 stayed square, Control
+and Window alike, and a 44x2 Window bar at z=90 -- parented straight into the frame's own Window,
+with nothing in the chain that could clip it -- stayed horizontal.
+
+**Not settled, and the reason matters:** every ICON cell came back completely blank. They used
+`SetStretchMode(2)` to scale a 16x16 `.tga` up to 36x36, and **nothing in this codebase has ever
+rendered a stretched file-path image.** Every icon that works here is drawn at its asset's exact
+native size, and `Icon.Apply` (`Constants.lua`) dropped `SetStretchMode` outright in round seven of
+the self-buff icon saga precisely because stretching was what kept those tiles empty.
+
+Which means the sprite subjects in rounds one *and* two never had a background image at all -- they
+rendered their `SetBackColor` and nothing else. **No probe cell so far has successfully drawn an
+image, so "does a rotated image draw outside its rect" has never actually been asked.** That is not
+a small gap: Gibberish3 only ever rotates image-backed controls, so it is the only configuration
+with any production evidence behind it.
+
+### Round three
+
+Every image subject drawn at its asset's NATIVE size, no stretch. `line_long.tga` is 256x4 white,
+so Turbine's clip-to-the-control behaviour crops it to any length for free -- which is what a
+uniform stroke wants anyway, and unlike stretching it is confirmed to work here.
 
 | Cell | Subject | Reads as |
 | --- | --- | --- |
-| 1-2 | a **solid square** at 45, Control and Window | a diamond iff the control's own rect is transformed |
-| 3-4 | an **asymmetric icon** (`search.tga`, lens + handle) at 45 | turns iff the content is transformed; corners cut off square iff the rect did not turn with it |
-| 5 | the icon at **90** | the only angle Gibberish3 proves -- turning here but not at 45 means right angles only |
-| 6 | the icon at 45, parented **straight into the Frame's Window** | whether the all-Window ancestry Gibberish3 always has is load-bearing (`Graph` is a Control) |
-| 7 | the icon at **15 / 30 / 60 / 75** | what "arbitrary angle" actually means |
-| 8 | two **44x2 bars at 90**, sprite and solid, parented into the Frame's own Window | THE DECIDING CELL: vertical means rects rotate and the plot can be a real line; still horizontal means it cannot |
-| 9 | the real polyline | only worth reading if 8 came out vertical |
+| A | a **stretched** image, no rotation | blank confirms rounds 1-2 never drew an image |
+| B | the same art at **native size**, no rotation | must render, or nothing below means anything |
+| C, D | native icon at **45** and **90** | the art turning means the engine rotates a control's CONTENT |
+| E | **native line 64x2 @90, Window** | THE DECIDING CELL: vertical means a rotated draw escapes its own rect, the only mechanism by which a thin control can draw a diagonal |
+| F | the same on a **Control** | E turning and F not means the segment pool has to be Windows |
+| G | native line 64x2 **@45**, Window | arbitrary angles, not just right angles |
+| H | native line tinted by **Overlay + BackColor**, no rotation | two series colours out of one white asset |
 
-Every cell carries an unrotated twin beside its subject (above it, in cell 8), so "did it change?"
-does not depend on remembering the previous load.
+The window carries its own API status in a header line, not only in chat, so a screenshot carries
+the whole answer.
+
+**If E is still horizontal, Option B is finished** and the choice is Option C (the slope-sprite
+atlas) or staying with Option A. Note that A's result bears on C too: the atlas stretches a slope
+sprite over each segment's bounding box, so a client that will not stretch a file-path image cannot
+draw C either.
 
 ### Answers
 
@@ -251,13 +278,14 @@ Fill these in from a real load, then delete the probe:
 
 | Question | Answer |
 | --- | --- |
-| The control's own rect rotates (cells 1-2, 8) | |
-| The control's content rotates (cells 3-4) | |
-| Arbitrary z renders, or 90 only (cells 5, 7) | |
-| Control, or Window only | |
-| Back colour, or sprite required | |
-| All-Window ancestry required (cell 6) | |
+| The control's own rect rotates | **no** -- round two: solid squares stayed square, a 64x2 Window bar at 90 stayed horizontal |
+| A stretched file-path image renders (cell A) | |
+| A native-size image renders (cell B) | |
+| The control's content rotates (cells C, D) | |
+| A rotated image draws outside its rect (cell E) | |
+| Control, or Window only (cells E vs F) | |
+| Arbitrary z, or 90 only (cells E vs G) | |
+| Overlay + BackColor tints an image (cell H) | |
+| Clipping | **Controls clip to their parent, Windows do not** -- author |
 | Positive z turns (cw / ccw) -> `ROT_SIGN` | |
 | Pivot is the control's centre | |
-| Clipping | **Controls clip to their parent, Windows do not** -- author, confirmed by round one's cell 7 (a Window) |
-| 2px stroke antialiased | |

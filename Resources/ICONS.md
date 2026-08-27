@@ -30,7 +30,8 @@ Every icon in this folder is derived from [Phosphor Icons](https://phosphoricons
 | `search.tga` | `magnifying-glass` | regular | 16x16 | white | `UI/Analysis.lua` search box, left of the text field |
 | `pin_on.tga` | `push-pin-simple` | fill | 12x12 | white | `UI/Analysis.lua` session rail, pinned session |
 | `pin_off.tga` | `push-pin-simple` | regular | 12x12 | white | `UI/Analysis.lua` session rail, unpinned session |
-| `line.tga` | -- (plain block) | -- | 8x8 | white | `UI/AnalysisGraph.lua` polyline stroke; `UI/RotationProbe.lua` |
+| `line.tga` | -- (plain block) | -- | 8x8 | white | `UI/RotationProbe.lua` (stretched-sprite case) |
+| `line_long.tga` | -- (plain block) | -- | 256x4 | white | `UI/RotationProbe.lua` stroke source, clipped not stretched |
 
 **Regular weight** (fill only for the "on" state of a two-state glyph), matching Gibberish3's and
 LootLogs' own `RESOURCES`/`Ressources` -- all three plugins now share one window language. At 16px

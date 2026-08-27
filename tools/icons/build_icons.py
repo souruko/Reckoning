@@ -101,3 +101,11 @@ def write_solid(width, height, filename):
 
 
 write_solid(8, 8, "line.tga")
+
+# The stroke source the probe and (if rotation ever works) the plot actually draw from. 256x4
+# rather than 8x8 because SetStretchMode has never been confirmed to scale a file-path .tga in
+# this client -- Icon.Apply (Constants.lua) dropped it entirely in round 7 of the self-buff icon
+# saga, and every icon this codebase renders successfully is drawn at its asset's native size.
+# Without stretch Turbine CLIPS the image to the control, so one long white block crops down to
+# any segment length for free, which is exactly what a uniform stroke wants.
+write_solid(256, 4, "line_long.tga")

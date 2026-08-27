@@ -51,7 +51,7 @@ the player-facing version and `REDESIGN_SPEC.md` for the spec each piece came fr
 **There is now a real offline test suite: `tools/offline/`.** Unlike the original scratch harness
 (described below), it runs the **real** classes and the **real** `Main.lua` under a **real Lua
 5.1** interpreter against a `Turbine` stub built on this repo's own `class()` shim. `sh
-tools/offline/run.sh` runs 748 checks in about a second. It caught three genuine bugs during the
+tools/offline/run.sh` runs 744 checks in about a second. It caught three genuine bugs during the
 redesign that `luac -p` could not have: an index-base probe that could not actually distinguish a
 0-based from a 1-based `EffectList`, a `nil` layout constant reaching `SetPosition`, and the
 analysis window failing to adopt an already-archived session. It caught three more during the
@@ -276,56 +276,62 @@ whether an arbitrary angle renders, whether a plain `Turbine.UI.Control` can rot
 bare `SetBackColor` fill rotates at all are all still open -- and each one changes the shipping
 code.
 
-`/reck probe [control|window] [plain|sprite]` (`UI/RotationProbe.lua`, `Resources/line.tga`) is
-the window that asks them. Every rotated control is built and rotated through a `pcall`, so a
-combination this client refuses leaves one blank cell instead of taking the window down with it.
-**The answers go in `GRAPH_RESEARCH.md` section 7's table and then this file gets deleted** -- it
-is scaffolding, not a feature, and it is the only thing in this codebase that calls `SetRotation`.
+`/reck probe` (`UI/RotationProbe.lua`) is the window that asks them. Every rotated control is built
+and rotated through a `pcall`, so a combination this client refuses leaves one blank cell instead of
+taking the window down with it, and the window carries its own API status in a header line rather
+than only in chat, so a screenshot carries the whole answer. **The answers go in
+`GRAPH_RESEARCH.md` section 7's table and then this file gets deleted** -- it is scaffolding, not a
+feature, and it is the only thing in this codebase that calls `SetRotation`.
 
-**Round one's result was unreadable, and the reason is worth more than the result.** It drew a
-45-degree segment across control/window x back-colour/sprite and got four flat horizontal bars --
-the documented no-op signature. That is not a conclusion: every subject it drew was either a flat
-colour or a uniform white block, and rotating either one inside its own rectangle looks exactly the
-same as not rotating it. Two very different behaviours produce identical flat bars -- `SetRotation`
-doing nothing, or `SetRotation` rotating a control's **content** inside a rect that stays
-axis-aligned. The second is not a stretch: every rotation subject in Gibberish3 is a **square**
-control fully covered by a **structured** image, which looks the same under both, so the only
-production evidence anywhere cannot distinguish them either. It also decides the rework outright --
-under content-only rotation a 2px-tall segment can never be a diagonal at any angle. **General
-lesson: a probe subject must be able to LOOK different under each hypothesis it is meant to
-separate. A symmetric or featureless subject answers nothing, however carefully the rest is built.**
+**Three rounds so far, and each one's mistake is worth more than its result.**
 
-Round one's clip cell was first written up as "a control is not clipped to its parent's bounds".
-**That was wrong** -- the subject was built in the command's default flavour, and the default is
-`window`. The rule, per the plugin's author: **Controls clip to their parent, Windows do not.** The
-cell showed only that a Window escapes its parent's bounds and said nothing about Controls.
-That is very likely *why* Gibberish3 makes every rotated piece a `Turbine.UI.Window`: a rotated
-draw extends past the control's own axis-aligned rect by definition, and a Control clips exactly
-that overflow away -- so a working rotation on a Control could look like a failed one. Two
-consequences for the rework: a rotated **Control** may render as an octagon rather than a diamond
-(still evidence the rect rotated), and if the segment pool has to be **Windows** they will not be
-clipped by the plot ground, so the geometry alone has to keep them inside it. It does -- a segment
-centred on its midpoint has a rotated y-extent equal to the span between its two data points and a
-rotated x-extent smaller than its unrotated one, so it can never reach past the bounding box of the
-data it draws. **General lesson, second one from the same cell: a probe cell inherits whatever
-default the command was invoked with, so record WHICH flavour produced an observation before
-generalising from it.**
+**Round one** drew a 45-degree segment across control/window x back-colour/sprite and got four flat
+horizontal bars -- the documented no-op signature, and not a conclusion. Every subject it drew was
+either a flat colour or a uniform white block, and rotating either one inside its own rectangle
+looks exactly like not rotating it. `SetRotation` doing nothing and `SetRotation` rotating a
+control's **content** inside a rect that stays axis-aligned produce identical flat bars, and the
+difference decides the rework (under content-only rotation a 2px-tall segment can never be a
+diagonal). **Lesson: a probe subject must be able to LOOK different under each hypothesis it is
+meant to separate. A symmetric or featureless subject answers nothing, however careful the rest is.**
 
-Round two therefore asks with subjects that cannot hide it: a **solid square** at 45 (a diamond iff
-the control's own rect transforms -- the only way a thin segment can ever be a diagonal), an
-**asymmetric icon** at 45 (turns iff the content transforms), the same icon at **90** (the only
-angle Gibberish3 proves) and at 15/30/60/75, the same icon parented **straight into the Frame's
-Window** (Gibberish3 only ever parents its rotated Windows into other Windows, and `Graph` is a
-Control), and -- the deciding cell, parented into the Frame's own Window so nothing in the chain
-can clip it -- two **44x2 bars at z=90**: vertical means rects rotate and the
-plot can be a real line, still horizontal means it cannot, and there is no third reading. Every cell
-carries an unrotated twin, so "did it change?" never depends on remembering the last load.
+Round one's clip cell was also written up as "a control is not clipped to its parent's bounds",
+which was wrong -- the subject was built in the command's default flavour, and the default was
+`window`. The rule, per the plugin's author: **Controls clip to their parent, Windows do not.**
+That is very likely *why* Gibberish3 makes every rotated piece a `Turbine.UI.Window`: a rotated draw
+extends past the control's own axis-aligned rect by definition, and a Control clips exactly that
+overflow away -- so a working rotation on a Control can look like a failed one. **Lesson: a probe
+cell inherits whatever default the command was invoked with, so record WHICH flavour produced an
+observation before generalising from it.**
 
-Two things worth carrying into the rework itself. **The failure signature**: if `SetRotation`
-silently no-ops rather than throwing, a steep segment's *unrotated* rect is its full diagonal
-length, so the plot renders as long flat bars punched through the data -- distinctive, and not to
-be confused with "the graph is blank" (which was the `graphHolder` sizing bug above), but as round
-one proved, **not by itself a diagnosis**: content-only rotation renders identically. And
+**Round two** fixed the subjects and settled the biggest question: **the control's own rect does not
+rotate.** Solid squares at 45 stayed square, Control and Window alike, and a 44x2 Window bar at z=90
+-- parented straight into the frame's own Window with nothing in the chain that could clip it --
+stayed horizontal. But every ICON cell came back blank, and *that* is the round's real finding: they
+used `SetStretchMode(2)` to scale a 16x16 `.tga` to 36x36, and **nothing in this codebase has ever
+rendered a stretched file-path image.** Every icon that works here is drawn at its asset's exact
+native size, and `Icon.Apply` (`Constants.lua`) dropped `SetStretchMode` outright in round seven of
+the self-buff icon saga for precisely this reason. So the sprite subjects in rounds one *and* two
+never had a background image at all -- they rendered their `SetBackColor` and nothing else. **No
+probe cell has yet successfully drawn an image, so "does a rotated image draw outside its rect" has
+never actually been asked** -- and image-backed is the only configuration Gibberish3 gives any
+evidence for. **Lesson: when a cell renders nothing, that is a result about the RECIPE, not a
+missing answer to the question the cell was written to ask.**
+
+**Round three** draws every image subject at its asset's native size with no stretch --
+`line_long.tga` is 256x4 white so Turbine's clip-to-the-control behaviour crops it to any length for
+free, which is what a uniform stroke wants anyway. Eight cells: the stretched-vs-native render
+control pair (A, B), the icon at 45 and 90 for content rotation (C, D), a native-image 64x2 Window
+bar at 90 as the deciding cell (E), the same on a Control for the clipping difference (F), 45 rather
+than 90 for arbitrary angles (G), and the Overlay + BackColor tint the plot needs to get two series
+colours out of one white asset (H). **If E is still horizontal, Option B is finished** -- and cell
+A's result bears on Option C too, since the slope-sprite atlas stretches a sprite over each
+segment's bounding box and a client that will not stretch a file-path image cannot draw that either.
+
+Two things worth carrying into the rework itself. **The failure signature**: a plot of long flat
+bars punched through the data is what an unrotated steep segment looks like (its unrotated rect is
+its full diagonal length) -- distinctive, and not to be confused with "the graph is blank" (which
+was the `graphHolder` sizing bug above), but **not by itself a diagnosis**: no rotation, content-only
+rotation and an image that never rendered all look the same. And
 **the invariant that makes the whole "rotation does not survive X" bug class impossible**:
 `Redraw()` re-specifies every visible segment completely -- size, colour, position, rotation last
 -- so nothing may touch a segment outside its draw function. `tools/offline/stub.lua` now enforces
@@ -851,7 +857,7 @@ inheritance + mixins). Treat them as vendored, not Reckoning-specific.
 | `UI/Bar.lua` | `Bar` -- 1px-border track Control with a fill child; `SetPercent(pct)` sets width directly (no tweening anywhere, per `docs/DESIGN.md`). |
 | `UI/Row.lua` | `Row` -- a fixed-column-offset row of Labels for tables; pooled and reused across refreshes, never rebuilt per redraw. |
 | `UI/RangeSlider.lua` | `RangeSlider` -- the two-handle time-range control under the plot. Snaps to the graph's 48 bucket stops, not to pixels, so the numbers in the window and the marks on the plot agree exactly and only 48 distinct ranges per endpoint can ever be asked for. Drag uses the same MouseDown/MouseMove/MouseUp shape as `Frame:WireDrag` and the resize gripper -- confirmed-working precedent, no new assumption about mouse delivery. Handles clamp to `other handle -/+ 1`; a zero-width range would divide by zero everywhere downstream. |
-| `UI/RotationProbe.lua` | `RotationProbe` (extends `Frame`) -- the `/reck probe` diagnostic window, and the only thing in this codebase that calls `SetRotation`. Nothing imports it but `UI/__init__.lua`; it exists to answer the questions the line-graph rework depends on and is meant to be **deleted once they are answered** (`docs/redesign/GRAPH_RESEARCH.md` section 7 holds the answer table) -- along with the `windows.probe` entry it leaves behind in saved settings, since it takes a `Frame` key like any other window. |
+| `UI/RotationProbe.lua` | `RotationProbe` (extends `Frame`) -- the `/reck probe` diagnostic window (round 3), and the only thing in this codebase that calls `SetRotation`. Nothing imports it but `UI/__init__.lua`; it exists to answer the questions the line-graph rework depends on and is meant to be **deleted once they are answered** (`docs/redesign/GRAPH_RESEARCH.md` section 7 holds the answer table) -- along with the `windows.probe` entry it leaves behind in saved settings, since it takes a `Frame` key like any other window. |
 
 `UI/__init__.lua` imports Frame/Bar/Row in that order; `Main.lua` does `import "Reckoning.UI"`
 once. **Cross-directory class visibility**: a bare `X = class(...)` assigned inside `UI/*.lua`
@@ -994,7 +1000,7 @@ overlay tracking the window through drag, resize, show/hide, re-raise and shutdo
 `/reck show|hide [live\|death\|analysis\|options]`, `/reck move <live\|death\|analysis\|options>`,
 `/reck testdeath`, `/reck reset`, `/reck post`,
 `/reck buffs [list|ignore <name>|unignore <name>]`,
-`/reck probe [control|window] [plain|sprite]` are in
+`/reck probe` are in
 `Main.lua`. `options` toggles the settings window (window 4) -- the same thing the Plugin Manager
 stub's button does. `buffs` re-parses its arguments from the **raw** command string, not the lower-cased
 single-token parse the other subcommands use -- buff names are case-sensitive and contain spaces. `show`/`hide` for `live`/`death` only flip
@@ -1005,8 +1011,7 @@ open with no real death would be misleading; `live` is now permanently visible w
 the one window a forced show/hide makes sense for directly. `move` is a recovery command (reset
 to (200, 200) and show) for a window dragged off-screen. `probe` opens the
 `SetRotation` diagnostic window (see the line-graph note in Build status) -- built lazily on first
-use, and each flavour's controls are built once and then swapped by visibility, so re-running it
-with different arguments does not leak a second set. `testdeath` pops the death window
+use and kept, so re-running it re-shows the same window rather than leaking a second set. `testdeath` pops the death window
 directly with synthesized data, bypassing `Sessions.OnSelfDefeat` entirely -- added specifically
 to tell "the window itself doesn't work" apart from "a real death was never detected" (e.g.
 nothing fought so far can actually kill the player) without waiting to die for real; if this
@@ -1130,7 +1135,7 @@ Follow the `VitalSelf` pattern: `Turbine.PluginData.Save(Turbine.DataScope.Chara
 ## Testing
 
 **Run `sh tools/offline/run.sh` before every in-game load** (needs `lua5.1`; see
-`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 748
+`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 744
 checks against the real classes and the real `Main.lua`. It is not a substitute for loading the
 plugin -- it cannot tell you whether anything actually *draws* -- but everything it catches is a
 reload you don't have to spend.

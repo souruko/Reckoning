@@ -387,21 +387,16 @@ local function PostPreview()
 	Turbine.Shell.WriteLine(line)
 end
 
--- /reck probe [control|window] [plain|sprite] -- the SetRotation diagnostic window.
+-- /reck probe -- the SetRotation diagnostic window.
 --
 -- Turbine has no line primitive, so the analysis window's plot can only become a real line graph
--- if a Control can be ROTATED. Gibberish3's circular timer proves SetRotation exists and works,
+-- if a control can be ROTATED. Gibberish3's circular timer proves SetRotation exists and works,
 -- but only on a Turbine.UI.Window, only on an image-backed control, and only at 0/90/180/270 --
--- see UI/RotationProbe.lua's header for the full list of what that leaves open. This builds the
--- window that answers it. Lazily, and once: it is a diagnostic, not part of the plugin's UI.
-local function Probe(kind, paint)
-	if kind ~= "control" and kind ~= "window" then kind = "window" end
-	if paint ~= "plain" and paint ~= "sprite" then paint = "sprite" end
-
+-- see UI/RotationProbe.lua's header for what three rounds of probing have and have not settled.
+-- Built lazily and once: it is a diagnostic, not part of the plugin's UI.
+local function Probe()
 	if rotationProbe == nil then
-		rotationProbe = UI.RotationProbe(kind, paint)
-	else
-		rotationProbe:ShowFlavour(kind, paint)
+		rotationProbe = UI.RotationProbe()
 	end
 
 	rotationProbe:SetVisible(true)
@@ -425,7 +420,7 @@ function command:Execute(_, str)
 	end
 
 	if cmd == "" or cmd == "help" then
-		Turbine.Shell.WriteLine("Reckoning v" .. Reckoning.Version .. ": /reck help | options | dump | post | buffs [list|ignore <name>|unignore <name>] | testdeath | show [live|death|analysis|options] | hide [live|death|analysis|options] | move <live|death|analysis|options> | reset | probe [control|window] [plain|sprite]")
+		Turbine.Shell.WriteLine("Reckoning v" .. Reckoning.Version .. ": /reck help | options | dump | post | buffs [list|ignore <name>|unignore <name>] | testdeath | show [live|death|analysis|options] | hide [live|death|analysis|options] | move <live|death|analysis|options> | reset | probe")
 	elseif cmd == "options" or cmd == "config" then
 		optionsWindow:Toggle()
 	elseif cmd == "dump" then
@@ -443,10 +438,7 @@ function command:Execute(_, str)
 	elseif cmd == "reset" then
 		ResetAll()
 	elseif cmd == "probe" then
-		-- Two arguments, so this re-reads them from the raw string rather than the single-token
-		-- parse above -- same reason `buffs` does.
-		local kind, paint = string.match(string.lower(str), "^%s*%S+%s*(%S*)%s*(%S*)")
-		Probe(kind or "", paint or "")
+		Probe()
 	else
 		Turbine.Shell.WriteLine("Reckoning: unknown command '" .. cmd .. "'. Try /reck help.")
 	end
