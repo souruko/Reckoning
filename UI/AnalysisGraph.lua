@@ -25,7 +25,9 @@
 --      the pool is therefore a Window, not a Control. This is not a preference.
 --   2. **A rotation set before the control has painted is silently dropped.** One apply on a
 --      LATER frame is enough and it sticks -- hence `rotateIn` and `FlushRotation` below, and
---      hence Analysis:Update, which is the only thing that calls it.
+--      hence Analysis:Update, which is the only thing that calls it. A segment is therefore drawn
+--      HIDDEN and revealed by that pass: between being sized and being rotated it would paint
+--      flat, which reads in-game as the whole line snapping to a horizontal bar on every redraw.
 --   3. **The control's rect never rotates -- the IMAGE is rotated and then FITTED to the rect.**
 --      So a thin 2px control can never be a diagonal at any angle: a rotated white rectangle
 --      refitted into a 2px slot is still a 2px horizontal bar. The segment control is instead a
@@ -390,6 +392,7 @@ function Graph:BuildSeriesPools()
 			segment:SetMouseVisible(false)
 			segment:SetZOrder(Z_LINE)
 			segment.rotation = { x = 0, y = 0, z = 0 }
+			segment.shown = false -- set by DrawSegment, read by FlushRotation
 			self.seg[slot][i] = segment
 		end
 	end
@@ -883,6 +886,7 @@ function Graph:SetBucketCount(count)
 		for slot = 1, MAX_REGULAR_SERIES do
 			self.dots[slot][i]:SetVisible(false)
 			if self.seg[slot][i] ~= nil then
+				self.seg[slot][i].shown = false
 				self.seg[slot][i]:SetVisible(false)
 			end
 		end
@@ -890,6 +894,7 @@ function Graph:SetBucketCount(count)
 	-- The step at index `count` bridges into bucket count+1, which no longer exists.
 	for slot = 1, MAX_REGULAR_SERIES do
 		if self.seg[slot][count] ~= nil then
+			self.seg[slot][count].shown = false
 			self.seg[slot][count]:SetVisible(false)
 		end
 	end
@@ -955,6 +960,9 @@ end
 -- Without it every segment draws mirrored about its own midpoint: right length, right centre, both
 -- ends on the wrong side, nothing meeting at the joints.
 --
+-- `lastColor` compares Turbine.UI.Color objects by identity, which is sound because Theme.Color
+-- caches one instance per hex (Constants.lua) -- the same hex always hands back the same object.
+--
 -- The full scale sequence is re-run on every draw rather than once at construction. Resizing a
 -- control that has already been through it *might* just rescale, but nothing establishes that, and
 -- this codebase's history is a list of clever shortcuts that failed in-game. Redraws happen on data
@@ -967,19 +975,43 @@ local function DrawSegment(segment, x0, y0, x1, y1, color)
 		side = SEGMENT_MIN
 	end
 
+	local x = math.floor((x0 + x1) / 2 - side / 2)
+	local y = math.floor((y0 + y1) / 2 - side / 2)
+	local deg = -math.deg(math.atan2(dy, dx))
+	local image = StrokeSprite(side)
+
+	-- A segment that is already on screen exactly like this is left completely alone. This is not
+	-- only a saved SetBackground: because a redrawn segment has to go hidden until the rotation
+	-- pass catches up (see below), re-specifying an unchanged one would blink it. Dragging the
+	-- range slider redraws on every bucket it crosses without moving the series at all, so without
+	-- this the plot would flicker for the whole drag.
+	if segment.shown and segment:IsVisible()
+		and segment.lastSide == side and segment.lastX == x and segment.lastY == y
+		and segment.lastDeg == deg and segment.lastImage == image
+		and segment.lastColor == color then
+		return
+	end
+
 	segment:SetSize(STROKE_NATIVE, STROKE_NATIVE)
-	segment:SetBackground(StrokeSprite(side))
+	segment:SetBackground(image)
 	segment:SetStretchMode(1)
 	segment:SetSize(side, side)
 
 	segment:SetBackColorBlendMode(Turbine.UI.BlendMode.Overlay)
 	segment:SetBackColor(color)
-	segment:SetPosition(
-		math.floor((x0 + x1) / 2 - side / 2),
-		math.floor((y0 + y1) / 2 - side / 2))
+	segment:SetPosition(x, y)
 
-	segment.rotation.z = -math.deg(math.atan2(dy, dx))
-	segment:SetVisible(true)
+	segment.lastSide, segment.lastX, segment.lastY = side, x, y
+	segment.lastDeg, segment.lastImage, segment.lastColor = deg, image, color
+
+	segment.rotation.z = deg
+
+	-- Deliberately NOT made visible here. SetSize above cleared the rotation, and re-applying it
+	-- in this same frame would be silently dropped -- so between now and Graph:FlushRotation the
+	-- segment would paint FLAT, which in-game reads as the line snapping to a horizontal bar on
+	-- every redraw. `shown` is the "this segment has data" flag FlushRotation reveals from.
+	segment.shown = true
+	segment:SetVisible(false)
 end
 
 function Graph:Redraw()
@@ -1030,14 +1062,18 @@ function Graph:FlushRotation()
 	end
 	self.rotateIn = nil
 
+	-- Rotate FIRST, reveal second, and walk the whole pool rather than 1..buckets-1: a segment
+	-- left over from a wider bucket count has had `shown` cleared by SetBucketCount, and reading
+	-- the flag rather than the count means no path can leak a stale one back onto the plot.
 	for slot = 1, MAX_REGULAR_SERIES do
 		local pool = self.seg[slot]
-		for i = 1, self.buckets - 1 do
+		for i = 1, MAX_BUCKETS - 1 do
 			local segment = pool[i]
-			if segment ~= nil and segment:IsVisible() then
+			if segment ~= nil and segment.shown then
 				-- pcall'd for the same reason every other undocumented native call here is: a
 				-- throw must cost one segment's angle, never the whole refresh.
 				pcall(segment.SetRotation, segment, segment.rotation)
+				segment:SetVisible(true)
 			end
 		end
 	end
@@ -1127,6 +1163,7 @@ function Graph:DrawSeries(maxValue)
 				self.dots[slot][i]:SetVisible(false)
 			end
 			for i = 1, self.buckets - 1 do
+				self.seg[slot][i].shown = false
 				self.seg[slot][i]:SetVisible(false)
 			end
 		else

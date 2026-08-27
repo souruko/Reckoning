@@ -44,6 +44,30 @@ g:SetSeriesWithMorale({
 }, true)
 g:SetData(session, true, nil)
 
+-- 0. A segment is drawn HIDDEN and revealed only by the rotation pass. Between being sized (which
+-- clears its rotation) and being rotated it would paint FLAT, which in-game read as the whole line
+-- snapping to a horizontal bar on every redraw -- so this is the check that keeps it hidden.
+local drawnEarly, rotatedEarly = 0, 0
+for slot = 1, 2 do
+  for i = 1, GraphBucketCount() - 1 do
+    if g.seg[slot][i]:IsVisible() then drawnEarly = drawnEarly + 1 end
+    if g.seg[slot][i]:GetRotation() ~= nil then rotatedEarly = rotatedEarly + 1 end
+  end
+end
+check("plot: no segment is visible before it has been rotated", drawnEarly == 0,
+  drawnEarly .. " shown flat")
+check("plot: no segment is rotated in the same pass that sized it", rotatedEarly == 0,
+  rotatedEarly .. " early")
+check("plot: the rotation pass is still pending", g:FlushRotation())
+check("plot: the pass completes on the next call", not g:FlushRotation())
+check("plot: the pass does not re-arm itself", not g:FlushRotation())
+
+-- Everything below reads what is on screen, so it runs after that pass. Settle() is the harness's
+-- stand-in for Analysis:Update, and every later SetData/ToggleSeries needs one too.
+local function Settle()
+  while g:FlushRotation() do end
+end
+
 -- 1. every visible segment/dot stays inside the plot. A segment is a SQUARE the length of the
 -- step it draws, centred on that step's midpoint, so its own rect is much larger than the stroke
 -- it shows -- what has to stay inside the plot is the DRAWN LINE, i.e. the two endpoints, not the
@@ -146,19 +170,20 @@ check("plot: drawn stroke stays near 2px at every segment length",
   thinnest >= 1.5 and thickest <= 2.5,
   string.format("%.2f..%.2fpx", thinnest, thickest))
 
--- 1c. Nothing may be rotated until the deferred pass runs: a rotation applied before the control
--- has painted is silently dropped in the real client, and the stub clears the recorded rotation on
--- SetSize -- which the scale sequence ends with -- so this also catches a re-apply put in the wrong
--- place. Then the pass must actually rotate them, and must not repeat.
-local early = 0
+-- 1b-iii. An unchanged redraw must not disturb anything. Because a redrawn segment goes hidden
+-- until the rotation pass catches up, re-specifying one that has not moved would blink it -- and
+-- dragging the range slider redraws on every bucket it crosses without moving the series at all.
+g:SetData(session, true, nil)
+local blinked = 0
 for slot = 1, 2 do
   for i = 1, N - 1 do
-    if g.seg[slot][i]:GetRotation() ~= nil then early = early + 1 end
+    if not g.seg[slot][i]:IsVisible() then blinked = blinked + 1 end
   end
 end
-check("plot: no segment is rotated in the same pass that sized it", early == 0, early .. " early")
-check("plot: the rotation pass is still pending", g:FlushRotation())
-check("plot: the pass completes on the next call", not g:FlushRotation())
+check("plot: a redraw that changes nothing leaves every segment on screen", blinked == 0,
+  blinked .. " blinked")
+
+-- 1c. Every segment that IS on screen carries its rotation -- the other half of the check above.
 local unrotated = 0
 for slot = 1, 2 do
   for i = 1, N - 1 do
@@ -167,9 +192,7 @@ for slot = 1, 2 do
     end
   end
 end
-check("plot: every visible segment carries its rotation after the pass", unrotated == 0,
-  unrotated .. " unrotated")
-check("plot: the pass does not re-arm itself", not g:FlushRotation())
+check("plot: every visible segment carries its rotation", unrotated == 0, unrotated .. " unrotated")
 
 -- 2. morale bars fill the plot, never overflow, never fall below 1px
 local barsVisible, barBad = 0, 0
@@ -195,6 +218,7 @@ check("morale: axis label shows peak in points",
 -- 3. views without morale hide the whole morale apparatus
 g:SetSeriesWithMorale({ { key = "done", label = "Damage", colorHex = Theme.Hex.DamageDone } }, false)
 g:SetData(session, false, nil)
+Settle()
 local anyBar = false
 for i = 1, N do if g.moraleBars[i]:IsVisible() then anyBar = true end end
 check("no-morale view: bars, guides and axis label all hidden",
@@ -210,6 +234,7 @@ g:SetSeriesWithMorale({
 }, true)
 g:SetData(session, true, nil)
 g:ToggleSeries("healIn")
+Settle()
 local hidOk = true
 for i = 1, N - 1 do
   if g.seg[2][i]:IsVisible() then hidOk = false end
@@ -218,6 +243,7 @@ for i = 1, N do if g.dots[2][i]:IsVisible() then hidOk = false end end
 check("legend toggle hides both pools of that series", hidOk)
 check("legend toggle leaves the other series drawn", g.seg[1][1]:IsVisible())
 g:ToggleSeries("healIn")
+Settle()
 
 -- 5. range overlay + slider
 g:SetRange(13, 36)

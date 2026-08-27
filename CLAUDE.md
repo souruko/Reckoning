@@ -51,7 +51,7 @@ the player-facing version and `REDESIGN_SPEC.md` for the spec each piece came fr
 **There is now a real offline test suite: `tools/offline/`.** Unlike the original scratch harness
 (described below), it runs the **real** classes and the **real** `Main.lua` under a **real Lua
 5.1** interpreter against a `Turbine` stub built on this repo's own `class()` shim. `sh
-tools/offline/run.sh` runs 756 checks in about a second. It caught three genuine bugs during the
+tools/offline/run.sh` runs 758 checks in about a second. It caught three genuine bugs during the
 redesign that `luac -p` could not have: an index-base probe that could not actually distinguish a
 0-based from a 1-based `EffectList`, a `nil` layout constant reaching `SetPosition`, and the
 analysis window failing to adopt an already-archived session. It caught three more during the
@@ -1121,7 +1121,7 @@ Follow the `VitalSelf` pattern: `Turbine.PluginData.Save(Turbine.DataScope.Chara
 ## Testing
 
 **Run `sh tools/offline/run.sh` before every in-game load** (needs `lua5.1`; see
-`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 756
+`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 758
 checks against the real classes and the real `Main.lua`. It is not a substitute for loading the
 plugin -- it cannot tell you whether anything actually *draws* -- but everything it catches is a
 reload you don't have to spend.
