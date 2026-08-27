@@ -342,6 +342,36 @@ squares can overlap freely.
 If C's spread is too visible, the fix is a handful of sprites at different band ratios chosen by
 length -- not a different mechanism.
 
+### Round six -- it works, with one sign inverted
+
+Real diagonals, on the first try. Cells A-D drew clean sloped lines, and D confirmed the sprite's
+transparency composes correctly across heavily overlapping squares.
+
+One bug, and it was total: **the engine's positive z turns the opposite way from screen space**, so
+`atan2(dy, dx)` as-is draws every segment MIRRORED about its own midpoint -- right length, right
+centre, both ends on the wrong side. The angle has to be negated.
+
+Cell D is what proves the diagnosis rather than just the symptom: its zigzag is symmetric, so
+mirroring each segment about its own midpoint maps the shared vertices consistently and it still
+looked connected -- while cell E's irregular series diverged at every joint. Same-length, wrong-side
+is the only failure that produces both of those at once, which also establishes that the segment
+LENGTHS were right all along and no fit-compensation is needed.
+
+### The technique, as shipped
+
+```lua
+-- one Window per step, pooled; Control has no SetRotation at all
+segment:SetSize(STROKE_NATIVE, STROKE_NATIVE)   -- the IMAGE's size first
+segment:SetBackground("Reckoning/Resources/stroke.tga")
+segment:SetStretchMode(1)
+segment:SetSize(side, side)                     -- square, side = the segment's own LENGTH
+segment:SetBackColorBlendMode(Turbine.UI.BlendMode.Overlay)
+segment:SetBackColor(color)                     -- one white sprite, every series colour
+segment:SetPosition(midX - side / 2, midY - side / 2)
+segment.rotation.z = -math.deg(math.atan2(dy, dx))   -- NEGATED
+-- ...and SetRotation on a LATER FRAME, once (Graph:FlushRotation, driven by Analysis:Update)
+```
+
 ### Answers
 
 | Question | Answer |
@@ -351,11 +381,17 @@ length -- not a different mechanism.
 | Rotation applied before the first paint | **silently dropped** |
 | One apply on a later frame | **enough, and it sticks** |
 | The control's rect rotates | **no -- the IMAGE rotates and is FITTED to the rect** |
-| Therefore a thin control can draw a diagonal | **no** -- Option B is dead |
+| Therefore a thin control can draw a diagonal | **no** -- Option B as written is dead |
+| A square control, side = segment length | **draws a true diagonal** -- this is what shipped |
+| Positive z turns | **the opposite way from screen space** -- negate the angle |
+| Segment length needs fit-compensation | **no** -- lengths were correct all along |
 | Scaling an image | `SetSize(native)` -> `SetBackground` -> `SetStretchMode(1)` -> `SetSize(target)` |
 | Size set before background | every stretch mode **tiles** |
 | `SetBackColorBlendMode(Overlay)` + `SetBackColor` tints an image | **yes** |
+| Sprite transparency composes across overlapping controls | **yes** |
 | Clipping | **Controls clip to their parent, Windows do not** |
-| A square control + full-width stroke sprite draws a true diagonal (round 6) | |
-| Stroke-width spread across segment lengths (round 6, C) | |
-| Sprite transparency composes across overlapping squares (round 6, D) | |
+| Stroke width | 3/64 of the segment's length -- ~1px short, ~3px long |
+
+The probe has answered everything it was built for. **Delete `UI/RotationProbe.lua`, its
+`/reck probe` command, `Resources/wedge.tga`, `Resources/line.tga`, `Resources/line_long.tga` and
+the `windows.probe` key it leaves in saved settings** once the line graph is confirmed in-game.

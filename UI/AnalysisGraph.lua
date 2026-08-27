@@ -15,23 +15,35 @@
 --   timeline         14   5 MM:SS marks
 --   legend           18   series swatches (clickable) + the range's peak/low morale readout
 --
--- A DIAGONAL IS NOT DRAWABLE HERE. Turbine.UI has no canvas, no line primitive and no per-pixel
--- access -- a Control is an axis-aligned rectangle with a back colour, and that is the whole
--- toolbox. So each step of the polyline is drawn as an L: a horizontal run at the *left* value's
--- own height, plus a vertical riser at the run's right end spanning the full gap to the next
--- value (a standard step-after chart). This is Option A from the bundle's GRAPH_RESEARCH.md --
--- deliberately the one with no unknowns. An earlier draft put the run at the *midpoint* height
--- between the two values instead -- it reads as more line-like on gentle data, but on any run of
--- three-plus monotonic points (a damage ramp climbing several seconds straight, which real combat
--- logs do constantly) the next run's start height falls outside the previous riser's span,
--- leaving a real gap -- confirmed by tracing the geometry against a user-reported screenshot
--- showing exactly that disconnected, spiky look instead of a continuous line. Anchoring the run
--- at its own left value guarantees the riser always brackets the next run's start (the riser's
--- span is, by construction, exactly [min, max] of the two values on either side of it), so every
--- joint connects for any data shape. Option B (the undocumented SetRotation, which Gibberish3
--- does use in production but only ever at 0/90/180/270) would halve the Control count and give
--- true diagonals, but it needs a seven-item in-game probe first; the pooling shape here is
--- identical either way, so switching later is a local change to DrawStep and nothing else.
+-- REAL DIAGONALS, and every word of how they are drawn was paid for by six rounds of in-game
+-- probing (`/reck probe`, UI/RotationProbe.lua; the answers are in GRAPH_RESEARCH.md section 7).
+-- Turbine has no canvas and no line primitive, so a diagonal can only come from rotating an
+-- axis-aligned control, and `SetRotation` here has four properties that together dictate the
+-- entire shape of this code:
+--
+--   1. It is ABSENT on `Turbine.UI.Control` and present on `Turbine.UI.Window`. Every segment in
+--      the pool is therefore a Window, not a Control. This is not a preference.
+--   2. **A rotation set before the control has painted is silently dropped.** One apply on a
+--      LATER frame is enough and it sticks -- hence `rotateIn` and `FlushRotation` below, and
+--      hence Analysis:Update, which is the only thing that calls it.
+--   3. **The control's rect never rotates -- the IMAGE is rotated and then FITTED to the rect.**
+--      So a thin 2px control can never be a diagonal at any angle: a rotated white rectangle
+--      refitted into a 2px slot is still a 2px horizontal bar. The segment control is instead a
+--      SQUARE whose side is the segment's own LENGTH, centred on the segment's midpoint, carrying
+--      a sprite with a full-width band through its middle (Resources/stroke.tga). A square rect
+--      makes the fit a uniform scale, so the rotated band stays a straight line at exactly the
+--      angle asked for, running from one data point to the other and stopping. Any other aspect
+--      ratio shears it off its angle.
+--   4. Positive z turns the OPPOSITE way from screen-space convention, so the angle is NEGATED.
+--      Without that every segment draws mirrored about its own midpoint -- right length, right
+--      centre, both ends on the wrong side, so nothing meets at the joints.
+--
+-- Scaling an image also needs an exact call order -- size the control to the IMAGE's own size,
+-- `SetBackground`, `SetStretchMode(1)`, and only THEN size it to the target. With the target size
+-- set first, every stretch mode tiles instead. `DrawSegment` follows it literally.
+--
+-- The squares overlap heavily by construction (each is as wide as its segment is long) and that is
+-- fine: the sprite is transparent outside its band, which round six confirmed composes correctly.
 --
 -- Everything is pooled once in the constructor and only ever repositioned/recoloured -- never
 -- rebuilt per refresh, never reparented, never detached (Turbine has no confirmed-safe
@@ -52,8 +64,21 @@ local MAX_LANES = 3          -- max charted buffs, matching Theme.BuffLane's thr
 local PLOT_HEIGHT = 150
 local TOP_PAD     = 22 -- headroom, so a peak bucket never touches the frame
 local BOTTOM_PAD  = 4  -- the zero baseline sits this far above the plot's bottom edge
-local STROKE      = 2
 local DOT_SIZE    = 5
+
+-- The stroke sprite and its native size. Square, with a full-width white band through its centre
+-- and transparent elsewhere -- see the header for why square is the whole trick. The band is 3/64
+-- of the sprite, so the drawn stroke is 3/64 of the segment's length: roughly 1px on a short
+-- segment and 3px on a long one. If that spread ever reads badly, the fix is a couple of sprites
+-- at different band ratios chosen by length, not a different mechanism.
+local STROKE_IMAGE  = "Reckoning/Resources/stroke.tga"
+local STROKE_NATIVE = 64
+local SEGMENT_MIN   = 4 -- a square smaller than this cannot show a band at all
+
+-- Frames to wait after a redraw before applying the rotation pass. A rotation set before the
+-- control has painted is silently dropped (probe round 4), and one apply on a later frame sticks
+-- (round 5), so this is a small margin rather than a repeating cost.
+local ROTATE_DELAY = 2
 
 local LANE_HEIGHT     = 16
 local LANE_GAP        = 4
@@ -84,8 +109,7 @@ local Z_GROUND  = 0
 local Z_MORALE  = 10
 local Z_GUIDE   = 11
 local Z_GRID    = 11
-local Z_RISER   = 12 -- risers under the runs, so an L joint has no visible seam
-local Z_RUN     = 13
+local Z_LINE    = 13
 local Z_DOT     = 14
 local Z_RANGE   = 20
 local Z_TOOLTIP = 25
@@ -300,17 +324,22 @@ function Graph:BuildGridlines()
 	end
 end
 
--- Three pools per series slot: the dots, the horizontal runs and the vertical risers. Sized
--- once here, only ever repositioned afterwards. 2 slots x (48 + 47 + 47) = 284 Controls.
+-- Two pools per series slot: the dots and the rotated segments. Sized once here, only ever
+-- repositioned afterwards. 2 slots x (48 + 47) = 190 controls, down from 284 -- one segment per
+-- step instead of a run plus a riser.
+--
+-- The segments are `Turbine.UI.Window`s, not Controls, and that is forced: SetRotation does not
+-- exist on Turbine.UI.Control (the call throws -- probe round 3). A parented Window starts hidden
+-- and draws BEHIND its parent, so SetVisible and an explicit ZOrder are load-bearing here in a way
+-- they are not for the Control pools. Each also carries its own `rotation` table, because the
+-- angle has to be kept in Lua and re-applied after anything that writes to the control.
 function Graph:BuildSeriesPools()
 	self.dots = {}
-	self.hSeg = {}
-	self.vSeg = {}
+	self.seg = {}
 
 	for slot = 1, MAX_REGULAR_SERIES do
 		self.dots[slot] = {}
-		self.hSeg[slot] = {}
-		self.vSeg[slot] = {}
+		self.seg[slot] = {}
 
 		for i = 1, MAX_BUCKETS do
 			local dot = Turbine.UI.Control()
@@ -323,19 +352,13 @@ function Graph:BuildSeriesPools()
 		end
 
 		for i = 1, MAX_BUCKETS - 1 do
-			local run = Turbine.UI.Control()
-			run:SetParent(self)
-			run:SetVisible(false)
-			run:SetMouseVisible(false)
-			run:SetZOrder(Z_RUN)
-			self.hSeg[slot][i] = run
-
-			local riser = Turbine.UI.Control()
-			riser:SetParent(self)
-			riser:SetVisible(false)
-			riser:SetMouseVisible(false)
-			riser:SetZOrder(Z_RISER)
-			self.vSeg[slot][i] = riser
+			local segment = Turbine.UI.Window()
+			segment:SetParent(self)
+			segment:SetVisible(false)
+			segment:SetMouseVisible(false)
+			segment:SetZOrder(Z_LINE)
+			segment.rotation = { x = 0, y = 0, z = 0 }
+			self.seg[slot][i] = segment
 		end
 	end
 end
@@ -827,17 +850,15 @@ function Graph:SetBucketCount(count)
 		self.moraleEdges[i]:SetVisible(false)
 		for slot = 1, MAX_REGULAR_SERIES do
 			self.dots[slot][i]:SetVisible(false)
-			if self.hSeg[slot][i] ~= nil then
-				self.hSeg[slot][i]:SetVisible(false)
-				self.vSeg[slot][i]:SetVisible(false)
+			if self.seg[slot][i] ~= nil then
+				self.seg[slot][i]:SetVisible(false)
 			end
 		end
 	end
 	-- The step at index `count` bridges into bucket count+1, which no longer exists.
 	for slot = 1, MAX_REGULAR_SERIES do
-		if self.hSeg[slot][count] ~= nil then
-			self.hSeg[slot][count]:SetVisible(false)
-			self.vSeg[slot][count]:SetVisible(false)
+		if self.seg[slot][count] ~= nil then
+			self.seg[slot][count]:SetVisible(false)
 		end
 	end
 
@@ -886,24 +907,47 @@ end
 -- Drawing
 ---------------------------------------------------------------------------------------------------
 
--- One step of the polyline, as an L: the horizontal run sits at the *left* value's own height,
--- the riser closes the full gap to the next value at the run's right end. Anchoring the run on
--- y0 (not the two values' midpoint) is what guarantees every joint connects -- the riser's span
--- is exactly [min(y0,y1), max(y0,y1)], which by construction always contains y1, the height the
--- next run starts at. The riser is a z-order below the runs so the joint has no visible seam
--- where the two strokes overlap.
-local function DrawStep(run, riser, x0, y0, x1, y1, color)
-	run:SetPosition(math.floor(x0), y0)
-	run:SetSize(math.max(1, math.floor(x1 - x0)), STROKE)
-	run:SetBackColor(color)
-	run:SetVisible(true)
+-- One step of the polyline, as a real diagonal. The control is a SQUARE whose side is the
+-- segment's own length, centred on the segment's midpoint; the sprite's band runs the full width
+-- of that square, so once rotated it runs from one data point to the other and stops.
+--
+-- The call order is exact and none of it is interchangeable (see the file header):
+--
+--   SetSize(native) -> SetBackground -> SetStretchMode(1) -> SetSize(target)   scaling only works
+--                                                                              in this order
+--   SetBackColorBlendMode(Overlay) + SetBackColor    tints the white sprite to the series colour
+--   SetPosition                                       centre on the segment's midpoint
+--   ...and SetRotation LAST, on a LATER FRAME -- see Graph:FlushRotation.
+--
+-- The angle is negated because the engine's positive z turns the opposite way from screen space.
+-- Without it every segment draws mirrored about its own midpoint: right length, right centre, both
+-- ends on the wrong side, nothing meeting at the joints.
+--
+-- The full scale sequence is re-run on every draw rather than once at construction. Resizing a
+-- control that has already been through it *might* just rescale, but nothing establishes that, and
+-- this codebase's history is a list of clever shortcuts that failed in-game. Redraws happen on data
+-- and range changes, not per frame; if that ever profiles badly, hoisting the first three calls
+-- into BuildSeriesPools is the optimisation to try, and tiling is the symptom if it is wrong.
+local function DrawSegment(segment, x0, y0, x1, y1, color)
+	local dx, dy = x1 - x0, y1 - y0
+	local side = math.floor(math.sqrt(dx * dx + dy * dy) + 0.5)
+	if side < SEGMENT_MIN then
+		side = SEGMENT_MIN
+	end
 
-	local top = math.min(y0, y1)
-	local height = math.abs(y1 - y0) + STROKE
-	riser:SetPosition(math.floor(x1) - 1, top)
-	riser:SetSize(STROKE, height)
-	riser:SetBackColor(color)
-	riser:SetVisible(math.abs(y1 - y0) > 0)
+	segment:SetSize(STROKE_NATIVE, STROKE_NATIVE)
+	segment:SetBackground(STROKE_IMAGE)
+	segment:SetStretchMode(1)
+	segment:SetSize(side, side)
+
+	segment:SetBackColorBlendMode(Turbine.UI.BlendMode.Overlay)
+	segment:SetBackColor(color)
+	segment:SetPosition(
+		math.floor((x0 + x1) / 2 - side / 2),
+		math.floor((y0 + y1) / 2 - side / 2))
+
+	segment.rotation.z = -math.deg(math.atan2(dy, dx))
+	segment:SetVisible(true)
 end
 
 function Graph:Redraw()
@@ -930,6 +974,43 @@ function Graph:Redraw()
 		self.gridlines[i]:SetPosition(1, math.floor(PLOT_HEIGHT * i / 4) - 1)
 		self.gridlines[i]:SetSize(self.plotWidth - 2, 1)
 	end
+
+	-- Every segment was just re-sized, which clears its rotation, and a rotation re-applied in
+	-- this same frame would be silently dropped. Arm the pass instead; Analysis:Update runs it a
+	-- couple of frames from now, once.
+	self.rotateIn = ROTATE_DELAY
+end
+
+-- Applies the rotation to every visible segment, a couple of frames after the redraw that sized
+-- them. This exists because of the single hardest-won fact in `/reck probe`: **a rotation set
+-- before the control has painted is silently dropped**, and one apply on a later frame is enough
+-- and sticks. Three rounds of a completely flat plot were exactly this.
+--
+-- Returns true while there is still work pending, so the caller can stop asking.
+function Graph:FlushRotation()
+	if self.rotateIn == nil then
+		return false
+	end
+
+	self.rotateIn = self.rotateIn - 1
+	if self.rotateIn > 0 then
+		return true
+	end
+	self.rotateIn = nil
+
+	for slot = 1, MAX_REGULAR_SERIES do
+		local pool = self.seg[slot]
+		for i = 1, self.buckets - 1 do
+			local segment = pool[i]
+			if segment ~= nil and segment:IsVisible() then
+				-- pcall'd for the same reason every other undocumented native call here is: a
+				-- throw must cost one segment's angle, never the whole refresh.
+				pcall(segment.SetRotation, segment, segment.rotation)
+			end
+		end
+	end
+
+	return false
 end
 
 function Graph:DrawMorale()
@@ -1014,8 +1095,7 @@ function Graph:DrawSeries(maxValue)
 				self.dots[slot][i]:SetVisible(false)
 			end
 			for i = 1, self.buckets - 1 do
-				self.hSeg[slot][i]:SetVisible(false)
-				self.vSeg[slot][i]:SetVisible(false)
+				self.seg[slot][i]:SetVisible(false)
 			end
 		else
 			local color = Theme.Color(series.colorHex)
@@ -1024,7 +1104,7 @@ function Graph:DrawSeries(maxValue)
 			for i = 1, self.buckets - 1 do
 				local y0 = self:ValueY(self.slices[i][key] or 0, maxValue)
 				local y1 = self:ValueY(self.slices[i + 1][key] or 0, maxValue)
-				DrawStep(self.hSeg[slot][i], self.vSeg[slot][i],
+				DrawSegment(self.seg[slot][i],
 					self:BucketX(i), y0, self:BucketX(i + 1), y1, color)
 			end
 

@@ -44,21 +44,27 @@ g:SetSeriesWithMorale({
 }, true)
 g:SetData(session, true, nil)
 
--- 1. every visible run/riser/dot stays inside the plot
+-- 1. every visible segment/dot stays inside the plot. A segment is a SQUARE the length of the
+-- step it draws, centred on that step's midpoint, so its own rect is much larger than the stroke
+-- it shows -- what has to stay inside the plot is the DRAWN LINE, i.e. the two endpoints, not the
+-- square. (The squares overlap each other heavily by design; the sprite is transparent outside
+-- its band.)
 local N = GraphBucketCount()
-local outside, visibleRuns, visibleDots = 0, 0, 0
+local outside, visibleSegs, visibleDots = 0, 0, 0
 for slot = 1, 2 do
   for i = 1, N - 1 do
-    local r = g.hSeg[slot][i]
-    if r:IsVisible() then
-      visibleRuns = visibleRuns + 1
-      local x, y = r:GetPosition(); local w, h = r:GetSize()
-      if x < 0 or y < 0 or x + w > W or y + h > PLOT then outside = outside + 1 end
-    end
-    local v = g.vSeg[slot][i]
-    if v:IsVisible() then
-      local x, y = v:GetPosition(); local w, h = v:GetSize()
-      if y < 0 or y + h > PLOT then outside = outside + 1 end
+    local seg = g.seg[slot][i]
+    if seg:IsVisible() then
+      visibleSegs = visibleSegs + 1
+      local x, y = seg:GetPosition(); local side, h = seg:GetSize()
+      if side ~= h then outside = outside + 1 end
+      local rad = -math.rad(seg.rotation.z)
+      local cx, cy = x + side / 2, y + side / 2
+      local hx, hy = side / 2 * math.cos(rad), side / 2 * math.sin(rad)
+      if math.min(cx - hx, cx + hx) < -1 or math.max(cx - hx, cx + hx) > W + 1
+        or math.min(cy - hy, cy + hy) < -1 or math.max(cy - hy, cy + hy) > PLOT + 1 then
+        outside = outside + 1
+      end
     end
   end
   for i = 1, N do
@@ -70,29 +76,72 @@ for slot = 1, 2 do
     end
   end
 end
-check("plot: no visible line/dot control escapes the plot", outside == 0, "escapes=" .. outside)
-check("plot: both series drew their runs", visibleRuns == 2 * (N - 1), "runs=" .. visibleRuns)
+check("plot: no drawn segment or dot escapes the plot", outside == 0, "escapes=" .. outside)
+check("plot: both series drew their segments", visibleSegs == 2 * (N - 1), "segs=" .. visibleSegs)
 check("plot: dots on odd buckets only (+endpoints)", visibleDots > 0 and visibleDots <= 2 * N,
   "dots=" .. visibleDots)
 
--- 1b. every joint actually connects: riser[i]'s vertical span must bracket run[i+1]'s own
--- height, for any data shape (a real bug: an earlier midpoint-anchored run left a gap on any
--- 3-point monotonic ramp -- common in real combat data -- because the next run's height fell
--- outside the previous riser's span; found from a user-reported screenshot of a disconnected,
--- spiky-looking plot)
-local gaps = 0
+-- 1b. THE joint check, and it is a different one now. The old L-step could leave a gap between a
+-- riser and the next run; a rotated segment instead has one way to go wrong, and it is total:
+-- if the angle's sign is inverted every segment is drawn mirrored about its own midpoint -- right
+-- length, right centre, both ends on the wrong side -- so consecutive segments stop meeting. That
+-- shipped once (probe round 6). Reconstruct both endpoints from what was handed to the engine and
+-- check they land on the two data points, which no mirrored segment can.
+local maxErr = 0
+-- ONE maxValue across every visible series, exactly as Graph:Redraw computes it -- a per-series
+-- scale would put the two lines on different axes and this check would be measuring the wrong y.
+local maxValue = 0
 for slot = 1, 2 do
-  for i = 1, N - 2 do
-    local riser = g.vSeg[slot][i]
-    local nextRun = g.hSeg[slot][i + 1]
-    if riser:IsVisible() and nextRun:IsVisible() then
-      local _, rTop = riser:GetPosition(); local _, rH = riser:GetSize()
-      local _, nY = nextRun:GetPosition()
-      if nY < rTop or nY > rTop + rH then gaps = gaps + 1 end
+  local key = g.seriesList[slot].key
+  for i = 1, N do
+    local v = g.slices[i][key] or 0
+    if v > maxValue then maxValue = v end
+  end
+end
+for slot = 1, 2 do
+  local key = g.seriesList[slot].key
+  for i = 1, N - 1 do
+    local seg = g.seg[slot][i]
+    if seg:IsVisible() then
+      local x, y = seg:GetPosition(); local side = seg:GetSize()
+      local rad = -math.rad(seg.rotation.z)
+      local cx, cy = x + side / 2, y + side / 2
+      local hx, hy = side / 2 * math.cos(rad), side / 2 * math.sin(rad)
+      local x0, y0 = g:BucketX(i), g:ValueY(g.slices[i][key] or 0, maxValue)
+      local x1, y1 = g:BucketX(i + 1), g:ValueY(g.slices[i + 1][key] or 0, maxValue)
+      maxErr = math.max(maxErr,
+        math.abs(cx - hx - x0), math.abs(cy - hy - y0),
+        math.abs(cx + hx - x1), math.abs(cy + hy - y1))
     end
   end
 end
-check("plot: no gap between a riser and the next run (joints connect)", gaps == 0, "gaps=" .. gaps)
+check("plot: every segment's two ends land on its two data points", maxErr <= 1.5,
+  string.format("worst %.2fpx", maxErr))
+
+-- 1c. Nothing may be rotated until the deferred pass runs: a rotation applied before the control
+-- has painted is silently dropped in the real client, and the stub clears the recorded rotation on
+-- SetSize -- which the scale sequence ends with -- so this also catches a re-apply put in the wrong
+-- place. Then the pass must actually rotate them, and must not repeat.
+local early = 0
+for slot = 1, 2 do
+  for i = 1, N - 1 do
+    if g.seg[slot][i]:GetRotation() ~= nil then early = early + 1 end
+  end
+end
+check("plot: no segment is rotated in the same pass that sized it", early == 0, early .. " early")
+check("plot: the rotation pass is still pending", g:FlushRotation())
+check("plot: the pass completes on the next call", not g:FlushRotation())
+local unrotated = 0
+for slot = 1, 2 do
+  for i = 1, N - 1 do
+    if g.seg[slot][i]:IsVisible() and g.seg[slot][i]:GetRotation() == nil then
+      unrotated = unrotated + 1
+    end
+  end
+end
+check("plot: every visible segment carries its rotation after the pass", unrotated == 0,
+  unrotated .. " unrotated")
+check("plot: the pass does not re-arm itself", not g:FlushRotation())
 
 -- 2. morale bars fill the plot, never overflow, never fall below 1px
 local barsVisible, barBad = 0, 0
@@ -123,10 +172,10 @@ for i = 1, N do if g.moraleBars[i]:IsVisible() then anyBar = true end end
 check("no-morale view: bars, guides and axis label all hidden",
   (not anyBar) and (not g.moraleGuideTop:IsVisible()) and (not g.moraleAxisLabel:IsVisible()))
 check("no-morale view: second series slot fully hidden",
-  not g.hSeg[2][1]:IsVisible() and not g.dots[2][1]:IsVisible())
+  not g.seg[2][1]:IsVisible() and not g.dots[2][1]:IsVisible())
 check("no-morale view: peak/low readout is blank", g.peakLabel:GetText() == "")
 
--- 4. hiding a series via the legend hides all three of its pools
+-- 4. hiding a series via the legend hides both of its pools
 g:SetSeriesWithMorale({
   { key = "taken", label = "Damage taken", colorHex = Theme.Hex.DamageTaken },
   { key = "healIn", label = "Healing in", colorHex = Theme.Hex.HealingTaken },
@@ -135,11 +184,11 @@ g:SetData(session, true, nil)
 g:ToggleSeries("healIn")
 local hidOk = true
 for i = 1, N - 1 do
-  if g.hSeg[2][i]:IsVisible() or g.vSeg[2][i]:IsVisible() then hidOk = false end
+  if g.seg[2][i]:IsVisible() then hidOk = false end
 end
 for i = 1, N do if g.dots[2][i]:IsVisible() then hidOk = false end end
-check("legend toggle hides all three pools of that series", hidOk)
-check("legend toggle leaves the other series drawn", g.hSeg[1][1]:IsVisible())
+check("legend toggle hides both pools of that series", hidOk)
+check("legend toggle leaves the other series drawn", g.seg[1][1]:IsVisible())
 g:ToggleSeries("healIn")
 
 -- 5. range overlay + slider

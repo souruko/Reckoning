@@ -107,7 +107,12 @@ local function PlaceSegment(bar, x0, y0, x1, y1)
 
 	Scale(bar, STROKE_IMAGE, STROKE_N, len, len)
 	bar:SetPosition(math.floor((x0 + x1) / 2 - len / 2), math.floor((y0 + y1) / 2 - len / 2))
-	bar.rotation.z = math.deg(math.atan2(dy, dx))
+	-- NEGATED. Screen y grows downward, but the engine's positive z turns the other way, so
+	-- atan2(dy, dx) as-is draws every segment mirrored about its own midpoint -- same length, same
+	-- centre, both ends on the wrong side. Round six showed it: cell D's zigzag is symmetric, so
+	-- mirroring each segment about its own midpoint maps the shared vertices consistently and it
+	-- still looked connected, while cell E's irregular series diverged at every joint.
+	bar.rotation.z = -math.deg(math.atan2(dy, dx))
 	return len
 end
 

@@ -12,7 +12,7 @@ Turbine plugin engine -- there is no build step, package manager, linter, or tes
 
 Read `docs/DESIGN.md` first (the data model and parser facts that decide what is buildable),
 then `docs/IMPLEMENTATION_PLAN.md` (the phased build order), then `docs/redesign/` -- the v0.2.0
-handoff bundle (`REDESIGN_SPEC.md` is the Lua-side plan, `GRAPH_RESEARCH.md` is the four ways to
+handoff bundle (`REDESIGN_SPEC.md` is the Lua-side plan, `GRAPH_RESEARCH.md` is the ways to
 draw a line in this API and why the code picked the one it did, `mock/` is an interactive HTML
 design reference you open in a browser). Code comments cite `REDESIGN_SPEC.md` section numbers. Both came from a design handoff
 bundle at `~/Downloads/design_handoff_combat_analyzer` and are reproduced here in full, along
@@ -51,7 +51,7 @@ the player-facing version and `REDESIGN_SPEC.md` for the spec each piece came fr
 **There is now a real offline test suite: `tools/offline/`.** Unlike the original scratch harness
 (described below), it runs the **real** classes and the **real** `Main.lua` under a **real Lua
 5.1** interpreter against a `Turbine` stub built on this repo's own `class()` shim. `sh
-tools/offline/run.sh` runs 749 checks in about a second. It caught three genuine bugs during the
+tools/offline/run.sh` runs 754 checks in about a second. It caught three genuine bugs during the
 redesign that `luac -p` could not have: an index-base probe that could not actually distinguish a
 0-based from a 1-based `EffectList`, a `nil` layout constant reaching `SetPosition`, and the
 analysis window failing to adopt an already-archived session. It caught three more during the
@@ -256,153 +256,64 @@ be wrong:
   (matching by name against `_G.lp:GetEffects()` at render time) with this fixed path kept as the
   fallback for anything not currently live -- not a wholesale swap.
 
-**The plot is being reworked into a real line graph, and Phase 0 of that is `/reck probe`.**
-The analysis window's polyline is currently an L-step (a horizontal run plus a vertical riser per
-bucket) because `docs/redesign/GRAPH_RESEARCH.md` picked Option A -- the one with no unknowns --
-over Option B, the undocumented `SetRotation`. Per direct user request the plot (and only the
-plot: the morale background bars stay bars, and the live meter's sparkline is explicitly out of
-scope) is moving to Option B: one rotated segment per bucket pair, a genuine diagonal, half the
-Controls.
+**The analysis window's plot is now a REAL LINE GRAPH (v0.6.0), and every word of how it is drawn
+was paid for by six rounds of in-game probing.** The morale background stays a bar graph and the
+live meter's sparkline is untouched -- both explicitly out of scope per direct user request. The
+full record is `docs/redesign/GRAPH_RESEARCH.md` section 7; the short version, because every one of
+these dictates a line of `UI/AnalysisGraph.lua` and none is optional:
 
-Reading Gibberish3's circular timer (`UI_ELEMENTS/TIMER/CIRCEL/Element.lua`) in full pins down
-more than `GRAPH_RESEARCH.md` recorded. The proven configuration is: a **`Turbine.UI.Window`**,
-carrying a **background image** at `SetStretchMode(2)`, tinted by
-**`SetBackColorBlendMode(Overlay)` + `SetBackColor`** -- note `SetBackColorBlendMode`, *not* the
-`SetBlendMode` the self-buff icon saga above has been fighting with, a different call with its own
-independent precedent -- with the angle **kept in a Lua table per control and re-applied after
-every `SetSize` or `SetBackground`**, both of which clear it. Angles are degrees. But that file
-only ever uses z = 0/90/180/270, only ever on Windows, and only ever on image-backed controls, so
-whether an arbitrary angle renders, whether a plain `Turbine.UI.Control` can rotate, and whether a
-bare `SetBackColor` fill rotates at all are all still open -- and each one changes the shipping
-code.
+1. **`SetRotation` is ABSENT on `Turbine.UI.Control` and present on `Turbine.UI.Window`.** On a
+   Control the call throws. Every segment in the pool is a Window; Gibberish3 rotating only Windows
+   was never a style choice.
+2. **A rotation applied before the control has painted is silently dropped.** One apply on a LATER
+   frame is enough and it sticks. This is why `Graph:Redraw` only *arms* a pass (`rotateIn`) and
+   `Graph:FlushRotation` runs it, driven by `Analysis:Update`. Three rounds of a completely flat
+   plot were this one fact.
+3. **The control's rect never rotates -- the IMAGE is rotated and then FITTED to the rect.** So a
+   2px-tall control can never be a diagonal at any angle: a rotated white rectangle refitted into a
+   2px slot is still a 2px horizontal bar. The segment control is instead a **SQUARE whose side is
+   the segment's own LENGTH**, centred on the segment's midpoint, carrying `Resources/stroke.tga`
+   (a full-width band through a transparent square). A square rect makes the fit a uniform scale,
+   so the rotated band stays straight at exactly the angle asked for; any other aspect ratio shears
+   it. The squares overlap heavily by construction and that is fine -- the sprite is transparent
+   outside its band, confirmed composing correctly.
+4. **Positive z turns the opposite way from screen space, so the angle is NEGATED.** Without that
+   every segment draws mirrored about its own midpoint: right length, right centre, both ends on
+   the wrong side, nothing meeting at the joints.
+5. **Scaling an image needs an exact call order** -- `SetSize(imageW, imageH)` ->
+   `SetBackground` -> `SetStretchMode(1)` -> `SetSize(target)`. With the target size set first,
+   every stretch mode **tiles** instead. `DrawSegment` follows it literally, and re-runs the whole
+   sequence on every draw rather than hoisting the first three calls into the constructor --
+   nothing establishes that resizing an already-configured control rescales rather than tiles, and
+   redraws are not per-frame. Tiling is the symptom if that optimisation is ever tried and is wrong.
+6. **`SetBackColorBlendMode(Overlay)` + `SetBackColor` tints a white image**, so one sprite serves
+   every series colour. Note `SetBackColorBlendMode`, *not* the `SetBlendMode` the self-buff icon
+   saga above fights with -- a different call with its own independent precedent.
 
-`/reck probe` (`UI/RotationProbe.lua`) is the window that asks them. Every rotated control is built
-and rotated through a `pcall`, so a combination this client refuses leaves one blank cell instead of
-taking the window down with it, and the window carries its own API status in a header line rather
-than only in chat, so a screenshot carries the whole answer. **The answers go in
-`GRAPH_RESEARCH.md` section 7's table and then this file gets deleted** -- it is scaffolding, not a
-feature, and it is the only thing in this codebase that calls `SetRotation`.
+**Two of those correct things written elsewhere in this file.** `SetStretchMode` does not simply
+"tile" (round three's conclusion) -- it tiles *when the size was set first*, which is also why
+`Icon.Apply` has never been able to scale a buff icon, and is the most likely fix for that whole
+saga. And "a control is not clipped to its parent" (round one) was wrong: **Controls clip, Windows
+do not** -- that cell's subject was a Window, built in the command's default flavour.
 
-**Three rounds so far, and each one's mistake is worth more than its result.**
+**Three lessons from the probe rounds themselves, which cost more than the answers did.** *A probe
+subject must be able to LOOK different under each hypothesis it is meant to separate* -- round one
+drew flat colours and uniform white blocks, and "rotation does nothing" and "rotation turns the
+content inside a fixed rect" render those identically. *A probe cell inherits whatever default the
+command was invoked with*, so record which flavour produced an observation before generalising.
+And *when a cell renders nothing, that is a result about the RECIPE, not a missing answer to the
+question the cell was written to ask* -- round two's blank icons were a stretch-mode bug being
+mistaken for a rotation one.
 
-**Round one** drew a 45-degree segment across control/window x back-colour/sprite and got four flat
-horizontal bars -- the documented no-op signature, and not a conclusion. Every subject it drew was
-either a flat colour or a uniform white block, and rotating either one inside its own rectangle
-looks exactly like not rotating it. `SetRotation` doing nothing and `SetRotation` rotating a
-control's **content** inside a rect that stays axis-aligned produce identical flat bars, and the
-difference decides the rework (under content-only rotation a 2px-tall segment can never be a
-diagonal). **Lesson: a probe subject must be able to LOOK different under each hypothesis it is
-meant to separate. A symmetric or featureless subject answers nothing, however careful the rest is.**
-
-Round one's clip cell was also written up as "a control is not clipped to its parent's bounds",
-which was wrong -- the subject was built in the command's default flavour, and the default was
-`window`. The rule, per the plugin's author: **Controls clip to their parent, Windows do not.**
-That is very likely *why* Gibberish3 makes every rotated piece a `Turbine.UI.Window`: a rotated draw
-extends past the control's own axis-aligned rect by definition, and a Control clips exactly that
-overflow away -- so a working rotation on a Control can look like a failed one. **Lesson: a probe
-cell inherits whatever default the command was invoked with, so record WHICH flavour produced an
-observation before generalising from it.**
-
-**Round two** fixed the subjects and settled the biggest question: **the control's own rect does not
-rotate.** Solid squares at 45 stayed square, Control and Window alike, and a 44x2 Window bar at z=90
--- parented straight into the frame's own Window with nothing in the chain that could clip it --
-stayed horizontal. But every ICON cell came back blank, and *that* is the round's real finding: they
-used `SetStretchMode(2)` to scale a 16x16 `.tga` to 36x36, and **nothing in this codebase has ever
-rendered a stretched file-path image.** Every icon that works here is drawn at its asset's exact
-native size, and `Icon.Apply` (`Constants.lua`) dropped `SetStretchMode` outright in round seven of
-the self-buff icon saga for precisely this reason. So the sprite subjects in rounds one *and* two
-never had a background image at all -- they rendered their `SetBackColor` and nothing else. **No
-probe cell has yet successfully drawn an image, so "does a rotated image draw outside its rect" has
-never actually been asked** -- and image-backed is the only configuration Gibberish3 gives any
-evidence for. **Lesson: when a cell renders nothing, that is a result about the RECIPE, not a
-missing answer to the question the cell was written to ask.**
-
-**Round three** drew every image subject at its asset's native size and put the API status in the
-window itself. It settled the API question and produced three facts worth keeping regardless of
-where the plot ends up:
-
-- **`SetRotation` is ABSENT on `Turbine.UI.Control`, present on `Turbine.UI.Window`.** On a Control
-  the call throws. Gibberish3 rotating only Windows was never a style choice.
-- **On a Window it is callable and has no visible effect** -- not on a solid square, a native-size
-  image, a thin bar, at 45 or 90, through a Control ancestry or parented straight into the frame.
-- **`SetStretchMode(2)` TILES an image, it does not scale it** -- a 16x16 lens repeated in a 3x3
-  grid across a 36x36 control. That, not "a stretched image renders nothing", is what round two's
-  blank cells were showing: stretch **plus `SetBlendMode(Overlay)`** renders blank, stretch alone
-  tiles. **This is a live correction to the self-buff icon saga above** -- round eight's
-  `SetBlendMode(Overlay)` in `Icon.Apply` is the combination that blanks a stretched tile, and
-  round seven was right to drop `SetStretchMode` outright.
-- **`SetBackColorBlendMode(Overlay)` + `SetBackColor` DOES tint a white image** -- one asset drew
-  white and accent-purple side by side. Whatever happens to rotation, the plot can get every series
-  colour out of a single white asset (`Resources/line_long.tga`, 256x4, clipped rather than
-  stretched to any segment length).
-
-**Round four found it, and it was TIMING.** Cell E rotated a wedge once, in the constructor:
-nothing happened. Cells F and G rotated the same wedge on every `Update` tick: **it turned**, at 90
-and at 45 both. **A rotation set before the control has ever painted is silently dropped.** That is
-why three rounds came back flat, and why Gibberish3 never hit it -- its timers re-apply on every
-progress change, to a control long since on screen; nothing here did. So on a `Turbine.UI.Window`,
-`SetRotation` works, at **arbitrary** angles, applied after the control has painted.
-
-**Scaling an image needs a specific call order, and rounds one to four had it backwards.** Per the
-plugin's author:
-
-```
-control:SetSize(imageW, imageH)     -- the IMAGE's own size FIRST
-control:SetBackground(image)
-control:SetStretchMode(1)
-control:SetSize(targetW, targetH)   -- and only now the size you want
-```
-
-Every earlier round sized the control to the target and set the background after, so the stretch
-mode had no native-sized control to scale from -- which is why all four modes looked like they
-tiled. **This supersedes round three's "SetStretchMode(2) tiles" as a general claim**: it tiles
-*when the size was set first*. `Icon.Size` (`Constants.lua`) already leans on the same ordering
-quirk from the other direction, using `SetStretchMode(2)` to snap a control to its image's native
-size so it can read it back -- which is also why `Icon.Apply` could never scale a buff icon, and is
-the most likely fix for that whole saga.
-
-**Round five finished the mechanism, and one of its answers kills Option B.** The good news
-first: **one deferred apply is enough and it sticks** (cell C rotated once on the first frame after
-painting and stayed rotated; cell D, applied in the constructor, never moved), so the plot rotates
-each segment once per data change rather than every frame; the author's scaling sequence scales
-(cell A); and a scaled image still rotates (cell B) even though scaling ends in a `SetSize` that
-clears the rotation, because the rotation comes later on its own frame.
-
-**The finding that decides the design: the control's rect never rotates -- the IMAGE is rotated and
-then FITTED to the rect.** Cell E's 64x16 wedge at 90 came back still 64x16 with its content
-reoriented, not 16x64. Cells F, G and H confirm the consequence: a 64x2 control carrying a uniform
-white bar shows nothing at any angle, because a rotated white rectangle refitted into a 64x2 slot is
-still a 64x2 white bar. **So a thin control can never draw a diagonal, and Option B as written in
-`GRAPH_RESEARCH.md` is dead.**
-
-**Round six is the design rotate-then-fit hands back instead, and it is better than the atlas Option
-C proposed: make the segment's control SQUARE, with its side equal to the segment's LENGTH.** A
-square rect makes the fit a uniform scale, so a rotated line stays a straight line at exactly the
-angle asked for -- no shear, no slope quantisation, no atlas. `Resources/stroke.tga` is a 64x64
-sprite with a full-width band through its centre, transparent elsewhere; rotated to the segment's
-angle and scaled to an L x L control centred on the segment's midpoint, the band runs from one data
-point to the other and stops. Its ends sit half a width from the centre, well inside the square's
-half-diagonal, so nothing is cropped at any angle, and the transparency means neighbouring squares
-can overlap freely -- which they must, since each is as wide as its segment is long. The five cells
-check that a segment joins its two dots, the shallow and steep extremes, the stroke-width spread
-across segment lengths (the band is 3/64 of the length, so a longer segment draws thicker -- if the
-spread is too visible the fix is a few sprites at different band ratios chosen by length, not a
-different mechanism), that overlapping squares compose, and a real 12-point series as the
-acceptance test.
-
-Three things to carry into the rework itself. **The failure signature**: a plot of long flat bars
-punched through the data is what a segment drawn in a thin, unrotated rect looks like -- and it is
-**not by itself a diagnosis**: no rotation, a rotation the engine ignores, an image that never
-rendered, and rotate-then-fit inside a thin rect all produce it. Do not confuse it with "the graph
-is blank" either (that was the `graphHolder` sizing bug above). **The order of operations for a
-segment is now fixed and non-negotiable**: size to the image, `SetBackground`,
-`SetStretchMode(1)`, size to the target (square, side = the segment's length), tint, position --
-and `SetRotation` last of all, on a **later frame** than the one that sized it, once. And
-**the invariant that makes the whole "rotation does not survive X" bug class impossible**:
-`Redraw()` re-specifies every visible segment completely -- size, colour, position, rotation last
--- so nothing may touch a segment outside its draw function. `tools/offline/stub.lua` now enforces
-the half of that it can see: `SetSize` and `SetBackground` **clear** the recorded rotation there,
-exactly as the real engine does, so a missing re-apply fails `run.sh` instead of costing a reload.
+**`/reck probe` (`UI/RotationProbe.lua`) has now answered everything it was built for and should be
+deleted** -- along with its command, `Resources/wedge.tga`, `Resources/line.tga`,
+`Resources/line_long.tga`, and the `windows.probe` key it leaves in saved settings -- once the line
+graph itself is confirmed in-game. **Not yet confirmed in-game**: the plot as ported. The failure
+signature to know is a plot of long flat bars punched through the data, which is what a segment
+drawn in a thin unrotated rect looks like -- and it is not by itself a diagnosis, since no
+rotation, a rotation the engine ignores, an image that never rendered, and rotate-then-fit inside a
+thin rect all produce it. Segments drawn at the right angle but not meeting at the joints is the
+sign question (item 4) rather than any of those.
 
 **Window chrome brought in line with Gibberish3/LootLogs, per direct user request.** Every text
 glyph this codebase used as a UI control (`UI/Frame.lua`'s "x" close `Label`, the search box's "x"
@@ -942,7 +853,7 @@ and can freely reference `Frame`/`Bar`/`Row` bare since they're siblings in the 
 | `UI/DeathCause.lua` | `DeathCause` (extends `Frame`, `key = "deathCause"`, death-specific fill/border/header-rule colours) -- window 2. Fires from `Sessions.OnSelfDefeat`. "Last hit by" resolved by scanning `session.lastTaken` backward for the last `kind == "damage"` entry (temp-morale-loss rows don't carry an attacker). 5 pooled `Row` instances (never rebuilt), tinted per row: the killing-blow row's amount goes `DamageFatal`, temp-morale rows go `MutedText` end to end, everything else scales `DamageTaken`/`DamageSevere` off post-hit `moralePct`. Countdown is a `Bar`, `_G.settings.deathAutoHide` seconds (default 15) -- tracked as `self.remaining` (seconds left, decremented by real elapsed `dt` each `Update()` tick) rather than an absolute target timestamp, specifically so **pausing is just "skip subtracting this tick"**: `self.MouseEnter`/`self.MouseLeave` toggle `self.paused`, per direct feedback that hovering the window to read it shouldn't race the auto-hide closing it. Row time column widened (38px -> 46px) and format changed from one decimal (`"-3.7s"`) to whole seconds (`"-4s"`) per feedback that the times "seemed broken" -- most likely a width/overflow problem given the format itself checked out fine standalone, but the exact in-game rendering was never confirmed, so this is a defensive fix (shorter string, wider column) rather than a diagnosed-and-proven one; if it's still wrong, the underlying `entry.time - self.deathTime` computation itself is the next thing to check with a real capture, the way the `ChatType.Death` bug was found. The morale column is now a `Bar` per row (`self.moraleBars`, pooled) instead of a `Format.Percent` Label, matching the analysis window's own bar style per feedback. Depends on `UI/Row.lua`'s rows being mouse-invisible (`SetMouseVisible(false)`, changed from `true` -- nothing in a `Row` was ever individually clickable) so a row sitting over the window doesn't swallow the hover before it reaches the window's own `MouseEnter`/`MouseLeave`. **Unverified**: whether `Turbine.UI.Window.MouseEnter`/`.MouseLeave` fire based on the window's own bounds regardless of mouse-invisible children on top (assumed, consistent with how mouse-invisible children behave for click-through elsewhere, but not confirmed for Enter/Leave specifically) -- if hover-pause doesn't trigger in-game, check this first. |
 
 | `UI/Analysis.lua` | `Analysis` (extends `Frame`, `key = "analysis"`, resizable 1080x820, min 1080x600, max 1440 wide by the display's own height less 40px -- see `MaxHeight()`) -- window 3, redesigned in v0.2.0. Session rail (unchanged), 4 view tabs in **damage-pair-then-healing-pair** order (`done`/`taken`/`healOut`/`healIn`) with centred labels, picker chips, 5 KPI cards, the graph block, the skill table at **full content width**, then the SELF BUFFS table and the two 233px side panels sharing the bottom row. `RESET RANGE`, the range chip and the `POST` button (`BuildPostButton`, see `UI/PostButton.lua`) live in `Frame`'s own header, laid out right-to-left by `LayoutHeaderExtras`. State: `viewTab`, `filter[view]`, `selectedSession`, `rangeFrom`/`rangeTo`, `charted` (ordered, max 3), `tableSort`/`buffSort`, `splitBottom` (the user's skill/buff split; `splitEffective` is what the window could give it). **Everything is range-scoped through one `Session:Slice` per refresh** -- KPIs, table, both panels and the buff table are all fed from that single result, never from their own separate passes. `Layout()` and `RefreshContent()` call each other exactly once each: `RefreshContent` detects that the charted-lane or picker-row count changed shape, sets `laneCountWanted` and re-runs `Layout()`, which ends by calling back with `skipRelayout` set -- that flag is the only thing stopping an infinite bounce, so do not remove it. The buff table (labelled SELF EFFECTS) carries a **TYPE** column between EFFECT and UPTIME % -- `BUFF_KIND_TEXT`/`BUFF_KIND_HEX`/`BuffKindText` render `row.kind` (see `Buffs.lua`) as Buff/Debuff/Unknown, it sorts on the word it displays, and `FilterBuffStats` matches the search box against it as well as the name. Its 66px came out of the name column, which is the one that absorbs slack in `LayoutBuffColumns` -- and that function's name floor dropped 120 -> 100 in the same change, because at the window's **minimum** width the old floor made the eight columns sum wider than the section they sit in (which clips the last column instead of shortening the name; `analysis_test.lua` pins `buffWidth == 594` against the 604px section for exactly this). The SELF BUFFS table now scrolls (`self.buffScrollView`/`self.buffScrollBar`, the same `ListBox` + `Lotro.ScrollBar` host as the skill table's `scrollView`/`tableScrollBar` -- see `BuildTable`'s comment) instead of the section growing to fit every tracked buff and silently dropping whatever didn't fit past the `BUFF_POOL` pool size or the space the window had -- `REDESIGN_SPEC.md` section 7 already called for this ("let the skill table shrink to its 150px floor first and the buff table scroll second"), it just wasn't wired up. `BuildBuffRow`'s container is unparented until `RefreshBuffSection`'s `ClearItems`/`AddItem` loop, mirroring `BuildTableRowSlot`'s own comment. **The target/source picker wraps** (`RefreshPicker`/`FlowChips`): chips used to flow left-to-right off the right edge of the content column with no wrap, cap or clip, which at ~5 chips per row (848px at min width, `ChipWidth` is `16 + chars*7`) made every target past the fifth unreachable in any fight with more than a handful of enemies. Now: labels truncate to `PICKER_MAX_CHARS` on a **character** boundary (`TruncateChip`/`ChipWidth` are now thin wrappers over `Format.Truncate`/`Format.CharCount` in `Constants.lua`, which count UTF-8 lead bytes by hand -- Lua 5.1 has no `utf8` library and mob names carry accented characters; the marker is ASCII `..`, not `…`, per the pin-glyph lesson above. They moved out of this file when `ChatPost.lua` needed the identical logic for its line-length cap), chips flow into at most 2 rows, and the remainder folds into a trailing `+N more` chip that expands the picker to at most `PICKER_ROWS_EXPANDED` (5) rows with a `less` chip to fold it back. `pickerExpanded` is ephemeral and resets on view/session change. Row count feeds the same shape-change relayout path as lanes/buff rows (`pickerRowsWanted`/`layoutPickerRows`), and `Layout()` re-runs `RefreshPicker` itself before sizing the row so a resize that changes the chips-per-row count can't leave the geometry a pass behind. Chip **labels** are truncated but chip **values** stay the full name -- filtering matches on the value, so a shortened label never breaks the filter (offline-checked). |
-| `UI/AnalysisGraph.lua` | `Graph` -- the time plot, rewritten in v0.2.0 as a **line-and-dot plot**. Owns four stacked rows: the 150px plot, 0-3 charted buff lanes, the range slider, and the timeline + legend; `GraphHeightFor(laneCount)` is a plain global so `Analysis:Layout` can ask for the total before a Graph exists. **A diagonal is not drawable here** -- Turbine has no canvas or line primitive -- so each polyline step is an L: a horizontal run at the *midpoint* height plus a vertical riser at its right end, risers z-ordered *under* the runs so the joint has no seam. This is Option A from `GRAPH_RESEARCH.md`, deliberately the one with no unknowns; Option B (the undocumented `SetRotation`, which Gibberish3 does use but only at 0/90/180/270) would halve the Control count and needs a 7-item in-game probe first, and `DrawStep` is the only function that would change. Morale is a **background bar graph** (48 bars + 48 brighter 1px top edges, low-morale pair below `MORALE_DANGER`, guide lines at 100%/50%), replacing the old 22px dot lane; unsampled buckets carry the last known value forward, because a second in which you took no damage is not a second at 0 morale. **Hovering is one mouse-visible Control -- the plot ground -- not 48 zones on top of the data**: the old per-bucket zones hid the morale trace underneath them (found in-game, mechanism never pinned down), and putting the hover surface *behind* everything sidesteps that question entirely while relying only on the click-through behaviour `UI/Row.lua` already depends on. Pools: 2x(48 dots + 47 runs + 47 risers) + 96 morale + 3x24 lane segments, all built once. |
+| `UI/AnalysisGraph.lua` | `Graph` -- the time plot. Owns four stacked rows: the 150px plot, 0-3 charted buff lanes, the range slider, and the timeline + legend; `GraphHeightFor(laneCount)` is a plain global so `Analysis:Layout` can ask for the total before a Graph exists. **The series are real line graphs** (v0.6.0): one pooled `Turbine.UI.Window` per step, sized to a SQUARE the length of the step it draws, carrying `Resources/stroke.tga` and rotated to the step's angle -- see the file header and the Build-status note for the six probe rounds behind every call in `DrawSegment`, none of which is interchangeable. `Graph:Redraw` only ARMS the rotation (`rotateIn`); `Graph:FlushRotation`, driven by `Analysis:Update`, applies it a couple of frames later, because a rotation set before the control has painted is silently dropped. Morale is a **background bar graph** (48 bars + 48 brighter 1px top edges, low-morale pair below `MORALE_DANGER`, guide lines at 100%/50%) and stays bars deliberately; unsampled buckets carry the last known value forward, because a second in which you took no damage is not a second at 0 morale. **Hovering is one mouse-visible Control -- the plot ground -- not 48 zones on top of the data**: the old per-bucket zones hid the morale trace underneath them (found in-game, mechanism never pinned down), and putting the hover surface *behind* everything sidesteps that question entirely while relying only on the click-through behaviour `UI/Row.lua` already depends on. Pools: 2x(48 dots + 47 segments) + 96 morale + 3x24 lane segments, all built once. |
 
 **Two documented deviations from the mockup's literal pixel values**, both explained in
 `UI/Analysis.lua`'s header comment: the graph and skill table stretch to fill the available
@@ -1201,7 +1112,7 @@ Follow the `VitalSelf` pattern: `Turbine.PluginData.Save(Turbine.DataScope.Chara
 ## Testing
 
 **Run `sh tools/offline/run.sh` before every in-game load** (needs `lua5.1`; see
-`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 749
+`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 754
 checks against the real classes and the real `Main.lua`. It is not a substitute for loading the
 plugin -- it cannot tell you whether anything actually *draws* -- but everything it catches is a
 reload you don't have to spend.

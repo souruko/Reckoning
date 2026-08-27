@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.0
+
+**The analysis window's plot is a real line graph.** Damage, healing and everything else you chart
+over time is now drawn as actual sloped lines running from one second's value to the next, instead
+of the stepped, staircase shape it had before. Peaks look like peaks, a steady ramp looks like a
+ramp, and two series over the same fight are much easier to read against each other.
+
+- The morale background stays a bar graph, unchanged — it is meant to read as a backdrop, not
+  compete with the lines in front of it.
+- The live meter's little sparkline is unchanged too.
+- `/reck probe` is a temporary diagnostic window used to work out how the game draws sloped lines.
+  It is not a feature and it will be removed.
+
 ## 0.5.0
 
 **The live meter has a compact mode.** Turn it on under `/reck options` → Live meter and the meter

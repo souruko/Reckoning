@@ -353,6 +353,14 @@ function Analysis:Constructor()
 	local window = self
 	Sessions.OnClosed(function(s) window:OnSessionsChanged(s) end)
 
+	-- Permanently on, and deliberately not armed and disarmed around each redraw. The graph's
+	-- rotation pass has to run after ANY path that reaches Graph:Redraw, and those are not all
+	-- inside this file -- the legend's own swatches call Graph:ToggleSeries directly, for one. An
+	-- arm-per-caller scheme would grow exactly the "a thing exists but nothing triggers it" bug
+	-- this codebase has already collected several of. Update below is a nil check and one call
+	-- that returns immediately when there is nothing pending.
+	self:SetWantsUpdates(true)
+
 	self:SetVisible(false)
 end
 
@@ -3008,6 +3016,19 @@ function Analysis:LayoutKpiCards(innerWidth)
 		card.value:SetSize(cardWidth - 16, 20)
 		card.sub:SetSize(cardWidth - 16, 12)
 		x = x + cardWidth + 8
+	end
+end
+
+-- The graph's rotation pass, and the ONLY thing this window wants per-frame updates for.
+--
+-- Every polyline segment is a rotated Window, and the fact `/reck probe` cost six in-game loads to
+-- establish is that **a rotation applied before the control has painted is silently dropped**. So
+-- Graph:Redraw sizes and positions the segments and arms a pass, and this runs it a couple of
+-- frames later, once. FlushRotation returns immediately when nothing is pending, which is the
+-- common case by a very long way.
+function Analysis:Update()
+	if self.graph ~= nil then
+		self.graph:FlushRotation()
 	end
 end
 
