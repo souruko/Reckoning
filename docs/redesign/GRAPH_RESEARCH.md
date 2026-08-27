@@ -272,42 +272,65 @@ Three other facts came out of it, and two of them are worth keeping whatever hap
   drew white on the left and accent-purple on the right). The plot can get every series colour out
   of one white asset, which is what `line_long.tga` is for.
 
-### Round four
+### Round four -- rotation works, and the missing ingredient was TIMING
 
-Two hypotheses are left. If both fail, `SetRotation` is a no-op on this client.
+Cell E rotated a wedge **once, in the constructor**: nothing happened. Cells F and G rotated the
+same wedge **on every `Update` tick**: it turned, at 90 and at 45 both.
 
-1. **The exact Gibberish3 configuration.** Every rotated control there is a Window whose background
-   image is authored at *the control's own size*, drawn with `SetStretchMode(2)` and tinted through
-   `SetBackColorBlendMode(Overlay)`. Every subject so far differed in at least one of those.
-   `wedge.tga` is 36x36 -- a filled triangle, unmistakable at 45, 90 and 180 -- for exactly this.
-2. **Timing.** Every round so far set the rotation once, in the constructor, before the control had
-   ever painted. Gibberish3 re-applies on every progress change, to a control long since on screen.
-   Cells F, G and H re-rotate on every `Update` tick for ~120 frames.
+**A rotation set before the control has ever painted is silently dropped.** That is why three
+rounds came back flat, and why Gibberish3 never hit it -- its timers re-apply on every progress
+change, to a control long since on screen. Nothing here did.
+
+So, on a `Turbine.UI.Window`: `SetRotation` works, at **arbitrary** angles, provided it is applied
+after the control has painted.
+
+Cells A-D showed all four stretch modes tiling -- which was **the probe's fault, not the engine's**.
+Per the plugin's author, scaling needs a specific sequence:
+
+    control:SetSize(imageW, imageH)     -- the IMAGE's size first
+    control:SetBackground(image)
+    control:SetStretchMode(1)
+    control:SetSize(targetW, targetH)   -- and only now the size you want
+
+Rounds one to four sized the control to the target and set the background after, so the stretch
+mode had no native-sized control to scale from. (`Icon.Size` in `Constants.lua` already leans on
+the same ordering quirk from the other direction, using `SetStretchMode(2)` to snap a control to
+its image's native size so it can read it back.)
+
+### Round five -- what the implementation still needs to know
 
 | Cell | Subject | Reads as |
 | --- | --- | --- |
-| A-D | a 16x16 lens in a **48x48** control under `SetStretchMode` **0 / 1 / 2 / 3**, no rotation | one big lens = that mode SCALES; a 3x3 grid = it tiles; small corner lens = no effect |
-| E | **G3-exact**: 36x36 wedge in a 36x36 Window, stretch 2, Overlay tint, @90 | the flat edge moving means rotation works and earlier rounds differed in something that mattered |
-| F, G | the same at 90 and 45, **re-rotated every frame** | the timing hypothesis |
-| H | a 64x2 stroke @45, re-rotated every frame | the shape the plot actually needs |
+| A | 16x16 lens scaled to 48x48 by the author's sequence, no rotation | one big lens = it scales; a 3x3 grid = still tiling |
+| B | the same, rotated @45 every tick | scaling ends in a `SetSize`, which clears rotation |
+| C | wedge @90, rotation applied **once** after the first paint | does one apply stick? |
+| D | wedge @90, applied **in the constructor** | the known-bad control, for contrast |
+| E | a **64x16** wedge @90 | must become 16x64, i.e. draw well OUTSIDE its own rect |
+| F, G | a 64x2 stroke @90 and @45 | the shape the plot actually draws |
+| H | a real 8-point polyline | if this reads as a line, the rework is a mechanical port |
 
-**A-D matter more than E-H if rotation is dead.** A stretch mode that genuinely scales brings back
-**Option C**, the slope-sprite atlas: it stretches a sprite over each segment's bounding box and
-draws real diagonals with no rotation involved at all.
+**C vs D is the cost question.** If one apply after the first paint sticks, the plot rotates each
+segment once per data change and forgets about it. If rotation has to be re-applied every frame,
+that is 94 `SetRotation` calls per frame, which is a different feature entirely.
+
+**E is the correctness question.** Every subject that has rotated so far was **square**, and a
+square's rotation fits inside its own bounds -- so nothing yet establishes that a rotated draw is
+not clipped to the control itself. A 2px-tall segment has to draw far outside its rect or it cannot
+be a diagonal at all.
 
 ### Answers
 
 | Question | Answer |
 | --- | --- |
 | `SetRotation` on `Turbine.UI.Control` | **ABSENT** -- the call throws |
-| `SetRotation` on `Turbine.UI.Window` | **present**, and callable without error |
-| Any visible effect from a rotation | **none so far** -- rounds 1-3, every configuration tried |
-| The control's own rect rotates | **no** |
+| `SetRotation` on `Turbine.UI.Window` | **present and working** |
+| Rotation applied before the first paint | **silently dropped** -- round 4, E vs F |
+| Arbitrary angles | **yes** -- round 4, G rotated at 45 |
+| Scaling an image | `SetSize(native)` -> `SetBackground` -> `SetStretchMode(1)` -> `SetSize(target)` |
+| Size set before background | every stretch mode **tiles** -- rounds 1-4's mistake |
 | A native-size image renders | **yes** |
-| `SetStretchMode(2)` | **tiles**, does not scale |
-| `SetBlendMode(Overlay)` + stretch | **renders blank** |
 | `SetBackColorBlendMode(Overlay)` + `SetBackColor` tints an image | **yes** |
 | Clipping | **Controls clip to their parent, Windows do not** -- author |
-| A stretch mode that SCALES (round 4, A-D) | |
-| G3-exact config rotates (round 4, E) | |
-| Rotation applied after first paint (round 4, F-H) | |
+| One deferred apply is enough (round 5, C vs D) | |
+| A rotated draw escapes the control's rect (round 5, E-G) | |
+| Positive z turns (cw / ccw) -> `ROT_SIGN` | |

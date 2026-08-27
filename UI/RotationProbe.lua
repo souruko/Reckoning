@@ -1,42 +1,37 @@
 --=================================================================================================
 -- RotationProbe -- `/reck probe`, a throwaway diagnostic window.
 --
--- ROUND 4. Rounds one to three narrowed a broad question down to two specific ones, and this round
--- asks only those. What is settled, from real loads:
+-- ROUND 5. Round four found the thing three rounds had missed, and it was timing:
 --
---   * `SetRotation` is **ABSENT on Turbine.UI.Control** and **present on Turbine.UI.Window**. On a
---     Control the call throws (round three: 4 of 5 applied, the one Control subject being the
---     miss); Gibberish3 only ever rotating Windows was not a style choice.
---   * On a Window it is callable and, so far, **has no visible effect at all** -- not on a solid
---     square, not on a native-size image, not at 45, not at 90, not on a thin bar, not through a
---     Control ancestry and not parented straight into the frame's own Window.
---   * `SetStretchMode(2)` **TILES** the image, it does not scale it. Round three's cell A drew a
---     16x16 lens repeated in a 3x3 grid across a 36x36 control. That, not "stretching renders
---     nothing", is why round two's icon cells looked wrong -- and combined with
---     `SetBlendMode(Overlay)` (which round two also set and this cell did not) it renders blank.
---   * A native-size image renders correctly (round three, cell B).
---   * **`SetBackColorBlendMode(Overlay)` + `SetBackColor` DOES tint a white image** (round three,
---     cell H: the same asset drew white on the left and accent-purple on the right). Whatever
---     happens to rotation, the plot can get every series colour out of one white asset.
---   * Controls clip to their parent, Windows do not (per the plugin's author).
+--   * cell E rotated a wedge ONCE, in the constructor -> nothing happened;
+--   * cells F and G rotated the same wedge on every `Update` tick -> **it turned**, at 90 and at
+--     45 both.
 --
--- So two hypotheses remain, and if both fail then `SetRotation` on this client is a no-op and the
--- line graph has to come from somewhere else.
+-- So `SetRotation` works on a `Turbine.UI.Window` (it is ABSENT on `Turbine.UI.Control` -- the call
+-- throws), at arbitrary angles, and **a rotation set before the control has ever painted is
+-- silently dropped.** Gibberish3 never hit this because its timers re-apply on every progress
+-- change, to a control long since on screen. Nothing here did, for three rounds.
 --
---   1. **The exact Gibberish3 configuration.** Every rotated control there is a Window whose
---      background image is authored at the control's own size, drawn with `SetStretchMode(2)` and
---      tinted through `SetBackColorBlendMode(Overlay)`. Every probe subject so far has differed in
---      at least one of those (a 16x16 asset in a 36x36 control, or no tint, or no stretch).
---      `wedge.tga` is 36x36 for exactly this cell.
---   2. **Timing.** Every probe so far applied rotation once, in the constructor, before the control
---      had ever painted. Gibberish3 re-applies on every progress change, i.e. continuously after
---      the control is long since on screen. If the engine only honours a rotation set on an
---      already-rendered control, that difference alone explains three flat rounds.
+-- The second half came from the plugin's author: **scaling an image needs a specific sequence** --
+-- size the control to the IMAGE's own size, `SetBackground`, `SetStretchMode(1)`, and only THEN
+-- size it to the target. Rounds one to four set the size first and the background after, which is
+-- why every stretch mode looked like it tiled: the mode had no native-sized control to scale from.
+-- (`Icon.Size` in Constants.lua already leans on the same ordering quirk from the other direction,
+-- using `SetStretchMode(2)` to snap a control to its image's native size so it can read it back.)
 --
--- Cells A-D also settle something worth more than rotation if rotation is dead: **which stretch
--- mode, if any, SCALES an image.** If one of them does, the slope-sprite atlas (Option C in
--- GRAPH_RESEARCH.md) is back on the table -- it needs a sprite stretched over each segment's
--- bounding box, and it draws real diagonals with no rotation at all.
+-- Which leaves exactly what a line graph needs to know, and this round asks only that:
+--
+--   1. Does the author's scaling sequence actually scale? (A)
+--   2. Does a scaled image still rotate? (B)
+--   3. Does ONE deferred apply stick, or must every segment be re-rotated on every frame? (C, D)
+--      This decides whether the plot can rotate 94 segments once per data change or has to touch
+--      them all every tick, which is the difference between free and unaffordable.
+--   4. **Does a rotated draw escape the control's own rect?** (E, F, G) Every subject that has
+--      rotated so far was SQUARE, and a square's rotation fits inside its own bounds. A 2px-tall
+--      segment's does not -- it has to draw outside the rect or it cannot be a diagonal at all.
+--      Windows do not clip to their parent, but nothing yet says a rotated draw is not clipped to
+--      the control ITSELF.
+--   5. And the whole thing at once: a real polyline (H).
 --
 -- NOTHING ELSE IMPORTS THIS. It is built on demand by /reck probe and is meant to be deleted once
 -- the answers are written into docs/redesign/GRAPH_RESEARCH.md section 7.
@@ -55,23 +50,23 @@ local ROW_PITCH = LABEL_H + CELL_H + 8
 local STATUS_H  = 30
 
 local STROKE = 2
-local ICON   = 16 -- search.tga's native size
-local BOX    = 48 -- the stretch-mode cells' control, deliberately 3x the asset
-local WEDGE  = 36 -- wedge.tga's native size, and the control's size in the G3-exact cells
+local BOX    = 48 -- the scale target for a 16x16 asset
+local WEDGE  = 36
 local LINE_W = 64
+local WIDE_W, WIDE_H = 64, 16 -- the deliberately not-square rotation subject
 
--- Frames of re-rotation before the deferred cells give up. Two seconds or so at any frame rate
--- is far past "the control has painted", which is the only thing this is testing.
+-- Frames of re-rotation before the "every tick" cells give up. Two seconds or so at any frame rate
+-- is far past "the control has painted", which is all this is testing.
 local UPDATE_TICKS = 120
 
 local GHOST_CX   = 62
 local SUBJECT_CX = 156
 
-local LINE_IMAGE  = "Reckoning/Resources/line_long.tga"
-local ICON_IMAGE  = "Reckoning/Resources/search.tga"
--- 36x36, a filled upper-left triangle: unmistakable at 45, 90 and 180, and authored at exactly the
--- size of the control that draws it, which is the Gibberish3 property every earlier subject missed.
-local WEDGE_IMAGE = "Reckoning/Resources/wedge.tga"
+-- image, and its NATIVE size -- which the scaling sequence needs and which is a constant for our
+-- own assets, so the shipping code never has to probe for it the way Icon.Size does.
+local ICON_IMAGE,  ICON_W,  ICON_H  = "Reckoning/Resources/search.tga", 16, 16
+local WEDGE_IMAGE, WEDGE_W, WEDGE_H = "Reckoning/Resources/wedge.tga", 36, 36
+local LINE_IMAGE,  LINE_NW, LINE_NH = "Reckoning/Resources/line_long.tga", 256, 4
 
 ---------------------------------------------------------------------------------------------------
 -- Primitives
@@ -87,52 +82,60 @@ local function Apply(bar)
 	return ok
 end
 
--- Gibberish3's configuration verbatim: a Window, an image authored at the control's own size,
--- SetStretchMode(2), and the tint through SetBackColorBlendMode(Overlay) + SetBackColor. `image`
--- nil means a plain back-colour fill; `stretch` nil means no SetStretchMode call at all.
+-- THE AUTHOR'S SCALING SEQUENCE, and the only one that scales rather than tiling: size the control
+-- to the image's own size FIRST, set the background, THEN SetStretchMode(1), and only then size it
+-- to what you actually want. Order is the whole trick -- with the target size set first, every
+-- stretch mode tiles (rounds one to four).
 --
--- pcall'd and nil on failure -- a probe whose failing case takes the window down answers nothing.
-local function Subject(parent, kind, image, color, stretch, z)
+-- Both SetSize calls clear any rotation, which is why rotation is never applied in here.
+local function Scale(bar, image, nativeW, nativeH, w, h)
+	bar:SetSize(nativeW, nativeH)
+	bar:SetBackground(image)
+	bar:SetStretchMode(1)
+	bar:SetSize(w, h)
+end
+
+-- A Window (Control has no SetRotation at all), optionally image-backed and scaled, optionally
+-- tinted through the Overlay trick round three confirmed. pcall'd and nil on failure.
+local function Subject(parent, spec)
 	local bar
 
 	local ok = pcall(function()
-		bar = (kind == "window") and Turbine.UI.Window() or Turbine.UI.Control()
+		bar = Turbine.UI.Window()
 		bar:SetParent(parent)
 		bar:SetMouseVisible(false)
 		-- A parented Turbine.UI.Window starts hidden and draws BEHIND its parent (CLAUDE.md).
-		bar:SetZOrder(z or 50)
+		bar:SetZOrder(spec.z or 50)
 
-		if image ~= nil then
-			if stretch ~= nil then
-				bar:SetStretchMode(stretch)
+		if spec.image ~= nil then
+			if spec.scale then
+				Scale(bar, spec.image, spec.nativeW, spec.nativeH, spec.w, spec.h)
+			else
+				bar:SetBackground(spec.image)
+				bar:SetSize(spec.w, spec.h)
 			end
-			bar:SetBackground(image)
-			if color ~= nil then
+			if spec.color ~= nil then
 				bar:SetBackColorBlendMode(Turbine.UI.BlendMode.Overlay)
-				bar:SetBackColor(color)
+				bar:SetBackColor(spec.color)
 			end
 		else
-			bar:SetBackColor(color)
+			bar:SetSize(spec.w, spec.h)
+			bar:SetBackColor(spec.color)
 		end
 
+		bar:SetPosition(math.floor(spec.cx - spec.w / 2), math.floor(spec.cy - spec.h / 2))
 		bar:SetVisible(true)
 	end)
 
 	if not ok then return nil end
 
-	bar.rotation = { x = 0, y = 0, z = 0 }
-	return bar
-end
-
--- Size and centre, then rotate. Rotation LAST -- SetSize and SetBackground both clear it.
-local function Place(bar, cx, cy, w, h, deg)
-	if bar == nil then return end
-	bar:SetSize(w, h)
-	bar:SetPosition(math.floor(cx - w / 2), math.floor(cy - h / 2))
-	bar.rotation.z = deg or 0
-	if deg ~= nil and deg ~= 0 then
+	bar.rotation = { x = 0, y = 0, z = spec.deg or 0 }
+	bar.mode = spec.mode
+	-- "now" reproduces the round-four failure deliberately; the deferred modes are the fix.
+	if spec.deg ~= nil and spec.deg ~= 0 and spec.mode == "now" then
 		Apply(bar)
 	end
+	return bar
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -150,7 +153,7 @@ function RotationProbe:Constructor()
 	rotationOk, rotationCalls = 0, 0
 
 	self.subjects = {}
-	self.deferred = {} -- re-rotated on every Update tick, see hypothesis 2
+	self.deferred = {}
 	self.cells = {}
 	self.ticks = 0
 
@@ -161,26 +164,25 @@ function RotationProbe:Constructor()
 	self:RefreshStatus()
 	self:Report()
 
-	-- Hypothesis 2 lives or dies here: nothing in three rounds has ever set a rotation on a control
-	-- that was already on screen. This keeps re-applying it, frame after frame, long after the
-	-- first paint -- which is the situation Gibberish3's own timers are always in.
 	self:SetWantsUpdates(true)
 end
 
+-- Where round four's finding gets turned into a question with a cost attached: "once" applies the
+-- rotation on the first tick and never again, "every" keeps re-applying. If once is enough, the
+-- plot rotates its segments one frame after a data change and forgets about them; if not, it has
+-- to touch every visible segment on every frame, which at 94 segments is a different feature.
 function RotationProbe:Update()
-	-- Guarded on the counter, not only on SetWantsUpdates(false) below: a stopped window is the
-	-- engine's decision to make and this has to be true regardless of whether it honours it.
-	if self.ticks >= UPDATE_TICKS or table.getn(self.deferred) == 0 then
+	if self.ticks >= UPDATE_TICKS then
 		return
 	end
 
 	self.ticks = self.ticks + 1
 	for _, bar in ipairs(self.deferred) do
-		Apply(bar)
+		if bar.mode == "every" or self.ticks == 1 then
+			Apply(bar)
+		end
 	end
 
-	-- The status line would otherwise scroll its applied-count forever; a couple of seconds of
-	-- frames is plenty to prove the point, and the count is more readable if it stops somewhere.
 	if self.ticks >= UPDATE_TICKS then
 		self:SetWantsUpdates(false)
 		self:RefreshStatus()
@@ -231,16 +233,30 @@ function RotationProbe:Ground(index, text)
 	return fill
 end
 
-function RotationProbe:Track(bar, deferredToo)
+function RotationProbe:Add(cell, spec)
+	spec.cy = spec.cy or cell.cy
+	local bar = Subject(cell, spec)
+
 	if bar == nil then
 		self.refused = (self.refused or 0) + 1
 		return nil
 	end
-	self.subjects[table.getn(self.subjects) + 1] = bar
-	if deferredToo then
-		self.deferred[table.getn(self.deferred) + 1] = bar
+
+	if spec.deg ~= nil and spec.deg ~= 0 then
+		self.subjects[table.getn(self.subjects) + 1] = bar
+		if spec.mode ~= "now" then
+			self.deferred[table.getn(self.deferred) + 1] = bar
+		end
 	end
 	return bar
+end
+
+-- The unrotated reference every cell carries, so "did it change?" never depends on memory.
+function RotationProbe:Reference(cell, spec)
+	spec.cx = GHOST_CX
+	spec.deg = nil
+	spec.z = 40
+	return self:Add(cell, spec)
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -248,53 +264,92 @@ end
 ---------------------------------------------------------------------------------------------------
 
 function RotationProbe:BuildCells()
-	-- A-D: which stretch mode, if any, SCALES? A 16x16 lens in a 48x48 control, no rotation, no
-	-- blend mode. One big lens = that mode scales; a 3x3 grid of lenses = it tiles; one small lens
-	-- in the corner = no scaling at all; blank = the mode is not valid here. This is worth more
-	-- than the rotation cells if rotation is dead: a mode that scales brings back Option C, the
-	-- slope-sprite atlas, which draws real diagonals with no rotation involved.
-	for i, mode in ipairs({ 0, 1, 2, 3 }) do
-		local cell = self:Ground(i, string.format("%s  SetStretchMode(%d) -- scales? tiles?",
-			string.char(64 + i), mode))
-		Place(Subject(cell, "window", ICON_IMAGE, nil, mode, 40), SUBJECT_CX, cell.cy, BOX, BOX, 0)
-		-- The same asset at its native size, for scale reference.
-		Place(Subject(cell, "window", ICON_IMAGE, nil, nil, 40), GHOST_CX, cell.cy, ICON, ICON, 0)
+	local accent = Theme.Color(Theme.Hex.Accent)
+
+	local function Lens(scale)
+		return { image = ICON_IMAGE, nativeW = ICON_W, nativeH = ICON_H,
+			w = BOX, h = BOX, scale = scale }
+	end
+	local function Wedge(w, h)
+		return { image = WEDGE_IMAGE, nativeW = WEDGE_W, nativeH = WEDGE_H,
+			w = w or WEDGE, h = h or WEDGE, scale = true, color = accent }
+	end
+	local function Line(w, h)
+		return { image = LINE_IMAGE, nativeW = LINE_NW, nativeH = LINE_NH,
+			w = w, h = h, scale = true, color = accent }
 	end
 
-	-- E: Gibberish3's configuration verbatim, for the first time -- a Window, an image authored at
-	-- the control's own size, SetStretchMode(2), tinted through SetBackColorBlendMode(Overlay).
-	-- Only the rotation is ours. If the wedge's flat edge moves, rotation works and every earlier
-	-- round differed from Gibberish3 in something that mattered.
-	local e = self:Ground(5, "E  G3-EXACT: 36x36 wedge @90, tinted")
-	Place(Subject(e, "window", WEDGE_IMAGE, Theme.Color(Theme.Hex.Accent), 2, 40),
-		GHOST_CX, e.cy, WEDGE, WEDGE, 0)
-	Place(self:Track(Subject(e, "window", WEDGE_IMAGE, Theme.Color(Theme.Hex.Accent), 2)),
-		SUBJECT_CX, e.cy, WEDGE, WEDGE, 90)
+	local function Spec(base, extra)
+		local out = {}
+		for k, v in pairs(base) do out[k] = v end
+		for k, v in pairs(extra) do out[k] = v end
+		return out
+	end
 
-	-- F: the same, but re-rotated on every Update tick. Nothing in three rounds has set a rotation
-	-- on a control that had already painted, and Gibberish3 is always in that situation.
-	local f = self:Ground(6, "F  same, re-rotated every tick (timing)")
-	Place(Subject(f, "window", WEDGE_IMAGE, Theme.Color(Theme.Hex.Accent), 2, 40),
-		GHOST_CX, f.cy, WEDGE, WEDGE, 0)
-	Place(self:Track(Subject(f, "window", WEDGE_IMAGE, Theme.Color(Theme.Hex.Accent), 2), true),
-		SUBJECT_CX, f.cy, WEDGE, WEDGE, 90)
+	-- A: does the author's sequence scale? One big lens = yes. A 3x3 grid = still tiling, and
+	-- everything below is moot. No rotation involved.
+	local a = self:Ground(1, "A  SCALE 16->48, author's sequence  (one lens?)")
+	self:Reference(a, Lens(false))
+	self:Add(a, Spec(Lens(true), { cx = SUBJECT_CX }))
 
-	-- G: the wedge at 45 with the deferred apply -- arbitrary angles, under the best configuration
-	-- and the best timing this probe can produce.
-	local g = self:Ground(7, "G  G3-exact wedge @45, re-rotated every tick")
-	Place(Subject(g, "window", WEDGE_IMAGE, Theme.Color(Theme.Hex.Accent), 2, 40),
-		GHOST_CX, g.cy, WEDGE, WEDGE, 0)
-	Place(self:Track(Subject(g, "window", WEDGE_IMAGE, Theme.Color(Theme.Hex.Accent), 2), true),
-		SUBJECT_CX, g.cy, WEDGE, WEDGE, 45)
+	-- B: and does a SCALED image still rotate? Scaling ends in a SetSize, which clears rotation --
+	-- so this is really "is the re-apply ordering still right once scaling is in the mix".
+	local b = self:Ground(2, "B  scaled lens @45, every tick")
+	self:Reference(b, Lens(true))
+	self:Add(b, Spec(Lens(true), { cx = SUBJECT_CX, deg = 45, mode = "every", color = accent }))
 
-	-- H: and the shape the plot actually needs -- a thin stroke -- under the same best-case
-	-- treatment. Even if E-G turn, this is the one that says whether a 2px segment can be a
-	-- diagonal, because a rotated thin control has to draw outside its own rect to do it.
-	local h = self:Ground(8, "H  line 64x2 @45, re-rotated every tick")
-	Place(Subject(h, "window", LINE_IMAGE, Theme.Color(Theme.Hex.Accent), nil, 40),
-		GHOST_CX, h.cy, LINE_W, STROKE, 0)
-	Place(self:Track(Subject(h, "window", LINE_IMAGE, Theme.Color(Theme.Hex.Accent), nil), true),
-		SUBJECT_CX, h.cy, LINE_W, STROKE, 45)
+	-- C and D: the cost question. Round four only proved that re-rotating EVERY frame works. If one
+	-- apply after the first paint is enough, the plot rotates its segments once per data change; if
+	-- not, it has to touch all 94 every frame, which is a different feature entirely.
+	local c = self:Ground(3, "C  wedge @90, ONE apply after first paint")
+	self:Reference(c, Wedge())
+	self:Add(c, Spec(Wedge(), { cx = SUBJECT_CX, deg = 90, mode = "once" }))
+
+	local d = self:Ground(4, "D  wedge @90, applied in constructor (control)")
+	self:Reference(d, Wedge())
+	self:Add(d, Spec(Wedge(), { cx = SUBJECT_CX, deg = 90, mode = "now" }))
+
+	-- E: THE ONE THAT MATTERS NOW. Every subject that has rotated so far was square, and a square's
+	-- rotation fits inside its own bounds -- so nothing yet says a rotated draw is not clipped to
+	-- the control itself. A 64x16 wedge at 90 has to become 16x64 to be visible, which means
+	-- drawing well outside its own rect. A 2px segment needs exactly that and much more of it.
+	local e = self:Ground(5, "E  64x16 wedge @90 -- draws outside its rect?")
+	self:Reference(e, Wedge(WIDE_W, WIDE_H))
+	self:Add(e, Spec(Wedge(WIDE_W, WIDE_H), { cx = SUBJECT_CX, deg = 90, mode = "every" }))
+
+	-- F and G: the actual shape the plot draws, at the proven angle and at an arbitrary one.
+	local f = self:Ground(6, "F  line 64x2 @90 -- vertical?")
+	self:Reference(f, Line(LINE_W, STROKE))
+	self:Add(f, Spec(Line(LINE_W, STROKE), { cx = SUBJECT_CX, deg = 90, mode = "every" }))
+
+	local g = self:Ground(7, "G  line 64x2 @45 -- diagonal?")
+	self:Reference(g, Line(LINE_W, STROKE))
+	self:Add(g, Spec(Line(LINE_W, STROKE), { cx = SUBJECT_CX, deg = 45, mode = "every" }))
+
+	-- H: all of it at once -- a real 8-point polyline, one rotated segment per step, drawn with the
+	-- arithmetic UI/AnalysisGraph.lua would ship.
+	local h = self:Ground(8, "H  REAL POLYLINE (ships as-is)")
+	local data = { 0.2, 0.75, 0.55, 0.95, 0.1, 0.6, 0.35, 0.8 }
+	local hw, hh = h:GetSize()
+	local points = table.getn(data)
+	local pitch = hw / points
+	local xs, ys = {}, {}
+	for i = 1, points do
+		xs[i] = (i - 1) * pitch + pitch / 2
+		ys[i] = hh - 6 - data[i] * (hh - 14)
+	end
+	self.linePoints, self.lineBars = {}, {}
+	for i = 1, points do self.linePoints[i] = { x = xs[i], y = ys[i] } end
+	for i = 1, points - 1 do
+		local dx, dy = xs[i + 1] - xs[i], ys[i + 1] - ys[i]
+		local len = math.sqrt(dx * dx + dy * dy)
+		self.lineBars[i] = self:Add(h, Spec(Line(math.floor(len + STROKE), STROKE), {
+			cx = (xs[i] + xs[i + 1]) / 2,
+			cy = (ys[i] + ys[i + 1]) / 2,
+			deg = math.deg(math.atan2(dy, dx)),
+			mode = "every",
+		}))
+	end
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -316,23 +371,23 @@ end
 function RotationProbe:RefreshStatus()
 	self.statusLine:SetText(self:Status())
 	self.statusHint:SetText(
-		"A-D: which mode SCALES the 16px lens to 48px?   E-H: does the wedge's flat edge move?")
+		"A: one lens or nine?   C vs D: does ONE apply stick?   E-G: does the draw leave the rect?")
 end
 
 function RotationProbe:Report()
 	local function Say(text) Turbine.Shell.WriteLine("  " .. text) end
 
-	Turbine.Shell.WriteLine("Reckoning rotation probe (round 4) -- " .. self:Status())
-	Say("Left of each cell is the reference; right is the subject.")
-	Say("A-D: a 16x16 lens drawn in a 48x48 control under stretch modes 0/1/2/3, no rotation.")
-	Say("   ONE BIG LENS = that mode scales -- which brings back the slope-sprite atlas (real")
-	Say("   diagonals, no rotation needed). A 3x3 GRID = it tiles. Small corner lens = no effect.")
-	Say("E: Gibberish3's configuration verbatim for the first time -- a Window, an image authored")
-	Say("   at the control's own size, SetStretchMode(2), Overlay tint. Only the rotation is ours.")
-	Say("F/G: the same at 90 and 45, but re-rotated on every frame. Every round so far set the")
-	Say("   rotation once in the constructor, before the control had ever painted; Gibberish3 is")
-	Say("   always re-applying to a control that is long since on screen.")
-	Say("H: a 64x2 stroke at 45 under the same best-case treatment -- the shape the plot needs.")
-	Say("If the wedge never moves in E-H, SetRotation is a no-op on this client and the line graph")
-	Say("has to come from a stretch mode instead. That is what A-D are for.")
+	Turbine.Shell.WriteLine("Reckoning rotation probe (round 5) -- " .. self:Status())
+	Say("Round four settled it: rotation works on a Window at any angle, but a rotation set")
+	Say("BEFORE the control has ever painted is silently dropped. Scaling needs the author's")
+	Say("sequence: size to the IMAGE, SetBackground, SetStretchMode(1), then size to the target.")
+	Say("A: does that sequence scale? ONE big lens = yes. A 3x3 grid = still tiling.")
+	Say("B: a scaled image rotated -- scaling ends in a SetSize, which clears rotation.")
+	Say("C vs D: C applies the rotation ONCE after the first paint, D in the constructor. If C")
+	Say("   turned and D did not, the plot rotates each segment once per data change instead of")
+	Say("   re-rotating all 94 every frame -- the difference between free and unaffordable.")
+	Say("E: a 64x16 wedge at 90 must become 16x64, i.e. draw well OUTSIDE its own rect. Every")
+	Say("   subject that has rotated so far was square, so this has never actually been asked.")
+	Say("F/G: the real shape -- a 64x2 stroke at 90 and at 45.")
+	Say("H: a real 8-point polyline. If this reads as a line, the rework is a mechanical port.")
 end
