@@ -32,6 +32,7 @@ Every icon in this folder is derived from [Phosphor Icons](https://phosphoricons
 | `pin_off.tga` | `push-pin-simple` | regular | 12x12 | white | `UI/Analysis.lua` session rail, unpinned session |
 | `line.tga` | -- (plain block) | -- | 8x8 | white | `UI/RotationProbe.lua` (stretched-sprite case) |
 | `line_long.tga` | -- (plain block) | -- | 256x4 | white | `UI/RotationProbe.lua` stroke source, clipped not stretched |
+| `wedge.tga` | -- (plain triangle) | -- | 36x36 | white | `UI/RotationProbe.lua` rotation subject |
 
 **Regular weight** (fill only for the "on" state of a two-state glyph), matching Gibberish3's and
 LootLogs' own `RESOURCES`/`Ressources` -- all three plugins now share one window language. At 16px

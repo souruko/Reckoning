@@ -248,44 +248,66 @@ image, so "does a rotated image draw outside its rect" has never actually been a
 a small gap: Gibberish3 only ever rotates image-backed controls, so it is the only configuration
 with any production evidence behind it.
 
-### Round three
+### Round three, and what it settled
 
-Every image subject drawn at its asset's NATIVE size, no stretch. `line_long.tga` is 256x4 white,
-so Turbine's clip-to-the-control behaviour crops it to any length for free -- which is what a
-uniform stroke wants anyway, and unlike stretching it is confirmed to work here.
+Every image subject at its asset's native size, no stretch, plus the window carrying its own API
+status so a screenshot answers everything.
+
+**`SetRotation` is ABSENT on `Turbine.UI.Control` and present on `Turbine.UI.Window`.** On a Control
+the call throws -- 4 of 5 applied, the miss being the one Control subject. Gibberish3 rotating only
+Windows was not a style choice.
+
+**On a Window it is callable and has no visible effect.** Not on a solid square, not on a
+native-size image, not at 45, not at 90, not on a thin bar, not through a Control ancestry, not
+parented straight into the frame's own Window.
+
+Three other facts came out of it, and two of them are worth keeping whatever happens to rotation:
+
+- **`SetStretchMode(2)` TILES an image, it does not scale it.** Cell A drew a 16x16 lens repeated
+  in a 3x3 grid across a 36x36 control. That -- not "a stretched image renders nothing" -- is what
+  round two's blank icon cells were showing, once combined with `SetBlendMode(Overlay)`, which
+  round two also set and cell A did not. `SetBlendMode(Overlay)` **plus** stretch renders blank.
+- **A native-size image renders correctly** (cell B).
+- **`SetBackColorBlendMode(Overlay)` + `SetBackColor` tints a white image** (cell H: the same asset
+  drew white on the left and accent-purple on the right). The plot can get every series colour out
+  of one white asset, which is what `line_long.tga` is for.
+
+### Round four
+
+Two hypotheses are left. If both fail, `SetRotation` is a no-op on this client.
+
+1. **The exact Gibberish3 configuration.** Every rotated control there is a Window whose background
+   image is authored at *the control's own size*, drawn with `SetStretchMode(2)` and tinted through
+   `SetBackColorBlendMode(Overlay)`. Every subject so far differed in at least one of those.
+   `wedge.tga` is 36x36 -- a filled triangle, unmistakable at 45, 90 and 180 -- for exactly this.
+2. **Timing.** Every round so far set the rotation once, in the constructor, before the control had
+   ever painted. Gibberish3 re-applies on every progress change, to a control long since on screen.
+   Cells F, G and H re-rotate on every `Update` tick for ~120 frames.
 
 | Cell | Subject | Reads as |
 | --- | --- | --- |
-| A | a **stretched** image, no rotation | blank confirms rounds 1-2 never drew an image |
-| B | the same art at **native size**, no rotation | must render, or nothing below means anything |
-| C, D | native icon at **45** and **90** | the art turning means the engine rotates a control's CONTENT |
-| E | **native line 64x2 @90, Window** | THE DECIDING CELL: vertical means a rotated draw escapes its own rect, the only mechanism by which a thin control can draw a diagonal |
-| F | the same on a **Control** | E turning and F not means the segment pool has to be Windows |
-| G | native line 64x2 **@45**, Window | arbitrary angles, not just right angles |
-| H | native line tinted by **Overlay + BackColor**, no rotation | two series colours out of one white asset |
+| A-D | a 16x16 lens in a **48x48** control under `SetStretchMode` **0 / 1 / 2 / 3**, no rotation | one big lens = that mode SCALES; a 3x3 grid = it tiles; small corner lens = no effect |
+| E | **G3-exact**: 36x36 wedge in a 36x36 Window, stretch 2, Overlay tint, @90 | the flat edge moving means rotation works and earlier rounds differed in something that mattered |
+| F, G | the same at 90 and 45, **re-rotated every frame** | the timing hypothesis |
+| H | a 64x2 stroke @45, re-rotated every frame | the shape the plot actually needs |
 
-The window carries its own API status in a header line, not only in chat, so a screenshot carries
-the whole answer.
-
-**If E is still horizontal, Option B is finished** and the choice is Option C (the slope-sprite
-atlas) or staying with Option A. Note that A's result bears on C too: the atlas stretches a slope
-sprite over each segment's bounding box, so a client that will not stretch a file-path image cannot
-draw C either.
+**A-D matter more than E-H if rotation is dead.** A stretch mode that genuinely scales brings back
+**Option C**, the slope-sprite atlas: it stretches a sprite over each segment's bounding box and
+draws real diagonals with no rotation involved at all.
 
 ### Answers
 
-Fill these in from a real load, then delete the probe:
-
 | Question | Answer |
 | --- | --- |
-| The control's own rect rotates | **no** -- round two: solid squares stayed square, a 64x2 Window bar at 90 stayed horizontal |
-| A stretched file-path image renders (cell A) | |
-| A native-size image renders (cell B) | |
-| The control's content rotates (cells C, D) | |
-| A rotated image draws outside its rect (cell E) | |
-| Control, or Window only (cells E vs F) | |
-| Arbitrary z, or 90 only (cells E vs G) | |
-| Overlay + BackColor tints an image (cell H) | |
+| `SetRotation` on `Turbine.UI.Control` | **ABSENT** -- the call throws |
+| `SetRotation` on `Turbine.UI.Window` | **present**, and callable without error |
+| Any visible effect from a rotation | **none so far** -- rounds 1-3, every configuration tried |
+| The control's own rect rotates | **no** |
+| A native-size image renders | **yes** |
+| `SetStretchMode(2)` | **tiles**, does not scale |
+| `SetBlendMode(Overlay)` + stretch | **renders blank** |
+| `SetBackColorBlendMode(Overlay)` + `SetBackColor` tints an image | **yes** |
 | Clipping | **Controls clip to their parent, Windows do not** -- author |
-| Positive z turns (cw / ccw) -> `ROT_SIGN` | |
-| Pivot is the control's centre | |
+| A stretch mode that SCALES (round 4, A-D) | |
+| G3-exact config rotates (round 4, E) | |
+| Rotation applied after first paint (round 4, F-H) | |

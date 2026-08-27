@@ -51,7 +51,7 @@ the player-facing version and `REDESIGN_SPEC.md` for the spec each piece came fr
 **There is now a real offline test suite: `tools/offline/`.** Unlike the original scratch harness
 (described below), it runs the **real** classes and the **real** `Main.lua` under a **real Lua
 5.1** interpreter against a `Turbine` stub built on this repo's own `class()` shim. `sh
-tools/offline/run.sh` runs 744 checks in about a second. It caught three genuine bugs during the
+tools/offline/run.sh` runs 747 checks in about a second. It caught three genuine bugs during the
 redesign that `luac -p` could not have: an index-base probe that could not actually distinguish a
 0-based from a 1-based `EffectList`, a `nil` layout constant reaching `SetPosition`, and the
 analysis window failing to adopt an already-archived session. It caught three more during the
@@ -317,21 +317,41 @@ never actually been asked** -- and image-backed is the only configuration Gibber
 evidence for. **Lesson: when a cell renders nothing, that is a result about the RECIPE, not a
 missing answer to the question the cell was written to ask.**
 
-**Round three** draws every image subject at its asset's native size with no stretch --
-`line_long.tga` is 256x4 white so Turbine's clip-to-the-control behaviour crops it to any length for
-free, which is what a uniform stroke wants anyway. Eight cells: the stretched-vs-native render
-control pair (A, B), the icon at 45 and 90 for content rotation (C, D), a native-image 64x2 Window
-bar at 90 as the deciding cell (E), the same on a Control for the clipping difference (F), 45 rather
-than 90 for arbitrary angles (G), and the Overlay + BackColor tint the plot needs to get two series
-colours out of one white asset (H). **If E is still horizontal, Option B is finished** -- and cell
-A's result bears on Option C too, since the slope-sprite atlas stretches a sprite over each
-segment's bounding box and a client that will not stretch a file-path image cannot draw that either.
+**Round three** drew every image subject at its asset's native size and put the API status in the
+window itself. It settled the API question and produced three facts worth keeping regardless of
+where the plot ends up:
+
+- **`SetRotation` is ABSENT on `Turbine.UI.Control`, present on `Turbine.UI.Window`.** On a Control
+  the call throws. Gibberish3 rotating only Windows was never a style choice.
+- **On a Window it is callable and has no visible effect** -- not on a solid square, a native-size
+  image, a thin bar, at 45 or 90, through a Control ancestry or parented straight into the frame.
+- **`SetStretchMode(2)` TILES an image, it does not scale it** -- a 16x16 lens repeated in a 3x3
+  grid across a 36x36 control. That, not "a stretched image renders nothing", is what round two's
+  blank cells were showing: stretch **plus `SetBlendMode(Overlay)`** renders blank, stretch alone
+  tiles. **This is a live correction to the self-buff icon saga above** -- round eight's
+  `SetBlendMode(Overlay)` in `Icon.Apply` is the combination that blanks a stretched tile, and
+  round seven was right to drop `SetStretchMode` outright.
+- **`SetBackColorBlendMode(Overlay)` + `SetBackColor` DOES tint a white image** -- one asset drew
+  white and accent-purple side by side. Whatever happens to rotation, the plot can get every series
+  colour out of a single white asset (`Resources/line_long.tga`, 256x4, clipped rather than
+  stretched to any segment length).
+
+**Round four** asks the last two things that could explain three flat rounds, and one thing that
+matters more than either if they fail. The two: **the exact Gibberish3 configuration** (a Window
+whose image is authored at *the control's own size*, `SetStretchMode(2)`, Overlay tint -- every
+earlier subject differed in at least one of those; `Resources/wedge.tga` is a 36x36 filled triangle
+for exactly this cell), and **timing** (every round so far set the rotation once in the constructor,
+before the control had ever painted, where Gibberish3 re-applies continuously to a control long
+since on screen -- so three cells now re-rotate on every `Update` tick). The thing that matters
+more: cells A-D draw a 16x16 lens in a 48x48 control under `SetStretchMode` 0/1/2/3, because **a
+mode that genuinely SCALES brings back Option C**, the slope-sprite atlas, which draws real
+diagonals with no rotation involved at all.
 
 Two things worth carrying into the rework itself. **The failure signature**: a plot of long flat
 bars punched through the data is what an unrotated steep segment looks like (its unrotated rect is
 its full diagonal length) -- distinctive, and not to be confused with "the graph is blank" (which
-was the `graphHolder` sizing bug above), but **not by itself a diagnosis**: no rotation, content-only
-rotation and an image that never rendered all look the same. And
+was the `graphHolder` sizing bug above), but **not by itself a diagnosis**: no rotation, a rotation
+the engine ignores and an image that never rendered all look the same. And
 **the invariant that makes the whole "rotation does not survive X" bug class impossible**:
 `Redraw()` re-specifies every visible segment completely -- size, colour, position, rotation last
 -- so nothing may touch a segment outside its draw function. `tools/offline/stub.lua` now enforces
@@ -857,7 +877,7 @@ inheritance + mixins). Treat them as vendored, not Reckoning-specific.
 | `UI/Bar.lua` | `Bar` -- 1px-border track Control with a fill child; `SetPercent(pct)` sets width directly (no tweening anywhere, per `docs/DESIGN.md`). |
 | `UI/Row.lua` | `Row` -- a fixed-column-offset row of Labels for tables; pooled and reused across refreshes, never rebuilt per redraw. |
 | `UI/RangeSlider.lua` | `RangeSlider` -- the two-handle time-range control under the plot. Snaps to the graph's 48 bucket stops, not to pixels, so the numbers in the window and the marks on the plot agree exactly and only 48 distinct ranges per endpoint can ever be asked for. Drag uses the same MouseDown/MouseMove/MouseUp shape as `Frame:WireDrag` and the resize gripper -- confirmed-working precedent, no new assumption about mouse delivery. Handles clamp to `other handle -/+ 1`; a zero-width range would divide by zero everywhere downstream. |
-| `UI/RotationProbe.lua` | `RotationProbe` (extends `Frame`) -- the `/reck probe` diagnostic window (round 3), and the only thing in this codebase that calls `SetRotation`. Nothing imports it but `UI/__init__.lua`; it exists to answer the questions the line-graph rework depends on and is meant to be **deleted once they are answered** (`docs/redesign/GRAPH_RESEARCH.md` section 7 holds the answer table) -- along with the `windows.probe` entry it leaves behind in saved settings, since it takes a `Frame` key like any other window. |
+| `UI/RotationProbe.lua` | `RotationProbe` (extends `Frame`) -- the `/reck probe` diagnostic window (round 4), and the only thing in this codebase that calls `SetRotation`. Nothing imports it but `UI/__init__.lua`; it exists to answer the questions the line-graph rework depends on and is meant to be **deleted once they are answered** (`docs/redesign/GRAPH_RESEARCH.md` section 7 holds the answer table) -- along with the `windows.probe` entry it leaves behind in saved settings, since it takes a `Frame` key like any other window. |
 
 `UI/__init__.lua` imports Frame/Bar/Row in that order; `Main.lua` does `import "Reckoning.UI"`
 once. **Cross-directory class visibility**: a bare `X = class(...)` assigned inside `UI/*.lua`
@@ -1135,7 +1155,7 @@ Follow the `VitalSelf` pattern: `Turbine.PluginData.Save(Turbine.DataScope.Chara
 ## Testing
 
 **Run `sh tools/offline/run.sh` before every in-game load** (needs `lua5.1`; see
-`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 744
+`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 747
 checks against the real classes and the real `Main.lua`. It is not a substitute for loading the
 plugin -- it cannot tell you whether anything actually *draws* -- but everything it catches is a
 reload you don't have to spend.

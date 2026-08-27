@@ -297,8 +297,8 @@ check("a temp-morale-only ring marks nothing and does not crash",
   not d.rows[1].tint:IsVisible() and d.rows[1].maxTag:GetText() == "")
 
 ------------------------------------------------------------------ rotation probe (/reck probe)
--- The probe window is a diagnostic, but it is still real UI construction, so it gets the same
--- treatment as everything else here.
+-- The probe is a diagnostic, but it is still real UI construction, so it gets the same treatment
+-- as everything else here.
 --
 -- The load-bearing check is the last one: the stub CLEARS a control's rotation on SetSize and
 -- SetBackground, exactly as the real engine does (Gibberish3's own comment), so a subject that
@@ -313,11 +313,20 @@ check("probe: window is 480x462", probe:GetWidth() == 480 and probe:GetHeight() 
   probe:GetWidth() .. "x" .. probe:GetHeight())
 check("probe: all eight cells built", #probe.cells == 8, #probe.cells .. " cells")
 check("probe: no subject was refused", probe.refused == nil, tostring(probe.refused))
-check("probe: five rotated subjects (C, D, E, F, G -- A, B and H are not rotated)",
-  #probe.subjects == 5, #probe.subjects .. " rotated")
+check("probe: four rotated subjects (E, F, G, H -- A-D are stretch tests, not rotations)",
+  #probe.subjects == 4, #probe.subjects .. " rotated")
+check("probe: three of them re-rotate on every tick (F, G, H)",
+  #probe.deferred == 3, #probe.deferred .. " deferred")
 check("probe: reports its API status in the window, not only to chat",
   string.find(probe.statusLine:GetText(), "SetRotation") ~= nil, probe.statusLine:GetText())
 check("probe: prints a key to chat", #said >= 8, #said .. " lines")
+
+-- The timing hypothesis only gets tested if Update actually re-applies, and the tick counter has
+-- to stop somewhere or the status line scrolls a number forever.
+probe:Update(); probe:Update(); probe:Update()
+check("probe: Update re-rotates the deferred subjects", probe.ticks == 3, probe.ticks .. " ticks")
+for _ = 1, 200 do probe:Update() end
+check("probe: the tick counter stops at 120", probe.ticks == 120, probe.ticks .. " ticks")
 
 -- Every subject's ROTATED extent must stay inside the cell it sits in, or a future retune of a
 -- length or an angle silently overlaps a neighbour or leaves the window.
@@ -341,15 +350,15 @@ end
 check("probe: no subject's rotated extent leaves its cell", #spilled == 0,
   table.concat(spilled, ", "))
 
--- A rotated subject must never overlap its own unrotated twin, INCLUDING in the failure case where
--- rotation is ignored entirely and the subject renders at its full unrotated width. That is the
--- case the probe has actually been in for three rounds, so it is the one the layout must survive.
+-- A subject must never overlap its own reference, INCLUDING in the failure case where rotation is
+-- ignored and it renders at full unrotated width. That is the case the probe has actually been in
+-- for three rounds, so it is the one the layout has to survive.
 local overlapping = 0
 for _, bar in ipairs(probe.subjects) do
   local w = bar:GetSize()
   if bar:GetPosition() < 62 + w / 2 then overlapping = overlapping + 1 end
 end
-check("probe: no subject overlaps its twin even unrotated", overlapping == 0,
+check("probe: no subject overlaps its reference even unrotated", overlapping == 0,
   overlapping .. " overlapping")
 
 local unrotated = 0

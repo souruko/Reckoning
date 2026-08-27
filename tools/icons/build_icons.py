@@ -109,3 +109,26 @@ write_solid(8, 8, "line.tga")
 # Without stretch Turbine CLIPS the image to the control, so one long white block crops down to
 # any segment length for free, which is exactly what a uniform stroke wants.
 write_solid(256, 4, "line_long.tga")
+
+
+def write_wedge(size, filename):
+    """A 36x36 asymmetric wedge (filled upper-left triangle), for /reck probe.
+
+    Round three's rotation cells used a 16x16 lens glyph, which at that size is
+    hard to judge at a glance. A big filled triangle is unmistakable at 45, 90
+    and 180, and it is authored at exactly the control's size so the probe can
+    reproduce Gibberish3's own configuration -- an image the same size as the
+    control it fills -- rather than an approximation of it.
+    """
+    header = struct.pack(
+        "<BBBHHBHHHHBB", 0, 0, 2, 0, 0, 0, 0, 0, size, size, 32, 0x28
+    )
+    body = bytearray()
+    for y in range(size):
+        for x in range(size):
+            body += bytes((255, 255, 255, 255)) if (x + y) < size else bytes((0, 0, 0, 0))
+    (OUT / filename).write_bytes(header + bytes(body))
+    print(f"{filename:20} {size}x{size}")
+
+
+write_wedge(36, "wedge.tga")
