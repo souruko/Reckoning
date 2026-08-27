@@ -51,7 +51,7 @@ the player-facing version and `REDESIGN_SPEC.md` for the spec each piece came fr
 **There is now a real offline test suite: `tools/offline/`.** Unlike the original scratch harness
 (described below), it runs the **real** classes and the **real** `Main.lua` under a **real Lua
 5.1** interpreter against a `Turbine` stub built on this repo's own `class()` shim. `sh
-tools/offline/run.sh` runs 745 checks in about a second. It caught three genuine bugs during the
+tools/offline/run.sh` runs 747 checks in about a second. It caught three genuine bugs during the
 redesign that `luac -p` could not have: an index-base probe that could not actually distinguish a
 0-based from a 1-based `EffectList`, a `nil` layout constant reaching `SetPosition`, and the
 analysis window failing to adopt an already-archived session. It caught three more during the
@@ -277,19 +277,42 @@ bare `SetBackColor` fill rotates at all are all still open -- and each one chang
 code.
 
 `/reck probe [control|window] [plain|sprite]` (`UI/RotationProbe.lua`, `Resources/line.tga`) is
-the window that answers them, and it is deliberately the *whole* answer set in one load rather
-than another round of guess-fix-reload: a 2x2 of the same 45-degree segment across
-control/window x plain/sprite, then one cell each for sign/units, pivot, parent clipping and
-stroke edges, then a real 9-point polyline drawn by the exact arithmetic the plot would ship.
-Every rotated control is built and rotated through a `pcall`, so a combination this client refuses
-leaves one blank cell instead of taking the window down with it. **The answers go in
-`GRAPH_RESEARCH.md` section 7's table and then this file gets deleted** -- it is scaffolding, not
-a feature, and it is the only thing in this codebase that calls `SetRotation`.
+the window that asks them. Every rotated control is built and rotated through a `pcall`, so a
+combination this client refuses leaves one blank cell instead of taking the window down with it.
+**The answers go in `GRAPH_RESEARCH.md` section 7's table and then this file gets deleted** -- it
+is scaffolding, not a feature, and it is the only thing in this codebase that calls `SetRotation`.
+
+**Round one's result was unreadable, and the reason is worth more than the result.** It drew a
+45-degree segment across control/window x back-colour/sprite and got four flat horizontal bars --
+the documented no-op signature. That is not a conclusion: every subject it drew was either a flat
+colour or a uniform white block, and rotating either one inside its own rectangle looks exactly the
+same as not rotating it. Two very different behaviours produce identical flat bars -- `SetRotation`
+doing nothing, or `SetRotation` rotating a control's **content** inside a rect that stays
+axis-aligned. The second is not a stretch: every rotation subject in Gibberish3 is a **square**
+control fully covered by a **structured** image, which looks the same under both, so the only
+production evidence anywhere cannot distinguish them either. It also decides the rework outright --
+under content-only rotation a 2px-tall segment can never be a diagonal at any angle. **General
+lesson: a probe subject must be able to LOOK different under each hypothesis it is meant to
+separate. A symmetric or featureless subject answers nothing, however carefully the rest is built.**
+
+Round one did settle one thing: **a control is not clipped to its parent's bounds** (a 120px bar at
+30 degrees ran out of its 70x70 box on both sides) -- consistent with `SetClipMode` being opt-in and
+unused here, and it means the plot needs no inset against segments near its edges.
+
+Round two therefore asks with subjects that cannot hide it: a **solid square** at 45 (a diamond iff
+the control's own rect transforms -- the only way a thin segment can ever be a diagonal), an
+**asymmetric icon** at 45 (turns iff the content transforms), the same icon at **90** (the only
+angle Gibberish3 proves) and at 15/30/60/75, the same icon parented **straight into the Frame's
+Window** (Gibberish3 only ever parents its rotated Windows into other Windows, and `Graph` is a
+Control), and -- the deciding cell -- two **44x2 bars at z=90**: vertical means rects rotate and the
+plot can be a real line, still horizontal means it cannot, and there is no third reading. Every cell
+carries an unrotated twin, so "did it change?" never depends on remembering the last load.
 
 Two things worth carrying into the rework itself. **The failure signature**: if `SetRotation`
 silently no-ops rather than throwing, a steep segment's *unrotated* rect is its full diagonal
-length, so the plot renders as long flat bars punched through the data -- unmistakable, and not
-to be confused with "the graph is blank" (which was the `graphHolder` sizing bug above). And
+length, so the plot renders as long flat bars punched through the data -- distinctive, and not to
+be confused with "the graph is blank" (which was the `graphHolder` sizing bug above), but as round
+one proved, **not by itself a diagnosis**: content-only rotation renders identically. And
 **the invariant that makes the whole "rotation does not survive X" bug class impossible**:
 `Redraw()` re-specifies every visible segment completely -- size, colour, position, rotation last
 -- so nothing may touch a segment outside its draw function. `tools/offline/stub.lua` now enforces
@@ -1094,7 +1117,7 @@ Follow the `VitalSelf` pattern: `Turbine.PluginData.Save(Turbine.DataScope.Chara
 ## Testing
 
 **Run `sh tools/offline/run.sh` before every in-game load** (needs `lua5.1`; see
-`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 745
+`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 747
 checks against the real classes and the real `Main.lua`. It is not a substitute for loading the
 plugin -- it cannot tell you whether anything actually *draws* -- but everything it catches is a
 reload you don't have to spend.

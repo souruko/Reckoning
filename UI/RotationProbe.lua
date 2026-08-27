@@ -3,35 +3,44 @@
 --
 -- Turbine has no canvas and no line primitive, so a diagonal can only be drawn by ROTATING an
 -- axis-aligned Control. `SetRotation` is undocumented but real and in production: Gibberish3's
--- circular timer (UI_ELEMENTS/TIMER/CIRCEL/Element.lua) turns its leading sweep piece with it.
--- What that file proves, exactly:
+-- circular timer (UI_ELEMENTS/TIMER/CIRCEL/Element.lua) turns its leading sweep piece with it --
+-- degrees, in an { x =, y =, z = } table, kept in Lua and re-applied after every `SetSize` or
+-- `SetBackground` (both clear it), on a `Turbine.UI.Window` carrying a stretched background image.
 --
---   * angles are DEGREES, passed as a { x =, y =, z = } table;
---   * the angle must be kept in Lua and RE-APPLIED after anything that writes to the control --
---     `SetSize` and `SetBackground` both clear it (their own comment says so, and their Resize()
---     re-applies for exactly that reason);
---   * the control is a `Turbine.UI.Window`, never a `Turbine.UI.Control`;
---   * it carries a BACKGROUND IMAGE (`SetStretchMode(2)`), tinted by
---     `SetBackColorBlendMode(Overlay)` + `SetBackColor` -- never a bare back-colour fill;
---   * and z is only ever 0, 90, 180 or 270.
+-- ROUND 2. Round one drew a 45-degree segment in all four combinations of Control/Window x
+-- back-colour/sprite and got four flat horizontal bars. That looked like a definitive "rotation
+-- does nothing", and it is not, because every subject it drew was either a FLAT COLOUR or a
+-- UNIFORM WHITE BLOCK -- rotate either one inside its own rectangle and it looks exactly the same.
+-- Two very different engine behaviours produce identical flat bars:
 --
--- Which leaves the questions that decide whether the analysis window's plot can become a real
--- line graph, and none of them can be answered by reading more code -- only by a load:
+--   (a) SetRotation does nothing at all; or
+--   (b) SetRotation rotates the control's CONTENT inside a rect that stays axis-aligned.
 --
---   1. does an ARBITRARY z (45, not 90) actually render?
---   2. Control or Window?          -- decides what the segment pool is made of
---   3. back colour or sprite?      -- decides whether Resources/line.tga is needed at all
---   4. which way does positive z turn on screen, with y growing downward?
---   5. is the pivot the control's centre?
---   6. does a rotated control still clip to its parent?
---   7. is a rotated 2px stroke antialiased or jagged?
+-- (b) is not a stretch: every rotation subject in Gibberish3 is a SQUARE control fully covered by
+-- a STRUCTURED image, which looks the same under both behaviours -- so that file, the only
+-- production evidence anywhere, cannot distinguish them either. The difference decides the whole
+-- rework: under (b) a 2px-tall segment can never draw a diagonal no matter what angle it is given,
+-- and Option B is dead.
 --
--- The window answers 2 and 3 with a 2x2 of the same 45-degree segment (control/window x
--- plain/sprite), then 4-7 one cell each, then draws a real 9-point polyline with the exact
--- arithmetic UI/AnalysisGraph.lua would ship. Read it against the key printed to chat.
+-- So this round asks with subjects that cannot hide it:
 --
--- NOTHING ELSE IMPORTS THIS. It is built on demand by /reck probe and is meant to be deleted
--- once the plot is converted and the answers are written into docs/redesign/GRAPH_RESEARCH.md.
+--   * a SQUARE OF SOLID COLOUR at 45 degrees -- a diamond if the RECT rotates, unchanged if not;
+--   * an ASYMMETRIC ICON (search.tga, a lens with a handle) at 45 -- turns if the CONTENT rotates,
+--     and gets its corners clipped to the original square if the rect did not rotate with it;
+--   * a THIN BAR at z=90 -- the one angle Gibberish3 actually proves. If a 44x2 bar becomes a 2x44
+--     vertical line, rects do rotate and only ARBITRARY angles are in question;
+--   * the same icon at 15/30/60/75, which is what "arbitrary" means here;
+--   * and the same icon parented straight into the Frame's own Window, because Gibberish3 only
+--     ever parents its rotated Windows into other Windows and `Graph` is a Control.
+--
+-- Every cell carries an UNROTATED twin beside its subject (above it, in the thin-bar cell), so
+-- "did it change?" is answerable without remembering what the last load looked like.
+--
+-- ALREADY ANSWERED, round one, and not re-asked: a control is NOT clipped to its parent's bounds
+-- (a 120px bar in a 70x70 box ran out both sides).
+--
+-- NOTHING ELSE IMPORTS THIS. It is built on demand by /reck probe and is meant to be deleted once
+-- the answers are written into docs/redesign/GRAPH_RESEARCH.md section 7.
 --=================================================================================================
 
 RotationProbe = class(Frame)
@@ -39,48 +48,56 @@ RotationProbe = class(Frame)
 local WIDTH  = 480
 local HEIGHT = 546
 
-local PAD      = 12
-local LABEL_H  = 14
-local CELL_W   = 222
-local CELL_H   = 76
+local PAD       = 12
+local LABEL_H   = 14
+local CELL_W    = 222
+local CELL_H    = 76
 local ROW_PITCH = LABEL_H + CELL_H + 8
 
-local STROKE   = 2
-local DOT      = 3
-local WIDE_H   = 96 -- the full-width polyline cell
+local STROKE  = 2
+local DOT     = 3
+local WIDE_H  = 96 -- the full-width polyline cell
+
+local SUBJECT   = 36 -- the square subjects
+local GHOST_CX  = 62 -- where the unrotated twin sits inside a cell
+local SUBJECT_CX = 152
 
 local LINE_IMAGE = "Reckoning/Resources/line.tga"
+-- An ASYMMETRIC glyph on purpose: a lens with a handle pointing down-right, which is distinct
+-- from itself at 45, 90 and 180. Round one's white block was not, and that is what made its
+-- result unreadable. Drawn with the icon recipe this codebase has confirmed working in-game
+-- (SetBlendMode(Overlay), no BackColor -- Frame's close button, visible in the round-one
+-- screenshot), NOT Gibberish3's SetBackColorBlendMode tint: whether the tint recipe works is not
+-- the question here, and a subject that fails to render answers nothing.
+local ICON_IMAGE = "Reckoning/Resources/search.tga"
 
--- Positive z is ASSUMED to turn clockwise on screen (y grows downward, so a segment rising to
--- the right is a negative angle). Cell 5 is what checks it; if the quad comes out mirrored, this
--- flips to -1 and the same constant goes into UI/AnalysisGraph.lua.
+-- Positive z is ASSUMED to turn clockwise on screen (y grows downward, so a segment rising to the
+-- right is a negative angle). Only meaningful once something visibly rotates at all.
 local ROT_SIGN = 1
 
 ---------------------------------------------------------------------------------------------------
 -- Primitives
 ---------------------------------------------------------------------------------------------------
 
--- Every SetRotation call in this file goes through here: it is undocumented, so a client that
--- does not have it at all must leave a flat bar behind rather than throw out of the constructor.
--- pcall on the method directly, not on a wrapper closure -- no reason to allocate one.
+-- Every SetRotation call in this file goes through here: it is undocumented, so a client that does
+-- not have it at all must leave an unrotated control behind rather than throw out of the
+-- constructor. pcall on the method directly, not on a wrapper closure.
 local function Apply(bar)
 	local ok = pcall(bar.SetRotation, bar, bar.rotation)
 	bar.applied = ok
 	return ok
 end
 
--- kind: "control" | "window".  paint: "plain" | "sprite".
+-- kind: "control" | "window".  paint: "solid" | "icon" | "sprite".
 --
--- The sprite path is Gibberish3's configuration verbatim: stretch the 8x8 white block to the
--- control and let SetBackColorBlendMode(Overlay) + SetBackColor tint it. The plain path is the
--- one with no precedent anywhere -- if it works, line.tga is unnecessary and the shipping code
--- gets simpler by one asset and three calls per segment.
+--   solid  -- a plain SetBackColor fill, no image at all
+--   icon   -- search.tga, the asymmetric subject
+--   sprite -- line.tga, the uniform white block the polyline would actually be drawn from
 --
--- The whole construction is pcall'd and returns nil on failure, because a probe whose failing
--- case takes the window down with it answers nothing: parenting a Turbine.UI.Window into a
--- Turbine.UI.Control has no precedent in this codebase either (Gibberish3 only ever parents its
--- rotated Windows into other Windows), and that is one of the things being asked here.
-local function Bar(parent, kind, paint, color)
+-- The whole construction is pcall'd and returns nil on failure, because a probe whose failing case
+-- takes the window down with it answers nothing: parenting a Turbine.UI.Window into a
+-- Turbine.UI.Control has no precedent in this codebase either.
+local function Subject(parent, kind, paint, color, z)
 	local bar
 
 	local ok = pcall(function()
@@ -95,15 +112,19 @@ local function Bar(parent, kind, paint, color)
 		-- A parented Turbine.UI.Window starts hidden and draws BEHIND its parent (CLAUDE.md's
 		-- Turbine gotchas), so both of these are load-bearing for the "window" flavour and
 		-- merely harmless for the "control" one.
-		bar:SetZOrder(50)
+		bar:SetZOrder(z or 50)
 
-		if paint == "sprite" then
+		if paint == "solid" then
+			bar:SetBackColor(color)
+		else
 			bar:SetStretchMode(2)
-			bar:SetBackground(LINE_IMAGE)
-			bar:SetBackColorBlendMode(Turbine.UI.BlendMode.Overlay)
+			bar:SetBackground((paint == "icon") and ICON_IMAGE or LINE_IMAGE)
+			bar:SetBlendMode(Turbine.UI.BlendMode.Overlay)
+			if paint == "sprite" then
+				bar:SetBackColor(color)
+			end
 		end
 
-		bar:SetBackColor(color)
 		bar:SetVisible(true)
 	end)
 
@@ -115,25 +136,21 @@ local function Bar(parent, kind, paint, color)
 	return bar
 end
 
--- A rotated bar of a given length, centred on (cx, cy). Used by the cells that are testing the
--- ANGLE rather than the geometry -- the sign quad, the pivot marker, the clip test, the stroke
--- ladder. Order matters and is the same everywhere: size, position, then rotation LAST, because
--- SetSize is one of the two calls known to clear it.
-local function PlaceAngle(bar, cx, cy, length, stroke, deg)
+-- Size and centre a subject, then rotate it. Order is the same everywhere and rotation is LAST,
+-- because SetSize is one of the two calls known to clear it.
+local function Place(bar, cx, cy, w, h, deg)
 	if bar == nil then return end
-	bar:SetSize(length, stroke)
-	bar:SetPosition(math.floor(cx - length / 2), math.floor(cy - stroke / 2))
+	bar:SetSize(w, h)
+	bar:SetPosition(math.floor(cx - w / 2), math.floor(cy - h / 2))
 	bar.rotation.z = deg
-	Apply(bar)
+	if deg ~= 0 then
+		Apply(bar)
+	end
 end
 
--- THE ONE THAT MATTERS: a segment joining two data points, with exactly the arithmetic
--- UI/AnalysisGraph.lua's DrawSegment will ship if this probe comes back green.
---
--- The control is sized to the segment's own length and centred on its midpoint, because rotation
--- pivots on the centre (cell 6 is what confirms that). Length carries +stroke so consecutive
--- segments overlap by half a stroke at each joint instead of leaving a wedge-shaped gap on a
--- sharp corner.
+-- The segment arithmetic UI/AnalysisGraph.lua would ship: the control is sized to the segment's
+-- own length and centred on its midpoint (rotation pivots on the centre), with +stroke of length
+-- so consecutive segments overlap at their joints instead of leaving a wedge-shaped gap.
 local function PlaceSegment(bar, x0, y0, x1, y1, stroke)
 	local dx, dy = x1 - x0, y1 - y0
 	local len = math.sqrt(dx * dx + dy * dy)
@@ -161,17 +178,16 @@ function RotationProbe:Constructor(kind, paint)
 		height = HEIGHT,
 	})
 
-	-- Built per flavour on first request and kept, so re-running /reck probe with different
-	-- arguments swaps visibility instead of leaking a second set of Controls (there is no
-	-- confirmed-safe way to destroy one -- see UI/Row.lua's Reconfigure).
+	-- The polyline cell is built per flavour on first request and kept, so re-running /reck probe
+	-- with different arguments swaps visibility instead of leaking a second set of Controls (there
+	-- is no confirmed-safe way to destroy one -- see UI/Row.lua's Reconfigure).
 	self.sets = {}
 	self.activeSet = nil
 
 	self:BuildMatrix()
-	self:BuildCellGrounds()
+	self:BuildAngleCells()
+	self:BuildLineGround()
 
-	-- Window + sprite is Gibberish3's own configuration, so it is the default: the one most
-	-- likely to render something at all on the first load.
 	self:ShowFlavour(kind or "window", paint or "sprite")
 end
 
@@ -213,12 +229,10 @@ function RotationProbe:Ground(x, y, w, h, text)
 	fill:SetMouseVisible(false)
 	fill:SetZOrder(7)
 
+	fill.originX, fill.originY = x + 1, top + 1 -- client coords, for the ancestry cell
 	return fill
 end
 
--- A small square marker. Endpoint markers are what make cells 1-4 double as a pivot check: a
--- correctly rotated segment runs from one marker to the other, and a segment pivoting on its
--- top-left corner instead swings away from both.
 function RotationProbe:Dot(parent, cx, cy, hex, size)
 	size = size or DOT
 	local dot = Turbine.UI.Control()
@@ -231,19 +245,37 @@ function RotationProbe:Dot(parent, cx, cy, hex, size)
 	return dot
 end
 
+-- The dim, unrotated twin every cell carries beside its subject. Without it "did anything change?"
+-- depends on remembering what the previous load looked like, which is exactly the kind of judgement
+-- that made round one's result unreadable.
+function RotationProbe:Ghost(parent, kind, paint, cx, cy, w, h)
+	-- Theme.Mix already returns a Turbine.UI.Color; wrapping it in Theme.Color again would hand
+	-- a Color to a function expecting a hex string.
+	local ghost = Subject(parent, kind, paint,
+		Theme.Mix(Theme.Hex.Accent, Theme.Hex.PlotFill, 0.35), 40)
+	Place(ghost, cx, cy, w, h, 0)
+	return ghost
+end
+
 ---------------------------------------------------------------------------------------------------
--- Cells 1-4 -- the 2x2: Control vs Window, back colour vs sprite
+-- Cells 1-4 -- does the RECT rotate, or only its content?
 ---------------------------------------------------------------------------------------------------
 
--- All four are built once and stay visible, because they ARE the flavour question -- whichever
--- of them draws a clean diagonal between its two markers is the configuration the plot should
--- use. The other cells then re-test that answer in anger.
+-- A SOLID SQUARE at 45 degrees is a diamond if the control's own rectangle is transformed, and
+-- completely unchanged if it is not -- there is no content inside it to turn. The ICON square is
+-- the other half: it turns if the content is transformed, whatever the rect does. Read as a pair:
+--
+--   solid unchanged + icon unchanged -> SetRotation does nothing. Option B is dead.
+--   solid unchanged + icon turned    -> content-only rotation. A 2px segment can never be a
+--                                       diagonal. Option B is dead, but for a different reason,
+--                                       and the icon's corners will be clipped square.
+--   solid is a diamond               -> rects do rotate, and something else was wrong in round one.
 function RotationProbe:BuildMatrix()
 	local combos = {
-		{ kind = "control", paint = "plain",  text = "1  CONTROL + backcolor" },
-		{ kind = "window",  paint = "plain",  text = "2  WINDOW + backcolor" },
-		{ kind = "control", paint = "sprite", text = "3  CONTROL + line.tga" },
-		{ kind = "window",  paint = "sprite", text = "4  WINDOW + line.tga  (Gibberish3's own)" },
+		{ kind = "control", paint = "solid", text = "1  CONTROL + solid square @45  (diamond?)" },
+		{ kind = "window",  paint = "solid", text = "2  WINDOW + solid square @45  (diamond?)" },
+		{ kind = "control", paint = "icon",  text = "3  CONTROL + icon @45  (does it turn?)" },
+		{ kind = "window",  paint = "icon",  text = "4  WINDOW + icon @45  (does it turn?)" },
 	}
 
 	self.matrix = {}
@@ -251,82 +283,110 @@ function RotationProbe:BuildMatrix()
 	for i, combo in ipairs(combos) do
 		local col = (i - 1) % 2
 		local row = math.floor((i - 1) / 2)
-		local x = PAD + col * (CELL_W + PAD)
-		local y = PAD + row * ROW_PITCH
+		local ground = self:Ground(PAD + col * (CELL_W + PAD), PAD + row * ROW_PITCH,
+			CELL_W, CELL_H, combo.text)
 
-		local ground = self:Ground(x, y, CELL_W, CELL_H, combo.text)
+		local _, ch = ground:GetSize()
+		local cy = math.floor(ch / 2)
 
-		-- A rising 45-degree segment, the shape a graph line actually makes.
-		local x0, y0 = 20, 62
-		local x1, y1 = 80, 2
+		self:Ghost(ground, combo.kind, combo.paint, GHOST_CX, cy, SUBJECT, SUBJECT)
 
-		self:Dot(ground, x0, y0)
-		self:Dot(ground, x1, y1)
-
-		local bar = Bar(ground, combo.kind, combo.paint, Theme.Color(Theme.Hex.Accent))
-		PlaceSegment(bar, x0, y0, x1, y1, STROKE)
+		local bar = Subject(ground, combo.kind, combo.paint, Theme.Color(Theme.Hex.Accent))
+		Place(bar, SUBJECT_CX, cy, SUBJECT, SUBJECT, 45)
 
 		self.matrix[i] = { combo = combo, bar = bar }
 	end
 end
 
 ---------------------------------------------------------------------------------------------------
--- Cells 5-9 -- built per flavour
+-- Cells 5-8 -- the angle, the ancestry and the thin bar
 ---------------------------------------------------------------------------------------------------
 
-function RotationProbe:BuildCellGrounds()
+function RotationProbe:BuildAngleCells()
+	self.angleBars = {}
+	local function Track(bar)
+		if bar ~= nil then
+			self.angleBars[table.getn(self.angleBars) + 1] = bar
+		end
+		return bar
+	end
+
 	local y = PAD + 2 * ROW_PITCH
 
-	self.signGround  = self:Ground(PAD, y, CELL_W, CELL_H, "5  SIGN / DEGREES")
-	self.pivotGround = self:Ground(PAD + CELL_W + PAD, y, CELL_W, CELL_H, "6  PIVOT")
+	-- Cell 5: z=90, the ONLY kind of angle Gibberish3 ever uses. If the icon turns here but not at
+	-- 45 in cells 3-4, the engine only honours right angles and no diagonal is reachable.
+	local ninety = self:Ground(PAD, y, CELL_W, CELL_H, "5  WINDOW + icon @90  (90 is all G3 uses)")
+	local _, ch = ninety:GetSize()
+	local cy = math.floor(ch / 2)
+	self:Ghost(ninety, "window", "icon", GHOST_CX, cy, SUBJECT, SUBJECT)
+	Place(Track(Subject(ninety, "window", "icon", Theme.Color(Theme.Hex.Accent))),
+		SUBJECT_CX, cy, SUBJECT, SUBJECT, 90)
+
+	-- Cell 6: the same subject at 45, but parented straight into the Frame's own Window instead of
+	-- through three nested Controls. Gibberish3 only ever parents its rotated Windows into other
+	-- Windows, and Graph is a Control -- if the ancestry is what matters, this is the cell that
+	-- shows it. Positioned in WINDOW coordinates, hence the ground's recorded origin plus the
+	-- header height.
+	local ancestry = self:Ground(PAD + CELL_W + PAD, y, CELL_W, CELL_H,
+		"6  icon @45, parented to the WINDOW")
+	self:Ghost(ancestry, "window", "icon", GHOST_CX, cy, SUBJECT, SUBJECT)
+	Place(Track(Subject(self, "window", "icon", Theme.Color(Theme.Hex.Accent), 60)),
+		ancestry.originX + SUBJECT_CX, ancestry.originY + cy + self.headerHeight,
+		SUBJECT, SUBJECT, 45)
 
 	y = y + ROW_PITCH
-	self.clipGround   = self:Ground(PAD, y, CELL_W, CELL_H, "7  CLIP TO PARENT")
-	self.strokeGround = self:Ground(PAD + CELL_W + PAD, y, CELL_W, CELL_H, "8  SHALLOW STROKE / EDGES")
 
-	y = y + ROW_PITCH
-	self.lineGround = self:Ground(PAD, y, WIDTH - 2 * PAD, WIDE_H, "9  REAL POLYLINE (ships as-is)")
+	-- Cell 7: what "arbitrary" actually means -- four angles that are not multiples of 90.
+	local arbitrary = self:Ground(PAD, y, CELL_W, CELL_H, "7  icon @15 / 30 / 60 / 75")
+	local aw, ah = arbitrary:GetSize()
+	for i, deg in ipairs({ 15, 30, 60, 75 }) do
+		Place(Track(Subject(arbitrary, "window", "icon", Theme.Color(Theme.Hex.Accent))),
+			math.floor(i * aw / 5), math.floor(ah / 2), 24, 24, deg)
+	end
 
-	-- Cell 5's common origin. Built here, not per flavour, or re-running /reck probe would stack
-	-- a second dot on the first.
-	local sw, sh = self.signGround:GetSize()
-	self.signCx, self.signCy = math.floor(sw / 2), math.floor(sh / 2)
-	self:Dot(self.signGround, self.signCx, self.signCy, Theme.Hex.Text, 5)
+	-- Cell 8: THE ONE THE PLOT ACTUALLY DEPENDS ON. A 60x2 bar at z=90 must become a 2x60 vertical
+	-- line if the control's rect is transformed. A uniform white sprite has no content to turn, so
+	-- this cell cannot be fooled the way round one was: vertical means rects rotate, still
+	-- horizontal means they do not, and no third reading exists.
+	local thin = self:Ground(PAD + CELL_W + PAD, y, CELL_W, CELL_H,
+		"8  THIN BAR @90 -- vertical or not")
+	local tw = thin:GetSize()
 
-	-- Cell 6's two candidate pivots, drawn under the bar so the bar's own path over them is what
-	-- reads. Accent200 is the control's unrotated CENTRE, DamageFatal its unrotated TOP-LEFT.
-	local cw, ch = self.pivotGround:GetSize()
-	self.pivotCx, self.pivotCy = math.floor(cw / 2), math.floor(ch / 2)
-	self.pivotLen = 100
-	self:Dot(self.pivotGround, self.pivotCx, self.pivotCy, Theme.Hex.Accent200, 5)
-	self:Dot(self.pivotGround,
-		self.pivotCx - self.pivotLen / 2, self.pivotCy - STROKE / 2,
-		Theme.Hex.DamageFatal, 5)
+	-- Twins go in a lane ABOVE their subjects rather than beside them: side by side, a bar that
+	-- failed to rotate would overlap its own reference and read as one long smear.
+	local GHOST_Y, SUBJECT_Y, THIN_LEN = 16, 46, 44
+	local left, right = math.floor(tw / 4), math.floor(3 * tw / 4)
 
-	-- Cell 7's inner box: a rotated bar longer than the box it sits in. If rotated controls clip
-	-- to their parent, the bar stops at this box's edges; if they do not, it runs out over the
-	-- cell ground and possibly past the window.
-	self.clipBox = Turbine.UI.Control()
-	self.clipBox:SetParent(self.clipGround)
-	self.clipBox:SetSize(70, 70)
-	self.clipBox:SetPosition(math.floor((CELL_W - 2 - 70) / 2), 2)
-	self.clipBox:SetBackColor(Theme.Color(Theme.Hex.KpiFill))
-	self.clipBox:SetMouseVisible(false)
-	self.clipBox:SetZOrder(8)
+	self:Ghost(thin, "window", "sprite", left, GHOST_Y, THIN_LEN, STROKE)
+	Place(Track(Subject(thin, "window", "sprite", Theme.Color(Theme.Hex.Accent))),
+		left, SUBJECT_Y, THIN_LEN, STROKE, 90)
 
-	-- Cell 9's data: a fixed 9-point series, deliberately including a flat run, a steep rise and
-	-- a steep fall -- the three shapes the L-step version renders worst.
+	self:Ghost(thin, "window", "solid", right, GHOST_Y, THIN_LEN, STROKE)
+	Place(Track(Subject(thin, "window", "solid", Theme.Color(Theme.Hex.DamageTaken))),
+		right, SUBJECT_Y, THIN_LEN, STROKE, 90)
+end
+
+---------------------------------------------------------------------------------------------------
+-- Cell 9 -- the real polyline, in whichever flavour was asked for
+---------------------------------------------------------------------------------------------------
+
+function RotationProbe:BuildLineGround()
+	self.lineGround = self:Ground(PAD, PAD + 4 * ROW_PITCH, WIDTH - 2 * PAD, WIDE_H,
+		"9  REAL POLYLINE (ships as-is)")
+
+	-- A fixed 9-point series, deliberately including a flat run, a steep rise and a steep fall --
+	-- the three shapes the L-step version renders worst.
 	self.lineData = { 0.15, 0.62, 0.58, 0.95, 0.10, 0.12, 0.74, 0.30, 0.55 }
 end
 
 function RotationProbe:BuildSet(kind, paint)
 	local set = { bars = {}, dots = {}, kind = kind, paint = paint }
 
-	-- A combination this client refuses outright (Bar returns nil) must not land in the pool as
-	-- a hole -- an array-style table with a nil in it has an undefined length in Lua, which is
-	-- the exact footgun that once shifted every picker chip's filter off by one (CLAUDE.md).
-	local function NewBar(parent, hex)
-		local bar = Bar(parent, kind, paint, Theme.Color(hex))
+	-- A combination this client refuses (Subject returns nil) must not land in the pool as a hole
+	-- -- an array-style table with a nil in it has an undefined length in Lua, which is the exact
+	-- footgun that once shifted every picker chip's filter off by one (CLAUDE.md).
+	local function NewBar()
+		local bar = Subject(self.lineGround, kind, paint, Theme.Color(Theme.Hex.DamageTaken))
 		if bar ~= nil then
 			set.bars[table.getn(set.bars) + 1] = bar
 		else
@@ -335,34 +395,6 @@ function RotationProbe:BuildSet(kind, paint)
 		return bar
 	end
 
-	-- Cell 5: four bars from one centre. If positive z turns clockwise on a y-down screen, the
-	-- 45 bar points DOWN-RIGHT and the 135 one UP-RIGHT; mirrored means ROT_SIGN is -1.
-	local signHex = { Theme.Hex.Accent, Theme.Hex.DamageTaken, Theme.Hex.HealingDone, Theme.Hex.Morale }
-	for i, deg in ipairs({ 0, 45, 90, 135 }) do
-		PlaceAngle(NewBar(self.signGround, signHex[i]), self.signCx, self.signCy, 60, STROKE, deg)
-	end
-
-	-- Cell 6: one bar at 45 across the two candidate pivot markers.
-	PlaceAngle(NewBar(self.pivotGround, Theme.Hex.Accent),
-		self.pivotCx, self.pivotCy, self.pivotLen, STROKE, 45)
-
-	-- Cell 7: a 120px bar at 30 degrees inside a 70x70 box.
-	PlaceAngle(NewBar(self.clipBox, Theme.Hex.DamageSevere), 35, 35, 120, STROKE, 30)
-
-	-- Cell 8: the same 2px stroke at three SHALLOW angles. Shallow is the point -- a
-	-- nearest-neighbour (unantialiased) rotation shows as a visible staircase there, where a
-	-- steep one just looks like a line. Steep angles are already on show in cells 1-4, 6 and 9.
-	--
-	-- 74px of cell height across three lanes leaves each bar about +/-12px of rise, which at
-	-- length 150 caps the angle at ~9 degrees; anything steeper would climb out of its lane and
-	-- overlap its neighbours, turning the one cell that is about EDGE QUALITY into a mess.
-	local sw, sh = self.strokeGround:GetSize()
-	for i, deg in ipairs({ 2, 5, 9 }) do
-		PlaceAngle(NewBar(self.strokeGround, Theme.Hex.Accent),
-			math.floor(sw / 2), math.floor(i * sh / 4), 150, STROKE, deg)
-	end
-
-	-- Cell 9: the acceptance test -- a real polyline, drawn by the real arithmetic.
 	local lw, lh = self.lineGround:GetSize()
 	local points = table.getn(self.lineData)
 	local pitch = lw / points
@@ -371,12 +403,13 @@ function RotationProbe:BuildSet(kind, paint)
 		xs[i] = (i - 1) * pitch + pitch / 2
 		ys[i] = lh - 6 - self.lineData[i] * (lh - 16)
 	end
+
 	-- Kept so the offline harness can reconstruct each segment's endpoints from its rendered
-	-- (position, size, rotation) and check they land back on the data points -- the same check
-	-- that will guard UI/AnalysisGraph.lua once this ships.
+	-- (position, size, rotation) and check they land back on the data points -- the same check that
+	-- will guard UI/AnalysisGraph.lua once this ships.
 	set.linePoints, set.lineBars = {}, {}
 	for i = 1, points - 1 do
-		local bar = NewBar(self.lineGround, Theme.Hex.DamageTaken)
+		local bar = NewBar()
 		PlaceSegment(bar, xs[i], ys[i], xs[i + 1], ys[i + 1], STROKE)
 		set.lineBars[i] = bar
 	end
@@ -388,10 +421,11 @@ function RotationProbe:BuildSet(kind, paint)
 	return set
 end
 
--- Swap which flavour cells 5-9 are drawn in. Rotation is re-applied on every show: whether it
+-- Swap which flavour the polyline is drawn in. Rotation is re-applied on every show: whether it
 -- survives a SetVisible round-trip is itself unknown, and the shipping code re-specifies every
 -- visible segment on each Redraw anyway, so this mirrors what it will do.
 function RotationProbe:ShowFlavour(kind, paint)
+	if paint ~= "plain" and paint ~= "sprite" then paint = "sprite" end
 	local key = kind .. ":" .. paint
 
 	if self.activeSet ~= nil and self.activeSet ~= key then
@@ -401,7 +435,8 @@ function RotationProbe:ShowFlavour(kind, paint)
 	end
 
 	if self.sets[key] == nil then
-		self.sets[key] = self:BuildSet(kind, paint)
+		-- The polyline's "plain" flavour is a bare SetBackColor fill; "sprite" is line.tga.
+		self.sets[key] = self:BuildSet(kind, (paint == "plain") and "solid" or "sprite")
 	end
 
 	local set = self.sets[key]
@@ -420,42 +455,49 @@ end
 ---------------------------------------------------------------------------------------------------
 
 -- Half the probe is in chat, not on screen: whether the method EXISTS is a fact the window cannot
--- show (a missing SetRotation and a SetRotation that silently no-ops both leave a flat bar), and
--- the expected angles have to be written down before the render is judged against them.
+-- show (a missing SetRotation and one that silently no-ops look identical), and what each cell
+-- means has to be written down before the render is judged against it.
 function RotationProbe:Report(set)
 	local function Say(text) Turbine.Shell.WriteLine("  " .. text) end
 
-	-- Read off the matrix's own bars rather than constructing throwaway instances: those are the
-	-- real objects in play, and it costs nothing. A method that reads as present can still be a
-	-- silent no-op, which is what the cells themselves are for.
+	-- Read off the matrix's own subjects rather than constructing throwaway instances: those are
+	-- the real objects in play. A method that reads as present can still be a silent no-op.
 	local function Present(bar)
 		if bar == nil then return "n/a (construction refused)" end
 		return (type(bar.SetRotation) == "function") and "present" or "ABSENT"
 	end
 
-	Turbine.Shell.WriteLine("Reckoning rotation probe -- cells 5-9 drawn as "
-		.. string.upper(set.kind) .. " + " .. set.paint .. " (/reck probe <control|window> <plain|sprite>)")
+	Turbine.Shell.WriteLine("Reckoning rotation probe (round 2) -- cell 9 drawn as "
+		.. string.upper(set.kind) .. " + " .. set.paint
+		.. " (/reck probe <control|window> <plain|sprite>)")
 
 	Say("SetRotation on Turbine.UI.Control: " .. Present(self.matrix[1].bar))
 	Say("SetRotation on Turbine.UI.Window:  " .. Present(self.matrix[2].bar))
 
 	local applied, total = 0, 0
+	for _, bar in ipairs(self.angleBars) do
+		total = total + 1
+		if bar.applied then applied = applied + 1 end
+	end
 	for _, bar in ipairs(set.bars) do
 		total = total + 1
 		if bar.applied then applied = applied + 1 end
 	end
 	Say(string.format("SetRotation calls that did not throw: %d/%d%s", applied, total,
-		(set.refused ~= nil) and string.format("  (%d bars could not be built at all)", set.refused) or ""))
+		(set.refused ~= nil) and string.format("  (%d subjects could not be built)", set.refused) or ""))
 
-	Say("1-4 (fixed): each cell should show ONE clean diagonal joining its two grey dots.")
-	Say("   A flat horizontal bar = that combination does not rotate. Cell 4 is the one")
-	Say("   Gibberish3 proves; cell 1 working would mean line.tga is unnecessary.")
-	Say("5: bars at z=0/45/90/135 -- accent / pink / green / yellow, from the white centre dot.")
-	Say("   Clockwise (y down) puts the PINK one down-right. Mirrored means ROT_SIGN = -1.")
-	Say("6: the bar should run through the PALE dot (control centre), not the PINK one (top-left).")
-	Say("7: the bar should stop at the lighter inner box. Running past it = rotated controls")
-	Say("   do NOT clip to their parent, and the plot needs an inset.")
-	Say("8: one 2px stroke at z=2/5/9 -- shallow on purpose. Look for staircase edges.")
-	Say("9: a 9-point polyline, drawn by the exact code UI/AnalysisGraph.lua would ship.")
-	Say("   Every segment should meet its neighbours at the pink dots with no gap or overshoot.")
+	Say("Every cell carries an UNROTATED TWIN beside (cells 1-6) or above (cell 8) its subject.")
+	Say("1-2: a solid square at 45. A DIAMOND means the control's own rect rotates -- which is the")
+	Say("   only way a 2px segment can ever be a diagonal. Unchanged means it does not.")
+	Say("3-4: an asymmetric icon at 45 (lens + handle). If it TURNS while 1-2 stayed square, the")
+	Say("   engine rotates a control's CONTENT inside an axis-aligned rect -- look for the corners")
+	Say("   being cut off square. That kills the line graph as surely as no rotation at all.")
+	Say("5: the same icon at 90, the only angle Gibberish3 ever uses. Turning here but not at 45")
+	Say("   means right angles only.")
+	Say("6: the same icon at 45 parented straight into the window, not through nested Controls.")
+	Say("7: 15/30/60/75 -- what 'arbitrary angle' actually means.")
+	Say("8: THE DECIDING CELL. Two 60x2 bars at 90, sprite and solid. VERTICAL means rects rotate")
+	Say("   and the plot can be a real line; still horizontal means it cannot, full stop.")
+	Say("9: the polyline, drawn by the exact code UI/AnalysisGraph.lua would ship. Only worth")
+	Say("   reading if cell 8 came out vertical.")
 end

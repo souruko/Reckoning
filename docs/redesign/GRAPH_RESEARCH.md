@@ -193,17 +193,60 @@ rule is the one thing to preserve when editing the plot.
 segment's *unrotated* rect is `len` wide, so the plot renders as long flat bars punched through
 the data rather than as a line.
 
+### Round one, and why its result was unreadable
+
+The first probe drew a 45-degree segment in all four combinations of Control/Window x
+back-colour/sprite, plus a sign quad, a pivot test, a clip test, a stroke ladder and the real
+polyline. **Every rotated subject came out flat horizontal.** That is the documented no-op
+signature, and it is *not* a conclusion, because every subject it drew was either a flat colour or
+a uniform white block. Rotate either one inside its own rectangle and it looks exactly the same.
+Two very different engine behaviours produce identical flat bars:
+
+- **(a)** `SetRotation` does nothing at all; or
+- **(b)** it rotates the control's *content* inside a rect that stays axis-aligned.
+
+(b) is not a stretch. Every rotation subject in Gibberish3 is a **square** control fully covered by
+a **structured** image (`circelBack`, `circelFull`, `circelLead`, all sized to the whole timer and
+backgrounded with a circle quadrant) -- which looks identical under both behaviours. The only
+production evidence anywhere cannot distinguish them either. And the difference decides the rework:
+under (b) a 2px-tall segment can never draw a diagonal at any angle, and Option B is dead.
+
+Round one did settle one thing outright: **a control is not clipped to its parent's bounds.** The
+clip cell's 120px bar at 30 degrees ran out of its 70x70 box on both sides. Consistent with
+`SetClipMode` being opt-in and unused in this codebase; it also means the plot needs no inset
+against segments near its edges, and that a rotated segment could spill past the plot frame if the
+geometry ever allowed it.
+
+### Round two
+
+Same command, subjects that cannot hide the difference:
+
+| Cell | Subject | Reads as |
+| --- | --- | --- |
+| 1-2 | a **solid square** at 45, Control and Window | a diamond iff the control's own rect is transformed |
+| 3-4 | an **asymmetric icon** (`search.tga`, lens + handle) at 45 | turns iff the content is transformed; corners cut off square iff the rect did not turn with it |
+| 5 | the icon at **90** | the only angle Gibberish3 proves -- turning here but not at 45 means right angles only |
+| 6 | the icon at 45, parented **straight into the Frame's Window** | whether the all-Window ancestry Gibberish3 always has is load-bearing (`Graph` is a Control) |
+| 7 | the icon at **15 / 30 / 60 / 75** | what "arbitrary angle" actually means |
+| 8 | two **44x2 bars at 90**, sprite and solid | THE DECIDING CELL: vertical means rects rotate and the plot can be a real line; still horizontal means it cannot |
+| 9 | the real polyline | only worth reading if 8 came out vertical |
+
+Every cell carries an unrotated twin beside its subject (above it, in cell 8), so "did it change?"
+does not depend on remembering the previous load.
+
 ### Answers
 
 Fill these in from a real load, then delete the probe:
 
 | Question | Answer |
 | --- | --- |
-| Arbitrary z renders | |
+| The control's own rect rotates (cells 1-2, 8) | |
+| The control's content rotates (cells 3-4) | |
+| Arbitrary z renders, or 90 only (cells 5, 7) | |
 | Control, or Window only | |
 | Back colour, or sprite required | |
-| Window parents into a Control | |
+| All-Window ancestry required (cell 6) | |
 | Positive z turns (cw / ccw) -> `ROT_SIGN` | |
 | Pivot is the control's centre | |
-| Rotated control clips to parent | |
+| Rotated control clips to parent | **no** -- round one, cell 7 |
 | 2px stroke antialiased | |
