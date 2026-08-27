@@ -86,6 +86,7 @@ function Control:SetFont(f) self._font = f end
 function Control:SetTextAlignment(a) self._align = a end
 function Control:SetWantsUpdates(v) self._updates = v end
 function Control:SetBackground(b) self._bg = b; self._rot = nil end
+function Control:GetBackground() return self._bg end
 function Control:SetBlendMode(b) self._blend = b end
 function Control:SetBackColorBlendMode(b) self._backBlend = b end
 function Control:SetStretchMode(m) self._stretch = m end

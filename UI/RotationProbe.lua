@@ -62,9 +62,34 @@ local ROTATE_AFTER_TICKS = 3
 
 local DOT = 3
 
--- The stroke sprite and its native size. SQUARE, with a full-width band through the middle and
--- transparent elsewhere -- see the header for why square is the whole trick.
-local STROKE_IMAGE, STROKE_N = "Reckoning/Resources/stroke.tga", 64
+-- The stroke ladder, mirroring UI/AnalysisGraph.lua's. One sprite would give a stroke proportional
+-- to the segment's length, because the control is sized to that length and the band is a fraction
+-- of the sprite -- which is exactly what the first shipped version looked like. Cell C is the
+-- test.
+local STROKE_N = 64
+local STROKE_TARGET = 2
+local STROKE_SPRITES = {
+	{ band = 1.0, image = "Reckoning/Resources/stroke_10.tga" },
+	{ band = 1.5, image = "Reckoning/Resources/stroke_15.tga" },
+	{ band = 2.0, image = "Reckoning/Resources/stroke_20.tga" },
+	{ band = 2.5, image = "Reckoning/Resources/stroke_25.tga" },
+	{ band = 3.0, image = "Reckoning/Resources/stroke_30.tga" },
+	{ band = 4.0, image = "Reckoning/Resources/stroke_40.tga" },
+	{ band = 5.0, image = "Reckoning/Resources/stroke_50.tga" },
+	{ band = 6.0, image = "Reckoning/Resources/stroke_60.tga" },
+}
+
+local function StrokeSprite(side)
+	local best, bestErr = STROKE_SPRITES[1], nil
+	for i = 1, table.getn(STROKE_SPRITES) do
+		local rung = STROKE_SPRITES[i]
+		local err = math.abs(rung.band * side / STROKE_N - STROKE_TARGET)
+		if bestErr == nil or err < bestErr then
+			best, bestErr = rung, err
+		end
+	end
+	return best.image
+end
 
 ---------------------------------------------------------------------------------------------------
 -- Primitives
@@ -105,7 +130,7 @@ local function PlaceSegment(bar, x0, y0, x1, y1)
 	local dx, dy = x1 - x0, y1 - y0
 	local len = math.max(4, math.floor(math.sqrt(dx * dx + dy * dy) + 0.5))
 
-	Scale(bar, STROKE_IMAGE, STROKE_N, len, len)
+	Scale(bar, StrokeSprite(len), STROKE_N, len, len)
 	bar:SetPosition(math.floor((x0 + x1) / 2 - len / 2), math.floor((y0 + y1) / 2 - len / 2))
 	-- NEGATED. Screen y grows downward, but the engine's positive z turns the other way, so
 	-- atan2(dy, dx) as-is draws every segment mirrored about its own midpoint -- same length, same
@@ -272,7 +297,7 @@ function RotationProbe:BuildCells()
 	-- longer segment scales to a thicker stroke -- 3/64 of the length. If the spread across real
 	-- segment lengths is too visible, the fix is a few sprites at different band ratios picked by
 	-- length, not a different mechanism.
-	local c = self:Ground(3, "C  stroke vs length: 24 / 44 / 64 px")
+	local c = self:Ground(3, "C  stroke vs length: 24 / 44 / 64 px (even now?)")
 	self:Segment(c, 16, 50, 33, 33, Theme.Hex.Accent)
 	self:Segment(c, 60, 56, 91, 25, Theme.Hex.Accent)
 	self:Segment(c, 120, 60, 165, 15, Theme.Hex.Accent)
@@ -338,7 +363,7 @@ function RotationProbe:Report()
 	Say("length, a full-width stroke through a square sprite, rotated to the segment's angle.")
 	Say("A: does the segment join its two dots?")
 	Say("B: the shallow and steep extremes real combat data produces.")
-	Say("C: stroke thickness is 3/64 of the segment length -- how visible is the spread?")
+	Say("C: three lengths. The stroke ladder should hold all three near 2px.")
 	Say("D: the squares overlap heavily by design; does the sprite's transparency hold?")
 	Say("E: a real 12-point series. If this reads as a line graph, the rework is a port.")
 end

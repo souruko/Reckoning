@@ -362,7 +362,7 @@ LENGTHS were right all along and no fit-compensation is needed.
 ```lua
 -- one Window per step, pooled; Control has no SetRotation at all
 segment:SetSize(STROKE_NATIVE, STROKE_NATIVE)   -- the IMAGE's size first
-segment:SetBackground("Reckoning/Resources/stroke.tga")
+segment:SetBackground(StrokeSprite(side))       -- the ladder rung nearest a 2px stroke
 segment:SetStretchMode(1)
 segment:SetSize(side, side)                     -- square, side = the segment's own LENGTH
 segment:SetBackColorBlendMode(Turbine.UI.BlendMode.Overlay)
@@ -390,8 +390,26 @@ segment.rotation.z = -math.deg(math.atan2(dy, dx))   -- NEGATED
 | `SetBackColorBlendMode(Overlay)` + `SetBackColor` tints an image | **yes** |
 | Sprite transparency composes across overlapping controls | **yes** |
 | Clipping | **Controls clip to their parent, Windows do not** |
-| Stroke width | 3/64 of the segment's length -- ~1px short, ~3px long |
+| Stroke width | a fraction of the segment's LENGTH, because the control is sized to it -- so the stroke is a ladder of eight sprites picked by length, not one sprite |
 
 The probe has answered everything it was built for. **Delete `UI/RotationProbe.lua`, its
 `/reck probe` command, `Resources/wedge.tga`, `Resources/line.tga`, `Resources/line_long.tga` and
 the `windows.probe` key it leaves in saved settings** once the line graph is confirmed in-game.
+
+### The one thing a probe did not catch
+
+The first in-game load of the real plot came back with "the width of the line is very different
+depending on the angle". It is the **length**, not the angle: the control is sized to the segment's
+own length and the sprite's band is a *fraction* of the sprite, so one sprite draws a stroke
+proportional to length -- about 1px across a flat second and 6px up a steep spike.
+
+No probe cell could have caught it, because every probe drew a handful of segments at hand-picked
+lengths rather than a real series across a real plot width. The fix is a ladder of eight sprites
+(`Resources/stroke_10` … `stroke_60.tga`, the number being the band width in tenths of a pixel) with
+`StrokeSprite(side)` picking the rung whose `band * side / 64` lands nearest 2px. That holds the
+drawn stroke between roughly 1.7 and 2.2px across every length the plot produces, and
+`tools/offline/graph_test.lua` now measures exactly that over the reference logs rather than
+trusting the arithmetic.
+
+The fractional 1.5 rung is not padding: whole-pixel bands can only manage 1.4px or 2.8px on the
+longest segments, and that gap is visible.

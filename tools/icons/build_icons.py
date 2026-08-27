@@ -135,26 +135,41 @@ write_wedge(36, "wedge.tga")
 
 
 def write_stroke(size, band, filename):
-    """A square stroke sprite: a full-width white band through the vertical
-    centre, transparent elsewhere, with one antialiased row on each edge.
+    """One rung of the polyline's stroke ladder: a square sprite with a
+    full-width band through its centre, transparent elsewhere.
 
     SQUARE is load-bearing. The engine rotates a control's IMAGE and then fits
-    the result to the control's rect (round five, cell E: a 64x16 wedge at 90
-    came back still 64x16 with its content reoriented, not 16x64). A square
+    the result to the control's rect (probe round five, cell E: a 64x16 wedge at
+    90 came back still 64x16 with its content reoriented, not 16x64). A square
     control means that fit is a uniform scale, so a rotated line stays a
     straight line at the angle asked for; any other aspect ratio shears it.
+
+    THE LADDER exists because the segment control is sized to the segment's own
+    LENGTH, so the band -- a fraction of the sprite -- scales with it. One
+    sprite gives a stroke proportional to length: ~1px on a flat second and
+    ~6px on a steep spike, which is exactly what shipped and looked wrong.
+    Instead there is a sprite per band width, and UI/AnalysisGraph.lua picks the
+    rung whose `band * length / 64` lands nearest 2px. That holds the drawn
+    stroke between about 1.7 and 2.2px across every length the plot produces.
+
+    Alpha is the band's COVERAGE of each row, which is both the antialiasing and
+    what lets a band be a fraction of a pixel wide -- the 1.5 rung is what keeps
+    long segments near 2px, where whole-pixel bands can only manage 1.4 or 2.8.
     """
+    lo, hi = size / 2.0 - band / 2.0, size / 2.0 + band / 2.0
     header = struct.pack(
         "<BBBHHBHHHHBB", 0, 0, 2, 0, 0, 0, 0, 0, size, size, 32, 0x28
     )
-    mid = size // 2
     body = bytearray()
     for y in range(size):
-        d = abs(y - mid)
-        alpha = 255 if d <= band // 2 else (120 if d <= band // 2 + 1 else 0)
-        body += bytes((255, 255, 255, alpha)) * size
+        cover = max(0.0, min(hi, y + 1) - max(lo, y))
+        body += bytes((255, 255, 255, int(round(255 * cover)))) * size
     (OUT / filename).write_bytes(header + bytes(body))
     print(f"{filename:20} {size}x{size} band {band}")
 
 
-write_stroke(64, 3, "stroke.tga")
+# Rungs, in band pixels. The names carry the band times ten, so the fractional
+# rung has an honest filename. UI/AnalysisGraph.lua's STROKE_SPRITES must list
+# the same set.
+for _band in (1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0):
+    write_stroke(64, _band, f"stroke_{int(round(_band * 10))}.tga")

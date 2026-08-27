@@ -118,6 +118,34 @@ end
 check("plot: every segment's two ends land on its two data points", maxErr <= 1.5,
   string.format("worst %.2fpx", maxErr))
 
+-- 1b-ii. The stroke ladder. The control is sized to the segment's own length and the sprite's band
+-- is a FRACTION of the sprite, so a single sprite draws a stroke proportional to length -- about
+-- 1px across a flat second and 6px up a steep spike, which is what the first version shipped and
+-- what it was reported for. DrawSegment picks the rung nearest 2px instead; this checks the result
+-- across every segment the real data produces, not just in principle.
+local BANDS = { 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0 }
+local thinnest, thickest = 99, 0
+for slot = 1, 2 do
+  for i = 1, N - 1 do
+    local seg = g.seg[slot][i]
+    if seg:IsVisible() then
+      local side = seg:GetSize()
+      local band = tonumber(seg:GetBackground():match("stroke_(%d+)%.tga")) / 10
+      local drawn = band * side / 64
+      thinnest = math.min(thinnest, drawn)
+      thickest = math.max(thickest, drawn)
+      -- the chosen rung must be the best available one, not merely a plausible one
+      local bestErr = 99
+      for _, b in ipairs(BANDS) do bestErr = math.min(bestErr, math.abs(b * side / 64 - 2)) end
+      if math.abs(drawn - 2) > bestErr + 1e-9 then thinnest = -1 end
+    end
+  end
+end
+check("plot: every segment picks the best rung of the stroke ladder", thinnest >= 0)
+check("plot: drawn stroke stays near 2px at every segment length",
+  thinnest >= 1.5 and thickest <= 2.5,
+  string.format("%.2f..%.2fpx", thinnest, thickest))
+
 -- 1c. Nothing may be rotated until the deferred pass runs: a rotation applied before the control
 -- has painted is silently dropped in the real client, and the stub clears the recorded rotation on
 -- SetSize -- which the scale sequence ends with -- so this also catches a re-apply put in the wrong

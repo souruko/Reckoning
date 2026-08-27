@@ -33,7 +33,7 @@ Every icon in this folder is derived from [Phosphor Icons](https://phosphoricons
 | `line.tga` | -- (plain block) | -- | 8x8 | white | `UI/RotationProbe.lua` (stretched-sprite case) |
 | `line_long.tga` | -- (plain block) | -- | 256x4 | white | `UI/RotationProbe.lua` stroke source, clipped not stretched |
 | `wedge.tga` | -- (plain triangle) | -- | 36x36 | white | `UI/RotationProbe.lua` rotation subject |
-| `stroke.tga` | -- (banded square) | -- | 64x64 | white | `UI/RotationProbe.lua` polyline stroke, rotated |
+| `stroke_10` … `stroke_60.tga` | -- (banded squares) | -- | 64x64 | white | `UI/AnalysisGraph.lua` polyline stroke ladder |
 
 **Regular weight** (fill only for the "on" state of a two-state glyph), matching Gibberish3's and
 LootLogs' own `RESOURCES`/`Ressources` -- all three plugins now share one window language. At 16px
@@ -57,6 +57,21 @@ with a working precedent behind it. It is drawn with `SetStretchMode(2)` +
 `SetBackColorBlendMode(Overlay)` + `SetBackColor`, so 8x8 scales to any segment length and takes
 the series colour. Fully opaque, not soft-edged: at a 2px stroke a baked-in feathered edge would
 eat most of the line's own width.
+
+The **stroke ladder** (`stroke_10` … `stroke_60.tga`, eight rungs; the number is the band width in
+tenths of a pixel) is what the analysis window's polyline is drawn from. Each is a square with a
+full-width white band through its centre and transparent elsewhere. Square is load-bearing: the
+engine rotates a control's *image* and then fits the result to the control's rect, so a square
+control makes that fit a uniform scale and a rotated line stays straight at the angle asked for --
+any other aspect ratio shears it. See `docs/redesign/GRAPH_RESEARCH.md` section 7.
+
+There are eight of them because the segment's control is sized to the segment's own **length**, and
+the band is a *fraction* of the sprite -- so a single sprite draws a stroke proportional to length,
+about 1px across a flat second and 6px up a steep spike. `UI/AnalysisGraph.lua` picks the rung whose
+`band * length / 64` lands nearest 2px, which holds the drawn stroke between roughly 1.7 and 2.2px
+across every length the plot produces. The fractional 1.5 rung is not padding: whole-pixel bands can
+only manage 1.4 or 2.8px on the longest segments. Alpha is the band's coverage of each row, which is
+both the antialiasing and what lets a band be a fraction of a pixel wide.
 
 **Sizes are not free.** Turbine clips a `.tga` to the control instead of scaling it, unless the
 control sets `SetStretchMode`. Every file above is exactly the size of the control that draws it.

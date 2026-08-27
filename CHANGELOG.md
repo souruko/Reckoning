@@ -7,6 +7,8 @@ over time is now drawn as actual sloped lines running from one second's value to
 of the stepped, staircase shape it had before. Peaks look like peaks, a steady ramp looks like a
 ramp, and two series over the same fight are much easier to read against each other.
 
+- The line keeps an even thickness whether it is climbing a spike or running flat, which took a
+  second pass to get right.
 - The morale background stays a bar graph, unchanged — it is meant to read as a backdrop, not
   compete with the lines in front of it.
 - The live meter's little sparkline is unchanged too.

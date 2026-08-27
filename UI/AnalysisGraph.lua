@@ -30,7 +30,7 @@
 --      So a thin 2px control can never be a diagonal at any angle: a rotated white rectangle
 --      refitted into a 2px slot is still a 2px horizontal bar. The segment control is instead a
 --      SQUARE whose side is the segment's own LENGTH, centred on the segment's midpoint, carrying
---      a sprite with a full-width band through its middle (Resources/stroke.tga). A square rect
+--      a sprite with a full-width band through its middle. A square rect
 --      makes the fit a uniform scale, so the rotated band stays a straight line at exactly the
 --      angle asked for, running from one data point to the other and stopping. Any other aspect
 --      ratio shears it off its angle.
@@ -66,14 +66,46 @@ local TOP_PAD     = 22 -- headroom, so a peak bucket never touches the frame
 local BOTTOM_PAD  = 4  -- the zero baseline sits this far above the plot's bottom edge
 local DOT_SIZE    = 5
 
--- The stroke sprite and its native size. Square, with a full-width white band through its centre
--- and transparent elsewhere -- see the header for why square is the whole trick. The band is 3/64
--- of the sprite, so the drawn stroke is 3/64 of the segment's length: roughly 1px on a short
--- segment and 3px on a long one. If that spread ever reads badly, the fix is a couple of sprites
--- at different band ratios chosen by length, not a different mechanism.
-local STROKE_IMAGE  = "Reckoning/Resources/stroke.tga"
+-- THE STROKE LADDER. Each sprite is a square with a full-width band through its centre and
+-- transparent elsewhere -- see the header for why square is the whole trick.
+--
+-- The catch that made the first version look wrong in-game: the segment control is sized to the
+-- segment's own LENGTH, and the band is a FRACTION of the sprite, so with one sprite the drawn
+-- stroke is proportional to length -- about 1px across a flat second and 6px up a steep spike.
+-- So there is a sprite per band width and DrawSegment picks the rung whose `band * side / 64`
+-- lands nearest STROKE_TARGET, which holds the stroke between roughly 1.7 and 2.2px across every
+-- length the plot produces. The 1.5 rung is not padding: whole-pixel bands can only manage 1.4 or
+-- 2.8px on the longest segments, and that gap is visible.
+--
+-- Must match tools/icons/build_icons.py's own list.
 local STROKE_NATIVE = 64
-local SEGMENT_MIN   = 4 -- a square smaller than this cannot show a band at all
+local STROKE_TARGET = 2 -- the stroke width the ladder is chosen to hold, in pixels
+local STROKE_SPRITES = {
+	{ band = 1.0, image = "Reckoning/Resources/stroke_10.tga" },
+	{ band = 1.5, image = "Reckoning/Resources/stroke_15.tga" },
+	{ band = 2.0, image = "Reckoning/Resources/stroke_20.tga" },
+	{ band = 2.5, image = "Reckoning/Resources/stroke_25.tga" },
+	{ band = 3.0, image = "Reckoning/Resources/stroke_30.tga" },
+	{ band = 4.0, image = "Reckoning/Resources/stroke_40.tga" },
+	{ band = 5.0, image = "Reckoning/Resources/stroke_50.tga" },
+	{ band = 6.0, image = "Reckoning/Resources/stroke_60.tga" },
+}
+
+local SEGMENT_MIN = 4 -- a square smaller than this cannot show a band at all
+
+-- The rung whose drawn stroke comes closest to STROKE_TARGET at this segment length. Eight
+-- comparisons per segment, ~750 per redraw, and redraws are not per-frame.
+local function StrokeSprite(side)
+	local best, bestErr = STROKE_SPRITES[1], nil
+	for i = 1, table.getn(STROKE_SPRITES) do
+		local rung = STROKE_SPRITES[i]
+		local err = math.abs(rung.band * side / STROKE_NATIVE - STROKE_TARGET)
+		if bestErr == nil or err < bestErr then
+			best, bestErr = rung, err
+		end
+	end
+	return best.image
+end
 
 -- Frames to wait after a redraw before applying the rotation pass. A rotation set before the
 -- control has painted is silently dropped (probe round 4), and one apply on a later frame sticks
@@ -936,7 +968,7 @@ local function DrawSegment(segment, x0, y0, x1, y1, color)
 	end
 
 	segment:SetSize(STROKE_NATIVE, STROKE_NATIVE)
-	segment:SetBackground(STROKE_IMAGE)
+	segment:SetBackground(StrokeSprite(side))
 	segment:SetStretchMode(1)
 	segment:SetSize(side, side)
 
