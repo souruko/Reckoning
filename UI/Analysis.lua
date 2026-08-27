@@ -80,6 +80,10 @@ local SCROLLBAR_WIDTH = 10
 local RAIL_POOL = 20 -- generous: ring cap is 10 but pinned sessions are exempt from it
 local PANEL_WIDTH = 233
 
+-- The identity rotation Analysis:Update holds this window at while the graph's rotation pass runs.
+-- One shared table because SetRotation reads it and never keeps it.
+local ZERO_ROTATION = { x = 0, y = 0, z = 0 }
+
 local BUFF_HEADER_HEIGHT = 26
 local BUFF_TABLE_HEADER_HEIGHT = 20
 local BUFF_ROW_HEIGHT = 22
@@ -263,9 +267,9 @@ function Analysis:Constructor()
 		-- _RefreshTexts, "Brand  <rgb=#5C6076>3.8.0</rgb>"), the only confirmed-working
 		-- precedent anywhere in these plugins for a de-emphasized run of text inside one
 		-- Turbine.UI.Label. Uses Theme.Hex.DimText rather than Gibberish's own hex so it stays
-		-- inside Reckoning's own palette.
+		-- inside Basil's own palette.
 		key = "analysis", closable = true,
-		title = "Reckoning  <rgb=" .. Theme.Hex.DimText .. ">" .. Reckoning.Version .. "</rgb>",
+		title = "Basil  <rgb=" .. Theme.Hex.DimText .. ">" .. Basil.Version .. "</rgb>",
 		width = MIN_WIDTH, height = DEFAULT_HEIGHT, headerHeight = HEADER_HEIGHT,
 	})
 
@@ -606,7 +610,7 @@ function Analysis:OnSessionsDropped()
 	self:RefreshContent()
 end
 
--- Back to the shipped size and position, for /reck reset.
+-- Back to the shipped size and position, for /basil reset.
 function Analysis:ResetGeometry()
 	self:Resize(MIN_WIDTH, DEFAULT_HEIGHT)
 	self:SetPosition(200, 200)
@@ -804,7 +808,7 @@ function Analysis:RefreshRail()
 			widgets.control:SetPosition(0, (i - 1) * RAIL_ROW_HEIGHT)
 			widgets.name:SetText(s:DisplayName() .. (s.died and " · died" or ""))
 			widgets.meta:SetText(s.startClock .. " · " .. Format.Clock(s:Duration()) .. " · " .. Format.Rate(s:Rate("done")))
-			widgets.pin:SetBackground(s.pinned and "Reckoning/Resources/pin_on.tga" or "Reckoning/Resources/pin_off.tga")
+			widgets.pin:SetBackground(s.pinned and "Basil/Resources/pin_on.tga" or "Basil/Resources/pin_off.tga")
 			self:RefreshRailRow(widgets)
 		end
 	end
@@ -1251,7 +1255,7 @@ function Analysis:BuildSearchBox(parent, placeholderText)
 	searchIcon:SetPosition(6, math.floor((SEARCH_HEIGHT - 2 - SEARCH_ICON) / 2))
 	searchIcon:SetSize(SEARCH_ICON, SEARCH_ICON)
 	searchIcon:SetBlendMode(Turbine.UI.BlendMode.Overlay)
-	searchIcon:SetBackground("Reckoning/Resources/search.tga")
+	searchIcon:SetBackground("Basil/Resources/search.tga")
 	searchIcon:SetMouseVisible(false)
 
 	local fieldLeft = 6 + SEARCH_ICON + 4
@@ -1297,7 +1301,7 @@ function Analysis:BuildSearchBox(parent, placeholderText)
 	clearIcon:SetSize(SEARCH_ICON, SEARCH_ICON)
 	clearIcon:SetPosition(math.floor((16 - SEARCH_ICON) / 2), math.floor(((SEARCH_HEIGHT - 2) - SEARCH_ICON) / 2))
 	clearIcon:SetBlendMode(Turbine.UI.BlendMode.Overlay)
-	clearIcon:SetBackground("Reckoning/Resources/cross.tga")
+	clearIcon:SetBackground("Basil/Resources/cross.tga")
 	clearIcon:SetMouseVisible(false)
 
 	clear.MouseEnter = function() clear:SetBackColor(Theme.Color(Theme.Hex.Hover)) end
@@ -3021,15 +3025,49 @@ end
 
 -- The graph's rotation pass, and the ONLY thing this window wants per-frame updates for.
 --
--- Every polyline segment is a rotated Window, and the fact `/reck probe` cost six in-game loads to
+-- Every polyline segment is a rotated Window, and the fact `/basil probe` cost six in-game loads to
 -- establish is that **a rotation applied before the control has painted is silently dropped**. So
 -- Graph:Redraw sizes and positions the segments and arms a pass, and this runs it a couple of
 -- frames later, once. FlushRotation returns immediately when nothing is pending, which is the
 -- common case by a very long way.
+-- Drives the graph's rotation pass -- but only while this window is actually on screen. A redraw
+-- can happen with the window closed (a fight ending reaches RefreshContent through
+-- Sessions.OnClosed, and every settings change does too), and a rotation applied to a control
+-- that is not being drawn is the "set before it painted" case the engine silently drops -- which
+-- would then reveal those segments FLAT, staying that way until some later redraw ran a fresh
+-- pass. That is the reported "sometimes the lines are not rotated, moving the range fixes it".
+--
+-- So: hold the pass while hidden, and arm a fresh one on the way back in, which covers every path
+-- that shows this window without any of them having to know about it.
 function Analysis:Update()
-	if self.graph ~= nil then
-		self.graph:FlushRotation()
+	if self.graph == nil then
+		return
 	end
+
+	if not self:IsVisible() then
+		self.wasVisible = false
+		return
+	end
+
+	if not self.wasVisible then
+		self.wasVisible = true
+		self.graph:ArmRotation()
+	end
+
+	local pending = self.graph:FlushRotation()
+
+	-- Backstop: hold this window's own rotation at zero for as long as a pass is running, and for
+	-- one frame after it finishes. The graph's pass is the only SetRotation caller in the plugin
+	-- and it has been seen to turn THIS window rather than a segment (reported as the analysis
+	-- window coming up rotated after a session change). Graph:FlushRotation now never hands a
+	-- hidden control to SetRotation, which is the condition that caused it -- this is the second
+	-- line of defence, so that if it ever happens again it self-corrects in a frame instead of
+	-- leaving the window sideways until a reload. Identity rotation on a window that is on screen
+	-- is a no-op, and outside a pass this costs nothing at all.
+	if pending or self.rotationPass then
+		pcall(self.SetRotation, self, ZERO_ROTATION)
+	end
+	self.rotationPass = pending
 end
 
 function Analysis:LayoutGraph(innerWidth)

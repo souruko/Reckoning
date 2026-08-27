@@ -5,8 +5,8 @@
 -- calling a refresh, which is the shortcut that hid three bugs in this codebase before.
 local env = dofile("stub.lua"); local ROOT = env.ROOT
 
-import "Reckoning.Constants"
-Trigger = {}; import "Reckoning.Parse.en"; import "Reckoning.Settings"
+import "Basil.Constants"
+Trigger = {}; import "Basil.Parse.en"; import "Basil.Settings"
 
 local morale = 500000
 local effectList = {}
@@ -30,8 +30,8 @@ effectList = { MakeEffect("Writ of Health", 0x41000001), MakeEffect("Bracing Gua
                MakeEffect("Fury of Battle", 0x41000002), MakeEffect("Warrior's Heart", nil) }
 
 Settings.Load()
-import "Reckoning.Session"; import "Reckoning.Sessions"; import "Reckoning.Buffs"
-import "Reckoning.Events"; import "Reckoning.ChatPost"; import "Reckoning.UI"
+import "Basil.Session"; import "Basil.Sessions"; import "Basil.Buffs"
+import "Basil.Events"; import "Basil.ChatPost"; import "Basil.UI"
 
 local fails = 0
 local function check(label, ok, detail)
@@ -397,13 +397,13 @@ print("== 8. palette presets reach every series ==")
 Click(w.railRows.palette.row)
 local palette = w.pages.palette
 check("palette lists every preset in Theme.PresetOrder order",
-  #Theme.PresetOrder == 4 and Theme.PresetOrder[1] == "Reckoning")
+  #Theme.PresetOrder == 4 and Theme.PresetOrder[1] == "Basil")
 check("the default preset is byte-identical to the Theme.Hex series tokens",
-  Theme.Presets["Reckoning"].done == Theme.Hex.DamageDone
-  and Theme.Presets["Reckoning"].taken == Theme.Hex.DamageTaken
-  and Theme.Presets["Reckoning"].healOut == Theme.Hex.HealingDone
-  and Theme.Presets["Reckoning"].healIn == Theme.Hex.HealingTaken
-  and Theme.Presets["Reckoning"].morale == Theme.Hex.Morale)
+  Theme.Presets["Basil"].done == Theme.Hex.DamageDone
+  and Theme.Presets["Basil"].taken == Theme.Hex.DamageTaken
+  and Theme.Presets["Basil"].healOut == Theme.Hex.HealingDone
+  and Theme.Presets["Basil"].healIn == Theme.Hex.HealingTaken
+  and Theme.Presets["Basil"].morale == Theme.Hex.Morale)
 
 -- The swatch rows are direct children of the page; the clickable ones are the mouse-visible
 -- Controls 30px tall.
@@ -817,7 +817,7 @@ end)())
 check("an unknown palette preset falls back rather than yielding a nil colour", (function()
   _G.settings.palettePreset = "Chartreuse"
   Settings.Clamp()
-  return _G.settings.palettePreset == "Reckoning" and Theme.Series("done") ~= nil
+  return _G.settings.palettePreset == "Basil" and Theme.Series("done") ~= nil
 end)())
 
 ---------------------------------------------------------------------------------------------------

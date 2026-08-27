@@ -8,7 +8,7 @@
 -- on) is not something a player asked to have applied for them. The module keeps the `Buffs`
 -- name and the `session.buffs` field so nothing downstream had to be renamed; read "buff" as
 -- "tracked effect" throughout. The ignore list below is the one filter left, and it is the
--- player's (`/reck buffs ignore <name>`), not a guess about what counts as a buff.
+-- player's (`/basil buffs ignore <name>`), not a guess about what counts as a buff.
 --
 -- The data source is the LIVE EFFECT LIST, not the combat parser. Parser event 17 (EventCode.Buff)
 -- fires when a benefit is applied but carries no duration and no fade, so uptime derived from it
@@ -53,9 +53,9 @@ Buffs.Kinds = {}
 -- the word, and a player can never tell why their buff vanished from the table.
 --
 -- These defaults are a best guess at the client's own strings and are NOT verified against a
--- running game -- a wrong entry here is harmless (it simply never matches), and `/reck buffs`
+-- running game -- a wrong entry here is harmless (it simply never matches), and `/basil buffs`
 -- lists what is actually being tracked so a player can add their own with
--- `/reck buffs ignore <name>`. That command, not this table, is the real mechanism.
+-- `/basil buffs ignore <name>`. That command, not this table, is the real mechanism.
 Buffs.Ignore = {
 	["Riding"] = true,
 	["Mounted"] = true,
@@ -75,7 +75,7 @@ Buffs.indexBase = nil
 
 -- The player's own list wins over the defaults in BOTH directions: `true` ignores an effect the
 -- defaults say nothing about, and `false` un-ignores one of the defaults above. Without the
--- `false` case, `/reck buffs unignore Riding` would silently do nothing and a default entry that
+-- `false` case, `/basil buffs unignore Riding` would silently do nothing and a default entry that
 -- turns out to match a real, wanted effect could never be recovered.
 function Buffs.IsIgnored(name)
 	local user = _G.settings and _G.settings.buffIgnore

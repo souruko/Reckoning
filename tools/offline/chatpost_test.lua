@@ -12,12 +12,12 @@
 local env = dofile("stub.lua")
 local ROOT = env.ROOT
 
-import "Reckoning.Utils.Type"
-import "Reckoning.Utils.Class"
-import "Reckoning.Constants"
+import "Basil.Utils.Type"
+import "Basil.Utils.Class"
+import "Basil.Constants"
 Trigger = {}
-import "Reckoning.Parse.en"
-import "Reckoning.Settings"
+import "Basil.Parse.en"
+import "Basil.Settings"
 
 _G.lp = {
 	GetName = function() return "Luxtheninth" end,
@@ -32,10 +32,10 @@ LocalPlayer.name = LocalPlayer:GetName()
 
 Settings.Load()
 
-import "Reckoning.Session"
-import "Reckoning.Sessions"
-import "Reckoning.Events"
-import "Reckoning.ChatPost"
+import "Basil.Session"
+import "Basil.Sessions"
+import "Basil.Events"
+import "Basil.ChatPost"
 
 local fails = 0
 local function check(label, got, want)

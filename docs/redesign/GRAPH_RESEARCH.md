@@ -95,7 +95,7 @@ seg:SetRotation(seg.rotation)                        -- re-apply, always last
 ```
 
 47 segments per series instead of 94 rects, and a genuine diagonal. Probe checklist, in this
-order (30 minutes with `/reck debug` and one throwaway window):
+order (30 minutes with `/basil debug` and one throwaway window):
 
 1. Does `SetRotation` exist on `Turbine.UI.Control`, or only on `Window`? (Gibberish3 only
    proves `Window`. If it's Window-only, each segment becomes a Window — heavier, and worth
@@ -117,7 +117,7 @@ way, which is why A is worth building first.
 ## 4. Option C — a slope sprite atlas
 
 No rotation needed. Author one white 32×32 `.tga` per slope bucket (say 16 buckets from −75°
-to +75°, plus a flat one), ship them in `Reckoning/RESOURCES/`, then per segment pick the
+to +75°, plus a flat one), ship them in `Basil/RESOURCES/`, then per segment pick the
 nearest bucket and stretch the sprite over the segment's bounding box:
 
 ```lua
@@ -125,7 +125,7 @@ seg:SetSize(w, h)
 seg:SetStretchMode(2)                                  -- scale image to control
 seg:SetBlendMode(Turbine.UI.BlendMode.Overlay)         -- so SetBackColor tints it
 seg:SetBackColor(colour)
-seg:SetBackground("Reckoning/RESOURCES/slope_08.tga")  -- path, not a shared Graphic
+seg:SetBackground("Basil/RESOURCES/slope_08.tga")  -- path, not a shared Graphic
 ```
 
 - Works on documented API only, gives smooth antialiased diagonals, and the Overlay + BackColor
@@ -160,10 +160,10 @@ Two things to hold onto whichever way it goes: the morale background stays plain
 plot), and every control is created once in the constructor and only ever repositioned. The
 current `AnalysisGraph.lua` already pools correctly; none of this changes that contract.
 
-## 7. The probe, as built (`/reck probe`)
+## 7. The probe, as built (`/basil probe`)
 
 §3's checklist is now a window: `UI/RotationProbe.lua`, opened with
-`/reck probe [control|window] [plain|sprite]`. Reading Gibberish3's
+`/basil probe [control|window] [plain|sprite]`. Reading Gibberish3's
 `UI_ELEMENTS/TIMER/CIRCEL/Element.lua` in full added two questions §3 did not ask, and both
 change the shipping code if they come back the wrong way:
 
@@ -284,6 +284,17 @@ change, to a control long since on screen. Nothing here did.
 So, on a `Turbine.UI.Window`: `SetRotation` works, at **arbitrary** angles, provided it is applied
 after the control has painted.
 
+**"Silently dropped" turned out to be the mild version of that failure.** The ported plot rotated
+each segment while it was still `SetVisible(false)` (hide on draw, rotate and reveal together in
+the pass) and was reported in-game as *the whole analysis window* coming up rotated, most often
+right after picking a session off the rail -- the redraw that first brings previously-unused pool
+segments onto the plot. A rotation aimed at a Window that is not being drawn can land on the
+top-level window instead of being discarded. Both shipping line graphs in this install set visible
+**before** rotating and never the reverse (`Thurallor/Common/UI/Line.lua:15-33`,
+`PrimePlugins/Parse/GraphWindow.lua:873/891`, `929/932`); `Graph:FlushRotation` now does the same
+in two stages -- reveal on one frame, rotate on the next few -- and `Analysis:Update` holds the
+window's own rotation at zero for the duration of a pass as a backstop.
+
 Cells A-D showed all four stretch modes tiling -- which was **the probe's fault, not the engine's**.
 Per the plugin's author, scaling needs a specific sequence:
 
@@ -393,7 +404,7 @@ segment.rotation.z = -math.deg(math.atan2(dy, dx))   -- NEGATED
 | Stroke width | a fraction of the segment's LENGTH, because the control is sized to it -- so the stroke is a ladder of eight sprites picked by length, not one sprite |
 
 The probe has answered everything it was built for. **Delete `UI/RotationProbe.lua`, its
-`/reck probe` command, `Resources/wedge.tga`, `Resources/line.tga`, `Resources/line_long.tga` and
+`/basil probe` command, `Resources/wedge.tga`, `Resources/line.tga`, `Resources/line_long.tga` and
 the `windows.probe` key it leaves in saved settings** once the line graph is confirmed in-game.
 
 ### The one thing a probe did not catch

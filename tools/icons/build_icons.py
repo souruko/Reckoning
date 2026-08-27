@@ -28,7 +28,7 @@ from PIL import Image
 
 REPO = "https://raw.githubusercontent.com/phosphor-icons/core/main/assets"
 OUT = Path(__file__).resolve().parents[2] / "Resources"
-TMP = Path(tempfile.mkdtemp(prefix="reckoning-icons-"))
+TMP = Path(tempfile.mkdtemp(prefix="basil-icons-"))
 
 WHITE = (255, 255, 255)
 
@@ -85,7 +85,7 @@ def write_solid(width, height, filename):
     It exists because the only production-proven SetRotation configuration anywhere --
     Gibberish3's circular timer, UI_ELEMENTS/TIMER/CIRCEL/Element.lua -- rotates a
     control that carries a BACKGROUND IMAGE, never one painted with SetBackColor alone;
-    whether a bare back-colour fill rotates at all is exactly what /reck probe asks.
+    whether a bare back-colour fill rotates at all is exactly what /basil probe asks.
 
     Drawn with SetStretchMode(2) + SetBackColorBlendMode(Overlay) + SetBackColor, so the
     8x8 source scales to whatever the segment needs and takes the series colour. Fully
@@ -112,7 +112,7 @@ write_solid(256, 4, "line_long.tga")
 
 
 def write_wedge(size, filename):
-    """A 36x36 asymmetric wedge (filled upper-left triangle), for /reck probe.
+    """A 36x36 asymmetric wedge (filled upper-left triangle), for /basil probe.
 
     Round three's rotation cells used a 16x16 lens glyph, which at that size is
     hard to judge at a glance. A big filled triangle is unmistakable at 45, 90

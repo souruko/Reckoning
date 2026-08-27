@@ -52,7 +52,7 @@ stroke sprite the analysis window's polyline is drawn from, and it exists becaus
 production-proven `SetRotation` configuration anywhere -- Gibberish3's circular timer
 (`UI_ELEMENTS/TIMER/CIRCEL/Element.lua`) -- rotates controls that carry a **background image**,
 never ones painted with `SetBackColor` alone. Whether a bare back-colour fill rotates at all is
-one of the questions `/reck probe` exists to answer; until it does, the sprite path is the one
+one of the questions `/basil probe` exists to answer; until it does, the sprite path is the one
 with a working precedent behind it. It is drawn with `SetStretchMode(2)` +
 `SetBackColorBlendMode(Overlay)` + `SetBackColor`, so 8x8 scales to any segment length and takes
 the series colour. Fully opaque, not soft-edged: at a 2px stroke a baked-in feathered edge would

@@ -2,8 +2,8 @@
 -- Constants -- fonts, theme palette, parser enums.
 --=================================================================================================
 
-Reckoning = Reckoning or {}
-Reckoning.Version = "0.6.0"
+Basil = Basil or {}
+Basil.Version = "0.6.0"
 
 ---------------------------------------------------------------------------------------------------
 -- Localisation
@@ -205,7 +205,7 @@ MORALE_DANGER = 0.30
 -- The SAVED setting is the KEY of one of these, never a colour: a Turbine.UI.Color does not
 -- survive PluginData serialization (see Settings.lua's COLOR_KEYS comment, which is exactly why
 -- that list is empty and stays empty), and the design's brief was fixed presets with no free
--- picker. "Reckoning" must stay byte-identical to the Theme.Hex series tokens above so the
+-- picker. "Basil" must stay byte-identical to the Theme.Hex series tokens above so the
 -- default look is unchanged by this feature existing.
 --
 -- Only the FIVE SERIES roles are presettable. DamageSevere/DamageFatal/MoraleBg*/Type* are role
@@ -213,7 +213,7 @@ MORALE_DANGER = 0.30
 -- darker ground whatever the preset is.
 ---------------------------------------------------------------------------------------------------
 Theme.Presets = {
-	["Reckoning"] = {
+	["Basil"] = {
 		done = "#9184d9", taken = "#c98fa8", healOut = "#7fb3a6",
 		healIn = "#9dc7bc", morale = "#e6d98f",
 	},
@@ -233,9 +233,9 @@ Theme.Presets = {
 
 -- Explicit order for the options window's swatch rows -- pairs() order is undefined in Lua and
 -- the four rows must not shuffle between openings.
-Theme.PresetOrder = { "Reckoning", "High contrast", "Colour-blind safe", "Muted" }
+Theme.PresetOrder = { "Basil", "High contrast", "Colour-blind safe", "Muted" }
 
-local DEFAULT_PRESET = "Reckoning"
+local DEFAULT_PRESET = "Basil"
 
 -- The series colour for a role ("done"/"taken"/"healOut"/"healIn"/"morale") under whatever preset
 -- is active right now. RESOLVED PER CALL, deliberately: a module-level table of hexes built at

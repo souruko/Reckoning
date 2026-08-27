@@ -1,7 +1,7 @@
 -- Drives the REAL LiveMeter and DeathCause classes against the Turbine stub.
 local env = dofile("stub.lua"); local ROOT = env.ROOT
-import "Reckoning.Constants"
-Trigger = {}; import "Reckoning.Parse.en"; import "Reckoning.Settings"
+import "Basil.Constants"
+Trigger = {}; import "Basil.Parse.en"; import "Basil.Settings"
 local morale = 900000
 _G.lp = {
   GetName = function() return "Luxtheninth" end,
@@ -12,8 +12,8 @@ _G.lp = {
 }
 LocalPlayer = _G.lp; LocalPlayer.name = LocalPlayer:GetName()
 Settings.Load()
-import "Reckoning.Session"; import "Reckoning.Sessions"; import "Reckoning.Buffs"
-import "Reckoning.Events"; import "Reckoning.ChatPost"; import "Reckoning.UI"
+import "Basil.Session"; import "Basil.Sessions"; import "Basil.Buffs"
+import "Basil.Events"; import "Basil.ChatPost"; import "Basil.UI"
 
 local fails = 0
 local function check(label, ok, detail)
@@ -296,7 +296,7 @@ d:Show(session)
 check("a temp-morale-only ring marks nothing and does not crash",
   not d.rows[1].tint:IsVisible() and d.rows[1].maxTag:GetText() == "")
 
------------------------------------------------------------------- rotation probe (/reck probe)
+------------------------------------------------------------------ rotation probe (/basil probe)
 -- The probe is a diagnostic, but the shipping segment arithmetic lives in it, so it gets the same
 -- treatment as everything else here.
 --

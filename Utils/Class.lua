@@ -231,4 +231,4 @@ function _G.final_class( ... )
 	return classClass, classMetaTable, classInfo, classInstanceMetaTable;
 end
 
-import "Reckoning.Utils.Type";
+import "Basil.Utils.Type";
