@@ -382,12 +382,22 @@ end
 check("probe: no subject's rotated extent leaves its parent", #spilled == 0,
   table.concat(spilled, ", "))
 
--- The thin-bar cell is the one that decides the whole rework, so its two subjects must not
--- overlap their own unrotated twins even in the failure case (rotation ignored entirely).
-local thinA, thinB = probe.angleBars[7], probe.angleBars[8]
-check("probe: the thin bars sit in their own lane, clear of their twins",
-  select(2, thinA:GetPosition()) >= 40 and select(2, thinB:GetPosition()) >= 40,
-  select(2, thinA:GetPosition()) .. ", " .. select(2, thinB:GetPosition()))
+-- The thin-bar cell decides the whole rework, so it runs under the most favourable configuration
+-- available: its subjects hang off the Frame's own Window (all-Window ancestry, nothing in the
+-- chain that clips -- Controls clip, Windows do not). They must also stay clear of their own
+-- unrotated twins in the failure case where rotation is ignored entirely, which means comparing
+-- them in the same coordinate space: the twins live in the cell's Control ground, the subjects in
+-- window coordinates.
+local thinLaneOk, thinParentOk = true, true
+for i = 1, 2 do
+  local subject, ghost = probe.thinCell.subjects[i], probe.thinCell.ghosts[i]
+  if subject:GetParent() ~= probe then thinParentOk = false end
+  local ghostWindowY = select(2, ghost:GetParent():GetPosition()) + probe.headerHeight
+    + select(2, ghost:GetPosition()) + select(2, ghost:GetSize())
+  if select(2, subject:GetPosition()) < ghostWindowY + 20 then thinLaneOk = false end
+end
+check("probe: the deciding cell's bars hang off the window, not a clipping Control", thinParentOk)
+check("probe: the deciding cell's bars sit clear of their twins", thinLaneOk)
 
 local unrotated = 0
 for _, bar in ipairs(probe.angleBars) do

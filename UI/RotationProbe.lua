@@ -36,8 +36,17 @@
 -- Every cell carries an UNROTATED twin beside its subject (above it, in the thin-bar cell), so
 -- "did it change?" is answerable without remembering what the last load looked like.
 --
--- ALREADY ANSWERED, round one, and not re-asked: a control is NOT clipped to its parent's bounds
--- (a 120px bar in a 70x70 box ran out both sides).
+-- CLIPPING, corrected. Round one's clip cell was written up as "a control is not clipped to its
+-- parent's bounds" -- wrong: that subject was built in the command's default flavour, which is
+-- WINDOW. **Controls clip, Windows do not.** So round one showed only that a Window escapes its
+-- parent's bounds, which is very likely the reason Gibberish3 makes every rotated piece a
+-- `Turbine.UI.Window` in the first place: a rotated draw extends past the control's own
+-- axis-aligned rect, and a Control would clip exactly that overflow away.
+--
+-- That has two consequences here. A Control at 45 degrees may render as an OCTAGON (the rotated
+-- square clipped back to the unrotated one) rather than a diamond -- which still counts as "the
+-- rect rotated", and the chat key says so. And the deciding cell parents its subjects straight
+-- into the Frame's own Window, so nothing in the chain can clip the one answer that matters.
 --
 -- NOTHING ELSE IMPORTS THIS. It is built on demand by /reck probe and is meant to be deleted once
 -- the answers are written into docs/redesign/GRAPH_RESEARCH.md section 7.
@@ -357,13 +366,26 @@ function RotationProbe:BuildAngleCells()
 	local GHOST_Y, SUBJECT_Y, THIN_LEN = 16, 46, 44
 	local left, right = math.floor(tw / 4), math.floor(3 * tw / 4)
 
-	self:Ghost(thin, "window", "sprite", left, GHOST_Y, THIN_LEN, STROKE)
-	Place(Track(Subject(thin, "window", "sprite", Theme.Color(Theme.Hex.Accent))),
-		left, SUBJECT_Y, THIN_LEN, STROKE, 90)
+	-- The subjects are parented into the FRAME'S OWN WINDOW, not into this cell's Control ground,
+	-- and so are positioned in window coordinates. This is the one cell whose answer decides the
+	-- rework, so it runs under the most favourable configuration available: an all-Window
+	-- ancestry like Gibberish3's, with nothing in the chain that clips. A rotated bar's draw
+	-- extends past its own axis-aligned rect by definition, and a Control ancestor would clip
+	-- precisely that overflow -- which would make a working rotation look like a failed one.
+	self.thinCell = { ghosts = {}, subjects = {}, ghostY = GHOST_Y, subjectY = SUBJECT_Y }
+	local originY = thin.originY + self.headerHeight
 
-	self:Ghost(thin, "window", "solid", right, GHOST_Y, THIN_LEN, STROKE)
-	Place(Track(Subject(thin, "window", "solid", Theme.Color(Theme.Hex.DamageTaken))),
-		right, SUBJECT_Y, THIN_LEN, STROKE, 90)
+	for i, spec in ipairs({
+		{ paint = "sprite", cx = left,  hex = Theme.Hex.Accent },
+		{ paint = "solid",  cx = right, hex = Theme.Hex.DamageTaken },
+	}) do
+		self.thinCell.ghosts[i] =
+			self:Ghost(thin, "window", spec.paint, spec.cx, GHOST_Y, THIN_LEN, STROKE)
+
+		local subject = Track(Subject(self, "window", spec.paint, Theme.Color(spec.hex), 60))
+		Place(subject, thin.originX + spec.cx, originY + SUBJECT_Y, THIN_LEN, STROKE, 90)
+		self.thinCell.subjects[i] = subject
+	end
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -488,7 +510,9 @@ function RotationProbe:Report(set)
 
 	Say("Every cell carries an UNROTATED TWIN beside (cells 1-6) or above (cell 8) its subject.")
 	Say("1-2: a solid square at 45. A DIAMOND means the control's own rect rotates -- which is the")
-	Say("   only way a 2px segment can ever be a diagonal. Unchanged means it does not.")
+	Say("   only way a 2px segment can ever be a diagonal. Unchanged means it does not. Cell 1 is")
+	Say("   a CONTROL and controls clip, so an OCTAGON there (the diamond cut back to the square)")
+	Say("   still counts as the rect having rotated.")
 	Say("3-4: an asymmetric icon at 45 (lens + handle). If it TURNS while 1-2 stayed square, the")
 	Say("   engine rotates a control's CONTENT inside an axis-aligned rect -- look for the corners")
 	Say("   being cut off square. That kills the line graph as surely as no rotation at all.")
@@ -496,8 +520,9 @@ function RotationProbe:Report(set)
 	Say("   means right angles only.")
 	Say("6: the same icon at 45 parented straight into the window, not through nested Controls.")
 	Say("7: 15/30/60/75 -- what 'arbitrary angle' actually means.")
-	Say("8: THE DECIDING CELL. Two 60x2 bars at 90, sprite and solid. VERTICAL means rects rotate")
-	Say("   and the plot can be a real line; still horizontal means it cannot, full stop.")
+	Say("8: THE DECIDING CELL. Two 44x2 bars at 90, sprite and solid, parented into the window")
+	Say("   itself so nothing in the chain can clip them. VERTICAL means rects rotate and the plot")
+	Say("   can be a real line; still horizontal means it cannot, full stop.")
 	Say("9: the polyline, drawn by the exact code UI/AnalysisGraph.lua would ship. Only worth")
 	Say("   reading if cell 8 came out vertical.")
 end

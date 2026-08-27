@@ -51,7 +51,7 @@ the player-facing version and `REDESIGN_SPEC.md` for the spec each piece came fr
 **There is now a real offline test suite: `tools/offline/`.** Unlike the original scratch harness
 (described below), it runs the **real** classes and the **real** `Main.lua` under a **real Lua
 5.1** interpreter against a `Turbine` stub built on this repo's own `class()` shim. `sh
-tools/offline/run.sh` runs 747 checks in about a second. It caught three genuine bugs during the
+tools/offline/run.sh` runs 748 checks in about a second. It caught three genuine bugs during the
 redesign that `luac -p` could not have: an index-base probe that could not actually distinguish a
 0-based from a 1-based `EffectList`, a `nil` layout constant reaching `SetPosition`, and the
 analysis window failing to adopt an already-archived session. It caught three more during the
@@ -295,16 +295,29 @@ under content-only rotation a 2px-tall segment can never be a diagonal at any an
 lesson: a probe subject must be able to LOOK different under each hypothesis it is meant to
 separate. A symmetric or featureless subject answers nothing, however carefully the rest is built.**
 
-Round one did settle one thing: **a control is not clipped to its parent's bounds** (a 120px bar at
-30 degrees ran out of its 70x70 box on both sides) -- consistent with `SetClipMode` being opt-in and
-unused here, and it means the plot needs no inset against segments near its edges.
+Round one's clip cell was first written up as "a control is not clipped to its parent's bounds".
+**That was wrong** -- the subject was built in the command's default flavour, and the default is
+`window`. The rule, per the plugin's author: **Controls clip to their parent, Windows do not.** The
+cell showed only that a Window escapes its parent's bounds and said nothing about Controls.
+That is very likely *why* Gibberish3 makes every rotated piece a `Turbine.UI.Window`: a rotated
+draw extends past the control's own axis-aligned rect by definition, and a Control clips exactly
+that overflow away -- so a working rotation on a Control could look like a failed one. Two
+consequences for the rework: a rotated **Control** may render as an octagon rather than a diamond
+(still evidence the rect rotated), and if the segment pool has to be **Windows** they will not be
+clipped by the plot ground, so the geometry alone has to keep them inside it. It does -- a segment
+centred on its midpoint has a rotated y-extent equal to the span between its two data points and a
+rotated x-extent smaller than its unrotated one, so it can never reach past the bounding box of the
+data it draws. **General lesson, second one from the same cell: a probe cell inherits whatever
+default the command was invoked with, so record WHICH flavour produced an observation before
+generalising from it.**
 
 Round two therefore asks with subjects that cannot hide it: a **solid square** at 45 (a diamond iff
 the control's own rect transforms -- the only way a thin segment can ever be a diagonal), an
 **asymmetric icon** at 45 (turns iff the content transforms), the same icon at **90** (the only
 angle Gibberish3 proves) and at 15/30/60/75, the same icon parented **straight into the Frame's
 Window** (Gibberish3 only ever parents its rotated Windows into other Windows, and `Graph` is a
-Control), and -- the deciding cell -- two **44x2 bars at z=90**: vertical means rects rotate and the
+Control), and -- the deciding cell, parented into the Frame's own Window so nothing in the chain
+can clip it -- two **44x2 bars at z=90**: vertical means rects rotate and the
 plot can be a real line, still horizontal means it cannot, and there is no third reading. Every cell
 carries an unrotated twin, so "did it change?" never depends on remembering the last load.
 
@@ -1117,7 +1130,7 @@ Follow the `VitalSelf` pattern: `Turbine.PluginData.Save(Turbine.DataScope.Chara
 ## Testing
 
 **Run `sh tools/offline/run.sh` before every in-game load** (needs `lua5.1`; see
-`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 747
+`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 748
 checks against the real classes and the real `Main.lua`. It is not a substitute for loading the
 plugin -- it cannot tell you whether anything actually *draws* -- but everything it catches is a
 reload you don't have to spend.

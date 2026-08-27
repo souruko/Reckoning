@@ -211,11 +211,22 @@ backgrounded with a circle quadrant) -- which looks identical under both behavio
 production evidence anywhere cannot distinguish them either. And the difference decides the rework:
 under (b) a 2px-tall segment can never draw a diagonal at any angle, and Option B is dead.
 
-Round one did settle one thing outright: **a control is not clipped to its parent's bounds.** The
-clip cell's 120px bar at 30 degrees ran out of its 70x70 box on both sides. Consistent with
-`SetClipMode` being opt-in and unused in this codebase; it also means the plot needs no inset
-against segments near its edges, and that a rotated segment could spill past the plot frame if the
-geometry ever allowed it.
+Round one's clip cell was first written up as "a control is not clipped to its parent's bounds",
+which was wrong: that subject was built in the command's default flavour, and the default is
+**window**. The real rule, per the plugin's author: **Controls clip to their parent, Windows do
+not.** So the cell showed only that a Window escapes its parent's bounds -- a 120px bar at 30
+degrees running out of its 70x70 box both sides -- and said nothing about Controls at all.
+
+That is very likely *why* Gibberish3 makes every rotated piece a `Turbine.UI.Window`: a rotated
+draw extends past the control's own axis-aligned rect by definition, and a Control would clip
+exactly that overflow away. It also cuts two ways for the rework. A rotated **Control** at 45
+degrees may render as an octagon (the rotated square clipped back to the unrotated one) rather than
+a diamond -- still evidence that the rect rotated. And if the segment pool has to be **Windows**,
+segments will not be clipped by the plot ground, so the plot's own frame will not contain them; the
+geometry has to. (It does: a segment control centred on its midpoint has a rotated y-extent of
+`len*|sin| + stroke*|cos|`, which is the span between the two data points it joins, and a rotated
+x-extent of `len*|cos|`, which is smaller than the unrotated one. A segment can never reach past
+the bounding box of the data it draws.)
 
 ### Round two
 
@@ -228,7 +239,7 @@ Same command, subjects that cannot hide the difference:
 | 5 | the icon at **90** | the only angle Gibberish3 proves -- turning here but not at 45 means right angles only |
 | 6 | the icon at 45, parented **straight into the Frame's Window** | whether the all-Window ancestry Gibberish3 always has is load-bearing (`Graph` is a Control) |
 | 7 | the icon at **15 / 30 / 60 / 75** | what "arbitrary angle" actually means |
-| 8 | two **44x2 bars at 90**, sprite and solid | THE DECIDING CELL: vertical means rects rotate and the plot can be a real line; still horizontal means it cannot |
+| 8 | two **44x2 bars at 90**, sprite and solid, parented into the Frame's own Window | THE DECIDING CELL: vertical means rects rotate and the plot can be a real line; still horizontal means it cannot |
 | 9 | the real polyline | only worth reading if 8 came out vertical |
 
 Every cell carries an unrotated twin beside its subject (above it, in cell 8), so "did it change?"
@@ -248,5 +259,5 @@ Fill these in from a real load, then delete the probe:
 | All-Window ancestry required (cell 6) | |
 | Positive z turns (cw / ccw) -> `ROT_SIGN` | |
 | Pivot is the control's centre | |
-| Rotated control clips to parent | **no** -- round one, cell 7 |
+| Clipping | **Controls clip to their parent, Windows do not** -- author, confirmed by round one's cell 7 (a Window) |
 | 2px stroke antialiased | |
