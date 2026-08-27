@@ -429,9 +429,11 @@ end
 -- One 16px lane per charted buff: a 2px rail, up to LANE_SEGMENTS pooled interval segments on
 -- it, and the buff's 16x16 icon closing the lane on the right. The icon replaces the name
 -- entirely -- three names at Verdana10 was the noisiest thing on the plot, and the icon is how a
--- player actually recognises a buff.
+-- player actually recognises a buff. Clicking that icon un-charts the buff (Graph.OnLaneRemoved),
+-- which is the only way to drop a lane without going back to the buff table's checkbox.
 function Graph:BuildLanes()
 	self.lanes = {}
+	local graph = self
 
 	for i = 1, MAX_LANES do
 		local rail = Turbine.UI.Control()
@@ -455,11 +457,34 @@ function Graph:BuildLanes()
 		-- either the real client art or, when GetIcon() gave us nothing, the buff's initials.
 		-- Falling back to a plain tile rather than shifting the lane keeps the geometry fixed
 		-- whether or not the art resolves.
+		-- Mouse-visible, with both its children left mouse-invisible: the same
+		-- hover-wrapper-around-mouse-invisible-children shape as Frame's close button and the
+		-- table header cells. Hover brightens the tile's own border (its BackColor, the lane
+		-- colour) rather than filling it with Theme.Hex.Hover -- the tile is 16px of art with a
+		-- 1px frame, and a fill behind the art would not read as a hover at all.
 		local icon = Turbine.UI.Control()
 		icon:SetParent(self)
 		icon:SetSize(LANE_ICON_SIZE, LANE_ICON_SIZE)
 		icon:SetVisible(false)
-		icon:SetMouseVisible(false)
+		icon:SetMouseVisible(true)
+
+		icon.MouseEnter = function()
+			if graph.lanes[i].name ~= nil then
+				icon:SetBackColor(Theme.Color(Theme.Hex.Text))
+			end
+		end
+		icon.MouseLeave = function()
+			local hex = graph.lanes[i].colorHex
+			if hex ~= nil then
+				icon:SetBackColor(Theme.Color(hex))
+			end
+		end
+		icon.MouseClick = function()
+			local name = graph.lanes[i].name
+			if name ~= nil and graph.OnLaneRemoved ~= nil then
+				graph.OnLaneRemoved(name)
+			end
+		end
 
 		local iconInset = Turbine.UI.Control()
 		iconInset:SetParent(icon)
@@ -1268,6 +1293,11 @@ function Graph:DrawLanes()
 
 		lane.rail:SetVisible(live)
 		lane.icon:SetVisible(live)
+
+		-- What the icon's own click/hover handlers read: a dead lane must not answer a click
+		-- with whatever buff it happened to be showing last refresh.
+		lane.name = live and data.name or nil
+		lane.colorHex = live and data.colorHex or nil
 
 		if not live then
 			for k = 1, LANE_SEGMENTS do

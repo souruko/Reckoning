@@ -270,6 +270,24 @@ w:ToggleCharted(first)   -- re-chart it: now 3 again, oldest dropped
 check("charted stays capped at three", #w.charted == 3, tostring(#w.charted))
 check("the re-charted buff is the newest entry", w.charted[3] == first)
 
+-- clicking a lane's icon un-charts that buff -- the graph's only way out of a lane
+local laneOne = w.charted[1]
+check("lane 1 knows which buff it draws", w.graph.lanes[1].name == laneOne,
+  tostring(w.graph.lanes[1].name) .. " vs " .. tostring(laneOne))
+w.graph.lanes[1].icon.MouseClick()
+check("clicking the lane icon un-charts that buff", w:IsCharted(laneOne) == nil)
+check("the lane went with it", w.graph.laneCount == 2 and #w.charted == 2,
+  w.graph.laneCount .. " vs " .. #w.charted)
+check("the graph block shrank by one lane",
+  select(2, w.graphHolder:GetSize()) == GraphHeightFor(2),
+  select(2, w.graphHolder:GetSize()) .. " vs " .. GraphHeightFor(2))
+check("removal persisted to settings", #_G.settings.chartedBuffs == 2)
+-- the vacated third lane must not answer a click with the buff it used to draw
+check("the emptied lane is inert", w.graph.lanes[3].name == nil)
+w.graph.lanes[3].icon.MouseClick()
+check("clicking an empty lane does nothing", #w.charted == 2)
+w:ToggleCharted(laneOne)
+
 check("the buff table is always listed now that it cannot be collapsed",
   w.buffTableHeader:IsVisible() and w.buffScrollView:GetItemCount() == 3,
   tostring(w.buffScrollView:GetItemCount()))

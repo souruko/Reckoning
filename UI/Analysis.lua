@@ -3039,6 +3039,9 @@ function Analysis:LayoutGraph(innerWidth)
 		self.graph:SetParent(self.graphHolder)
 		self.graph:SetPosition(0, 0)
 		self.graph.OnRangeChanged = function(from, to) window:OnRangeChanged(from, to) end
+		-- Clicking a lane icon un-charts that buff -- the same toggle the buff table's checkbox
+		-- calls, so the table's checkbox clears in the same refresh.
+		self.graph.OnLaneRemoved = function(name) window:ToggleCharted(name) end
 	elseif self.graph.plotWidth ~= innerWidth then
 		self.graph:Resize(innerWidth)
 	end
