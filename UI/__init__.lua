@@ -14,3 +14,6 @@ import "Reckoning.UI.Analysis"
 import "Reckoning.UI.OptionsPage"
 import "Reckoning.UI.OptionsWindow"
 import "Reckoning.UI.Options"
+-- After Frame (it subclasses it). Nothing else imports or references RotationProbe -- it is the
+-- /reck probe diagnostic window, built on demand, and it goes away with the graph rework.
+import "Reckoning.UI.RotationProbe"

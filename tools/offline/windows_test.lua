@@ -296,5 +296,98 @@ d:Show(session)
 check("a temp-morale-only ring marks nothing and does not crash",
   not d.rows[1].tint:IsVisible() and d.rows[1].maxTag:GetText() == "")
 
+------------------------------------------------------------------ rotation probe (/reck probe)
+-- The probe window is a diagnostic, but it is still real UI construction, and the shipping
+-- polyline arithmetic lives in it -- so it gets the same treatment as everything else here.
+--
+-- The load-bearing check is the LAST one: the stub CLEARS a control's rotation on SetSize and
+-- SetBackground, exactly as the real engine does (Gibberish3's own comment), so a segment that
+-- came out with no rotation recorded is one whose SetRotation did not come last.
+local said = {}
+local realWrite = Turbine.Shell.WriteLine
+Turbine.Shell.WriteLine = function(text) said[#said + 1] = text end
+
+local probe = RotationProbe()
+
+check("probe: window is 480x546", probe:GetWidth() == 480 and probe:GetHeight() == 546,
+  probe:GetWidth() .. "x" .. probe:GetHeight())
+check("probe: the 2x2 built all four control/paint combinations",
+  probe.matrix[1].bar ~= nil and probe.matrix[2].bar ~= nil
+  and probe.matrix[3].bar ~= nil and probe.matrix[4].bar ~= nil)
+check("probe: a rising 45-degree segment is rotated -45",
+  math.abs(probe.matrix[1].bar:GetRotation().z + 45) < 1e-9,
+  tostring(probe.matrix[1].bar:GetRotation().z))
+check("probe: prints a key to chat", #said >= 8, #said .. " lines")
+
+local set = probe.sets[probe.activeSet]
+check("probe: default flavour is Gibberish3's own (window + sprite)",
+  probe.activeSet == "window:sprite", probe.activeSet)
+
+-- Reconstruct every polyline segment from what was actually handed to the engine -- position,
+-- size and angle -- and check it lands back on the two data points it is supposed to join.
+local worst = 0
+for i = 1, #set.linePoints - 1 do
+  local bar = set.lineBars[i]
+  if bar ~= nil then
+    local px, py = bar:GetPosition()
+    local w, h = bar:GetSize()
+    local rot = bar:GetRotation()
+    local len = w - h                          -- PlaceSegment sizes to len + stroke
+    local rad = math.rad(rot.z)
+    local cx, cy = px + w / 2, py + h / 2
+    local ax, ay = cx - len / 2 * math.cos(rad), cy - len / 2 * math.sin(rad)
+    local bx, by = cx + len / 2 * math.cos(rad), cy + len / 2 * math.sin(rad)
+    local p0, p1 = set.linePoints[i], set.linePoints[i + 1]
+    worst = math.max(worst,
+      math.abs(ax - p0.x), math.abs(ay - p0.y), math.abs(bx - p1.x), math.abs(by - p1.y))
+  end
+end
+check("probe: every segment reconstructs onto its two data points", worst <= 1.5,
+  string.format("worst error %.2fpx", worst))
+
+-- Switching flavour must hide the old set rather than leave two drawn on top of each other,
+-- and must not build a second copy of a set it already has.
+probe:ShowFlavour("control", "plain")
+check("probe: flavour swap hides the previous set",
+  not set.bars[1]:IsVisible() and probe.activeSet == "control:plain")
+probe:ShowFlavour("window", "sprite")
+check("probe: returning to a built flavour reuses it", set.bars[1]:IsVisible()
+  and probe.sets["window:sprite"] == set)
+
+-- Every bar's ROTATED extent must stay inside the cell it was placed in, or a future retune of
+-- an angle or a length silently overlaps its neighbours (or leaves the window). The clip cell's
+-- bar is the one deliberate exception -- overflowing its box is the whole question there.
+local spilled = {}
+for _, built in pairs(probe.sets) do
+  for _, bar in ipairs(built.bars) do
+    local parent = bar:GetParent()
+    if parent ~= probe.clipBox then
+      local px, py = bar:GetPosition()
+      local w, h = bar:GetSize()
+      local rot = bar:GetRotation() or { z = 0 }
+      local c, sn = math.abs(math.cos(math.rad(rot.z))), math.abs(math.sin(math.rad(rot.z)))
+      local halfW, halfH = (w * c + h * sn) / 2, (w * sn + h * c) / 2
+      local cx, cy = px + w / 2, py + h / 2
+      local pw, ph = parent:GetSize()
+      if cx - halfW < -0.5 or cy - halfH < -0.5 or cx + halfW > pw + 0.5 or cy + halfH > ph + 0.5 then
+        spilled[#spilled + 1] = string.format("%.0fx%.0f @%.0fdeg in %dx%d", w, h, rot.z, pw, ph)
+      end
+    end
+  end
+end
+check("probe: no bar's rotated extent leaves its cell", #spilled == 0,
+  table.concat(spilled, ", "))
+
+local unrotated = 0
+for key, built in pairs(probe.sets) do
+  for _, bar in ipairs(built.bars) do
+    if bar:IsVisible() and bar:GetRotation() == nil then unrotated = unrotated + 1 end
+  end
+end
+check("probe: no visible bar lost its rotation to a later SetSize/SetBackground",
+  unrotated == 0, unrotated .. " unrotated")
+
+Turbine.Shell.WriteLine = realWrite
+
 print("")
 if fails == 0 then print("ALL WINDOW CHECKS PASSED") else print(fails .. " CHECK(S) FAILED"); os.exit(1) end

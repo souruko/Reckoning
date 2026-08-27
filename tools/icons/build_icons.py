@@ -76,3 +76,28 @@ write_tga(render("regular", "x", 16, WHITE), "cross.tga")
 write_tga(render("regular", "magnifying-glass", 16, WHITE), "search.tga")
 write_tga(render("fill", "push-pin-simple", 12, WHITE), "pin_on.tga")
 write_tga(render("regular", "push-pin-simple", 12, WHITE), "pin_off.tga")
+
+
+def write_solid(width, height, filename):
+    """A plain opaque white block -- not a Phosphor icon, and no network needed.
+
+    `line.tga` is the polyline stroke sprite (UI/AnalysisGraph.lua, UI/RotationProbe.lua).
+    It exists because the only production-proven SetRotation configuration anywhere --
+    Gibberish3's circular timer, UI_ELEMENTS/TIMER/CIRCEL/Element.lua -- rotates a
+    control that carries a BACKGROUND IMAGE, never one painted with SetBackColor alone;
+    whether a bare back-colour fill rotates at all is exactly what /reck probe asks.
+
+    Drawn with SetStretchMode(2) + SetBackColorBlendMode(Overlay) + SetBackColor, so the
+    8x8 source scales to whatever the segment needs and takes the series colour. Fully
+    opaque rather than soft-edged: at a 2px stroke a baked-in feathered edge would eat
+    most of the line's own width.
+    """
+    header = struct.pack(
+        "<BBBHHBHHHHBB", 0, 0, 2, 0, 0, 0, 0, 0, width, height, 32, 0x28
+    )
+    body = bytes((255, 255, 255, 255)) * (width * height)  # BGRA
+    (OUT / filename).write_bytes(header + bytes(body))
+    print(f"{filename:20} {width}x{height}")
+
+
+write_solid(8, 8, "line.tga")

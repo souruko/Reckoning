@@ -51,7 +51,7 @@ the player-facing version and `REDESIGN_SPEC.md` for the spec each piece came fr
 **There is now a real offline test suite: `tools/offline/`.** Unlike the original scratch harness
 (described below), it runs the **real** classes and the **real** `Main.lua` under a **real Lua
 5.1** interpreter against a `Turbine` stub built on this repo's own `class()` shim. `sh
-tools/offline/run.sh` runs 697 checks in about a second. It caught three genuine bugs during the
+tools/offline/run.sh` runs 745 checks in about a second. It caught three genuine bugs during the
 redesign that `luac -p` could not have: an index-base probe that could not actually distinguish a
 0-based from a 1-based `EffectList`, a `nil` layout constant reaching `SetPosition`, and the
 analysis window failing to adopt an already-archived session. It caught three more during the
@@ -255,6 +255,46 @@ be wrong:
   for buffs that are *still currently active*, that would need a separate live-effect lookup
   (matching by name against `_G.lp:GetEffects()` at render time) with this fixed path kept as the
   fallback for anything not currently live -- not a wholesale swap.
+
+**The plot is being reworked into a real line graph, and Phase 0 of that is `/reck probe`.**
+The analysis window's polyline is currently an L-step (a horizontal run plus a vertical riser per
+bucket) because `docs/redesign/GRAPH_RESEARCH.md` picked Option A -- the one with no unknowns --
+over Option B, the undocumented `SetRotation`. Per direct user request the plot (and only the
+plot: the morale background bars stay bars, and the live meter's sparkline is explicitly out of
+scope) is moving to Option B: one rotated segment per bucket pair, a genuine diagonal, half the
+Controls.
+
+Reading Gibberish3's circular timer (`UI_ELEMENTS/TIMER/CIRCEL/Element.lua`) in full pins down
+more than `GRAPH_RESEARCH.md` recorded. The proven configuration is: a **`Turbine.UI.Window`**,
+carrying a **background image** at `SetStretchMode(2)`, tinted by
+**`SetBackColorBlendMode(Overlay)` + `SetBackColor`** -- note `SetBackColorBlendMode`, *not* the
+`SetBlendMode` the self-buff icon saga above has been fighting with, a different call with its own
+independent precedent -- with the angle **kept in a Lua table per control and re-applied after
+every `SetSize` or `SetBackground`**, both of which clear it. Angles are degrees. But that file
+only ever uses z = 0/90/180/270, only ever on Windows, and only ever on image-backed controls, so
+whether an arbitrary angle renders, whether a plain `Turbine.UI.Control` can rotate, and whether a
+bare `SetBackColor` fill rotates at all are all still open -- and each one changes the shipping
+code.
+
+`/reck probe [control|window] [plain|sprite]` (`UI/RotationProbe.lua`, `Resources/line.tga`) is
+the window that answers them, and it is deliberately the *whole* answer set in one load rather
+than another round of guess-fix-reload: a 2x2 of the same 45-degree segment across
+control/window x plain/sprite, then one cell each for sign/units, pivot, parent clipping and
+stroke edges, then a real 9-point polyline drawn by the exact arithmetic the plot would ship.
+Every rotated control is built and rotated through a `pcall`, so a combination this client refuses
+leaves one blank cell instead of taking the window down with it. **The answers go in
+`GRAPH_RESEARCH.md` section 7's table and then this file gets deleted** -- it is scaffolding, not
+a feature, and it is the only thing in this codebase that calls `SetRotation`.
+
+Two things worth carrying into the rework itself. **The failure signature**: if `SetRotation`
+silently no-ops rather than throwing, a steep segment's *unrotated* rect is its full diagonal
+length, so the plot renders as long flat bars punched through the data -- unmistakable, and not
+to be confused with "the graph is blank" (which was the `graphHolder` sizing bug above). And
+**the invariant that makes the whole "rotation does not survive X" bug class impossible**:
+`Redraw()` re-specifies every visible segment completely -- size, colour, position, rotation last
+-- so nothing may touch a segment outside its draw function. `tools/offline/stub.lua` now enforces
+the half of that it can see: `SetSize` and `SetBackground` **clear** the recorded rotation there,
+exactly as the real engine does, so a missing re-apply fails `run.sh` instead of costing a reload.
 
 **Window chrome brought in line with Gibberish3/LootLogs, per direct user request.** Every text
 glyph this codebase used as a UI control (`UI/Frame.lua`'s "x" close `Label`, the search box's "x"
@@ -775,6 +815,7 @@ inheritance + mixins). Treat them as vendored, not Reckoning-specific.
 | `UI/Bar.lua` | `Bar` -- 1px-border track Control with a fill child; `SetPercent(pct)` sets width directly (no tweening anywhere, per `docs/DESIGN.md`). |
 | `UI/Row.lua` | `Row` -- a fixed-column-offset row of Labels for tables; pooled and reused across refreshes, never rebuilt per redraw. |
 | `UI/RangeSlider.lua` | `RangeSlider` -- the two-handle time-range control under the plot. Snaps to the graph's 48 bucket stops, not to pixels, so the numbers in the window and the marks on the plot agree exactly and only 48 distinct ranges per endpoint can ever be asked for. Drag uses the same MouseDown/MouseMove/MouseUp shape as `Frame:WireDrag` and the resize gripper -- confirmed-working precedent, no new assumption about mouse delivery. Handles clamp to `other handle -/+ 1`; a zero-width range would divide by zero everywhere downstream. |
+| `UI/RotationProbe.lua` | `RotationProbe` (extends `Frame`) -- the `/reck probe` diagnostic window, and the only thing in this codebase that calls `SetRotation`. Nothing imports it but `UI/__init__.lua`; it exists to answer the questions the line-graph rework depends on and is meant to be **deleted once they are answered** (`docs/redesign/GRAPH_RESEARCH.md` section 7 holds the answer table) -- along with the `windows.probe` entry it leaves behind in saved settings, since it takes a `Frame` key like any other window. |
 
 `UI/__init__.lua` imports Frame/Bar/Row in that order; `Main.lua` does `import "Reckoning.UI"`
 once. **Cross-directory class visibility**: a bare `X = class(...)` assigned inside `UI/*.lua`
@@ -916,7 +957,8 @@ overlay tracking the window through drag, resize, show/hide, re-raise and shutdo
 `/reck options` (alias `/reck config`),
 `/reck show|hide [live\|death\|analysis\|options]`, `/reck move <live\|death\|analysis\|options>`,
 `/reck testdeath`, `/reck reset`, `/reck post`,
-`/reck buffs [list|ignore <name>|unignore <name>]` are in
+`/reck buffs [list|ignore <name>|unignore <name>]`,
+`/reck probe [control|window] [plain|sprite]` are in
 `Main.lua`. `options` toggles the settings window (window 4) -- the same thing the Plugin Manager
 stub's button does. `buffs` re-parses its arguments from the **raw** command string, not the lower-cased
 single-token parse the other subcommands use -- buff names are case-sensitive and contain spaces. `show`/`hide` for `live`/`death` only flip
@@ -925,7 +967,10 @@ their enable flag (same effect as the options panel checkboxes) rather than forc
 open with no real death would be misleading; `live` is now permanently visible whenever enabled
 (see `UI/LiveMeter.lua`'s note above) so its enable flag *is* the real show/hide. `analysis` is
 the one window a forced show/hide makes sense for directly. `move` is a recovery command (reset
-to (200, 200) and show) for a window dragged off-screen. `testdeath` pops the death window
+to (200, 200) and show) for a window dragged off-screen. `probe` opens the
+`SetRotation` diagnostic window (see the line-graph note in Build status) -- built lazily on first
+use, and each flavour's controls are built once and then swapped by visibility, so re-running it
+with different arguments does not leak a second set. `testdeath` pops the death window
 directly with synthesized data, bypassing `Sessions.OnSelfDefeat` entirely -- added specifically
 to tell "the window itself doesn't work" apart from "a real death was never detected" (e.g.
 nothing fought so far can actually kill the player) without waiting to die for real; if this
@@ -1049,7 +1094,7 @@ Follow the `VitalSelf` pattern: `Turbine.PluginData.Save(Turbine.DataScope.Chara
 ## Testing
 
 **Run `sh tools/offline/run.sh` before every in-game load** (needs `lua5.1`; see
-`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 697
+`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 745
 checks against the real classes and the real `Main.lua`. It is not a substitute for loading the
 plugin -- it cannot tell you whether anything actually *draws* -- but everything it catches is a
 reload you don't have to spend.

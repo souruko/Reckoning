@@ -159,3 +159,51 @@ Two things to hold onto whichever way it goes: the morale background stays plain
 `SetBackColor` rects (48 bars + 48 edge rects — no image, no rotation, cheapest thing on the
 plot), and every control is created once in the constructor and only ever repositioned. The
 current `AnalysisGraph.lua` already pools correctly; none of this changes that contract.
+
+## 7. The probe, as built (`/reck probe`)
+
+§3's checklist is now a window: `UI/RotationProbe.lua`, opened with
+`/reck probe [control|window] [plain|sprite]`. Reading Gibberish3's
+`UI_ELEMENTS/TIMER/CIRCEL/Element.lua` in full added two questions §3 did not ask, and both
+change the shipping code if they come back the wrong way:
+
+- **Back colour or sprite?** Every rotated control in that file carries a *background image*
+  (`SetStretchMode(2)`), tinted by `SetBackColorBlendMode(Overlay)` + `SetBackColor`. Nothing
+  anywhere rotates a control painted with `SetBackColor` alone. If a bare fill does rotate,
+  `Resources/line.tga` is unnecessary and each segment loses three calls.
+- **Can a rotated `Turbine.UI.Window` be parented into a `Turbine.UI.Control`?** Gibberish3 only
+  ever parents its rotated Windows into other Windows, and `Graph` is a Control. If the answer is
+  no, either `Graph` becomes a Window or the segments get a Window host of their own.
+
+So the window's first four cells are a 2x2 of the *same* 45-degree segment -- control/window x
+plain/sprite -- each drawn between two marker dots, which makes them a pivot check as well: a
+segment rotating about its top-left corner swings away from both markers. Cells 5-8 are §3's
+items 2, 3, 4 and 7 (sign and units, pivot, clipping, stroke edges), drawn in whichever flavour
+the command asked for. Cell 9 is a real 9-point polyline drawn by the exact arithmetic
+`UI/AnalysisGraph.lua` would ship, and is the acceptance test.
+
+§3's items 5 and 6 are deliberately **not** probed. Hit-testing does not matter -- every segment
+is mouse-invisible. And "does rotation survive `SetVisible` / `SetBackColor`" does not matter
+either, because the shipping `Redraw()` re-specifies every visible segment completely (size,
+colour, position, rotation last) on every pass; the whole "rotation does not survive X" bug class
+is structurally impossible as long as **nothing touches a segment outside `DrawSegment`**. That
+rule is the one thing to preserve when editing the plot.
+
+**The failure signature to expect** if rotation silently no-ops rather than erroring: a steep
+segment's *unrotated* rect is `len` wide, so the plot renders as long flat bars punched through
+the data rather than as a line.
+
+### Answers
+
+Fill these in from a real load, then delete the probe:
+
+| Question | Answer |
+| --- | --- |
+| Arbitrary z renders | |
+| Control, or Window only | |
+| Back colour, or sprite required | |
+| Window parents into a Control | |
+| Positive z turns (cw / ccw) -> `ROT_SIGN` | |
+| Pivot is the control's centre | |
+| Rotated control clips to parent | |
+| 2px stroke antialiased | |

@@ -58,6 +58,7 @@ function Control:SetSize(w, h)
 	num(w, "SetSize w"); num(h, "SetSize h")
 	assert(w >= 0 and h >= 0, "SetSize must be non-negative, got " .. w .. "x" .. h)
 	self._w, self._h = w, h
+	self._rot = nil -- see SetRotation below
 end
 function Control:GetSize() return self._w or 0, self._h or 0 end
 function Control:SetWidth(w) self._w = num(w, "SetWidth") end
@@ -84,9 +85,22 @@ function Control:GetText() return self._text or "" end
 function Control:SetFont(f) self._font = f end
 function Control:SetTextAlignment(a) self._align = a end
 function Control:SetWantsUpdates(v) self._updates = v end
-function Control:SetBackground(b) self._bg = b end
+function Control:SetBackground(b) self._bg = b; self._rot = nil end
 function Control:SetBlendMode(b) self._blend = b end
+function Control:SetBackColorBlendMode(b) self._backBlend = b end
 function Control:SetStretchMode(m) self._stretch = m end
+-- SetRotation is undocumented but real -- Gibberish3's circular timer
+-- (UI_ELEMENTS/TIMER/CIRCEL/Element.lua) turns its leading sweep piece with it. The stub models
+-- the one hard-won fact that file documents, and it is the whole reason this method is here:
+-- **SetSize and SetBackground CLEAR the rotation**, so the angle has to be kept in Lua and
+-- re-applied after either of them. Clearing _rot in both of those setters is what makes a
+-- missing re-apply fail the harness instead of costing an in-game reload.
+function Control:SetRotation(r)
+	assert(type(r) == "table", "SetRotation takes a { x =, y =, z = } table, got " .. type(r))
+	num(r.z or 0, "SetRotation z")
+	self._rot = { x = r.x or 0, y = r.y or 0, z = r.z or 0 }
+end
+function Control:GetRotation() return self._rot end
 -- SetOpacity used to be banned outright here, which encoded the lesson slightly too broadly. The
 -- real rule (CLAUDE.md, the long note): it does NOT blend over a Control that already has a solid
 -- BackColor -- it draws the BackColor at full strength and the opacity is ignored. A whole-window
