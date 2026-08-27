@@ -54,7 +54,7 @@ function OptionsPage:Grow(by)
 end
 
 -- Adds a refresher, i.e. one control's "re-read the setting you edit". Run by Refresh() after
--- Defaults / /reck reset, which change every value out from under the page.
+-- Defaults / /basil reset, which change every value out from under the page.
 function OptionsPage:OnRefresh(fn)
 	self.refreshers[table.getn(self.refreshers) + 1] = fn
 end
@@ -333,7 +333,7 @@ end
 
 ---------------------------------------------------------------------------------------------------
 
--- Re-reads every control on this page from _G.settings. Called after Defaults and /reck reset.
+-- Re-reads every control on this page from _G.settings. Called after Defaults and /basil reset.
 function OptionsPage:Refresh()
 	for i = 1, table.getn(self.refreshers) do
 		self.refreshers[i]()

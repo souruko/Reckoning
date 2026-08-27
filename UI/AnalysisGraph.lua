@@ -16,7 +16,7 @@
 --   legend           18   series swatches (clickable) + the range's peak/low morale readout
 --
 -- REAL DIAGONALS, and every word of how they are drawn was paid for by six rounds of in-game
--- probing (`/reck probe`, UI/RotationProbe.lua; the answers are in GRAPH_RESEARCH.md section 7).
+-- probing (`/basil probe`, UI/RotationProbe.lua; the answers are in GRAPH_RESEARCH.md section 7).
 -- Turbine has no canvas and no line primitive, so a diagonal can only come from rotating an
 -- axis-aligned control, and `SetRotation` here has four properties that together dictate the
 -- entire shape of this code:
@@ -83,14 +83,14 @@ local DOT_SIZE    = 5
 local STROKE_NATIVE = 64
 local STROKE_TARGET = 2 -- the stroke width the ladder is chosen to hold, in pixels
 local STROKE_SPRITES = {
-	{ band = 1.0, image = "Reckoning/Resources/stroke_10.tga" },
-	{ band = 1.5, image = "Reckoning/Resources/stroke_15.tga" },
-	{ band = 2.0, image = "Reckoning/Resources/stroke_20.tga" },
-	{ band = 2.5, image = "Reckoning/Resources/stroke_25.tga" },
-	{ band = 3.0, image = "Reckoning/Resources/stroke_30.tga" },
-	{ band = 4.0, image = "Reckoning/Resources/stroke_40.tga" },
-	{ band = 5.0, image = "Reckoning/Resources/stroke_50.tga" },
-	{ band = 6.0, image = "Reckoning/Resources/stroke_60.tga" },
+	{ band = 1.0, image = "Basil/Resources/stroke_10.tga" },
+	{ band = 1.5, image = "Basil/Resources/stroke_15.tga" },
+	{ band = 2.0, image = "Basil/Resources/stroke_20.tga" },
+	{ band = 2.5, image = "Basil/Resources/stroke_25.tga" },
+	{ band = 3.0, image = "Basil/Resources/stroke_30.tga" },
+	{ band = 4.0, image = "Basil/Resources/stroke_40.tga" },
+	{ band = 5.0, image = "Basil/Resources/stroke_50.tga" },
+	{ band = 6.0, image = "Basil/Resources/stroke_60.tga" },
 }
 
 local SEGMENT_MIN = 4 -- a square smaller than this cannot show a band at all
@@ -113,6 +113,13 @@ end
 -- control has painted is silently dropped (probe round 4), and one apply on a later frame sticks
 -- (round 5), so this is a small margin rather than a repeating cost.
 local ROTATE_DELAY = 2
+
+-- How many frames in a row the pass applies the rotation, once the segments are on screen. One
+-- apply was reported in-game as a plot that sometimes opened with flat segments and came right the
+-- moment the range was moved (i.e. as soon as any later redraw ran a fresh pass). Re-applying the
+-- same angle to an already-correct segment is a no-op, and this runs for three frames after a
+-- redraw, not continuously.
+local ROTATE_APPLIES = 3
 
 local LANE_HEIGHT     = 16
 local LANE_GAP        = 4
@@ -1066,14 +1073,45 @@ function Graph:Redraw()
 
 	-- Every segment was just re-sized, which clears its rotation, and a rotation re-applied in
 	-- this same frame would be silently dropped. Arm the pass instead; Analysis:Update runs it a
-	-- couple of frames from now, once.
+	-- couple of frames from now.
+	self:ArmRotation()
+end
+
+-- Arms the rotation pass. Called by Redraw, and by Analysis:Update when the window comes back on
+-- screen: a redraw can happen while the window is closed (a fight ending reaches RefreshContent
+-- through Sessions.OnClosed), and a pass that ran then rotated controls that were not on screen.
+function Graph:ArmRotation()
 	self.rotateIn = ROTATE_DELAY
+	self.rotateLeft = ROTATE_APPLIES
+	self.revealed = false
 end
 
 -- Applies the rotation to every visible segment, a couple of frames after the redraw that sized
--- them. This exists because of the single hardest-won fact in `/reck probe`: **a rotation set
--- before the control has painted is silently dropped**, and one apply on a later frame is enough
--- and sticks. Three rounds of a completely flat plot were exactly this.
+-- them. This exists because of the single hardest-won fact in `/basil probe`: **a rotation set
+-- before the control has painted is silently dropped**, and an apply on a later frame sticks.
+-- Three rounds of a completely flat plot were exactly this.
+--
+-- The pass is TWO stages, and the order is the whole point: **reveal first, rotate second, never
+-- the other way round.** It used to rotate and then reveal in the same frame, which meant every
+-- angle in the plot was applied to a control that was hidden at the time -- and that was reported
+-- in-game as the whole ANALYSIS WINDOW coming up rotated, most often right after a session was
+-- picked off the rail (the redraw that brings previously-unused pool segments onto the plot for
+-- the first time). A rotation aimed at a window that is not being drawn does not simply get
+-- dropped the way the probe's cell D did; it can land on the top-level window instead.
+--
+-- Both working line graphs in the installed plugins do it this order too -- `SetVisible(true)`
+-- and then `SetRotation`, never the reverse: `Thurallor/Common/UI/Line.lua:15-33` and
+-- `PrimePlugins/Parse/GraphWindow.lua:873/891` and again at `929/932`. Rotating a hidden Window
+-- was the one thing this file did that neither of them does.
+--
+-- The cost is one frame in which a freshly-drawn segment paints flat, which is what the old order
+-- was buying with the hide. Only segments whose geometry actually CHANGED pay it -- DrawSegment
+-- leaves an unchanged segment visible and already rotated, untouched -- so a range drag still does
+-- not flicker.
+--
+-- The apply is then repeated for ROTATE_APPLIES frames -- see that constant for why one is not
+-- reliably enough, and Analysis:Update for the other half of the same bug (a pass must not run at
+-- all while the window is off screen, and it scrubs any stray rotation off the window itself).
 --
 -- Returns true while there is still work pending, so the caller can stop asking.
 function Graph:FlushRotation()
@@ -1085,24 +1123,49 @@ function Graph:FlushRotation()
 	if self.rotateIn > 0 then
 		return true
 	end
-	self.rotateIn = nil
 
-	-- Rotate FIRST, reveal second, and walk the whole pool rather than 1..buckets-1: a segment
-	-- left over from a wider bucket count has had `shown` cleared by SetBucketCount, and reading
-	-- the flag rather than the count means no path can leak a stale one back onto the plot.
+	-- Both loops walk the whole pool rather than 1..buckets-1: a segment left over from a wider
+	-- bucket count has had `shown` cleared by SetBucketCount, and reading the flag rather than the
+	-- count means no path can leak a stale one back onto the plot.
+	if not self.revealed then
+		-- Stage 1: reveal only. These segments paint flat for this one frame.
+		for slot = 1, MAX_REGULAR_SERIES do
+			local pool = self.seg[slot]
+			for i = 1, MAX_BUCKETS - 1 do
+				local segment = pool[i]
+				if segment ~= nil and segment.shown then
+					segment:SetVisible(true)
+				end
+			end
+		end
+		self.revealed = true
+		self.rotateIn = 1
+		return true
+	end
+
+	-- Stage 2: rotate what is now on screen and has painted there. The IsVisible guard is the
+	-- invariant this whole function exists to hold, not an optimisation -- nothing hidden is ever
+	-- handed to SetRotation.
 	for slot = 1, MAX_REGULAR_SERIES do
 		local pool = self.seg[slot]
 		for i = 1, MAX_BUCKETS - 1 do
 			local segment = pool[i]
-			if segment ~= nil and segment.shown then
+			if segment ~= nil and segment.shown and segment:IsVisible() then
 				-- pcall'd for the same reason every other undocumented native call here is: a
 				-- throw must cost one segment's angle, never the whole refresh.
 				pcall(segment.SetRotation, segment, segment.rotation)
-				segment:SetVisible(true)
 			end
 		end
 	end
 
+	self.rotateLeft = (self.rotateLeft or 1) - 1
+	if self.rotateLeft > 0 then
+		self.rotateIn = 1
+		return true
+	end
+
+	self.rotateIn = nil
+	self.rotateLeft = nil
 	return false
 end
 

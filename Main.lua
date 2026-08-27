@@ -6,10 +6,10 @@ import "Turbine.Gameplay"
 import "Turbine.UI"
 import "Turbine.UI.Lotro"
 
-import "Reckoning.Utils.Type"
-import "Reckoning.Utils.Class"
+import "Basil.Utils.Type"
+import "Basil.Utils.Class"
 
-import "Reckoning.Constants"
+import "Basil.Constants"
 
 -- Trigger.ParseCombatChat (Parse/en.lua) is `function Trigger.ParseCombatChat(...)` --
 -- it attaches to an existing table rather than declaring its own global, so Trigger must
@@ -17,9 +17,9 @@ import "Reckoning.Constants"
 -- is declared before UTILS/COMBATCHATPARSE/en.lua.
 Trigger = {}
 
-import "Reckoning.Parse.en"
+import "Basil.Parse.en"
 
-import "Reckoning.Settings"
+import "Basil.Settings"
 
 ---------------------------------------------------------------------
 --== Globals ===--
@@ -49,15 +49,15 @@ Settings.Load()
 -- Session (the class) before Sessions (the manager, which instantiates it) before Events
 -- (which dispatches into the manager and needs Sessions/LocalPlayer/Trigger already defined).
 
-import "Reckoning.Session"
-import "Reckoning.Sessions"
-import "Reckoning.Buffs"
-import "Reckoning.Events"
+import "Basil.Session"
+import "Basil.Sessions"
+import "Basil.Buffs"
+import "Basil.Events"
 
--- Root level, not UI/: both Main.lua (for /reck post) and UI/PostButton.lua need it, and only a
+-- Root level, not UI/: both Main.lua (for /basil post) and UI/PostButton.lua need it, and only a
 -- root-package global is visible from both (see CLAUDE.md's package-scope note). Pure string
 -- building -- it imports nothing and touches no Turbine.UI.
-import "Reckoning.ChatPost"
+import "Basil.ChatPost"
 
 -- Close every still-open buff interval the moment a session closes. Registered here, before any
 -- window is constructed, so it runs ahead of the windows' own OnClosed callbacks and none of
@@ -70,7 +70,7 @@ Sessions.OnClosed(function(s) Buffs.CloseSession(s) end)
 -- Frame/Bar/Row (chrome primitives) first, then each window module as it's built. Reads
 -- Theme/Font (Constants.lua) and _G.settings.windows (Settings.lua), both already loaded above.
 
-import "Reckoning.UI"
+import "Basil.UI"
 
 liveMeter = UI.LiveMeter()
 deathCause = UI.DeathCause()
@@ -81,7 +81,7 @@ analysis = UI.Analysis()
 optionsWindow = UI.OptionsWindow()
 
 -- The Plugin Manager still calls GetOptionsPanel and still wants a ListBox. UI/Options.lua is a
--- one-line stub pointing at /reck options now -- every real setting lives in optionsWindow.
+-- one-line stub pointing at /basil options now -- every real setting lives in optionsWindow.
 optionsPanel = UI.Options()
 
 plugin.GetOptionsPanel = function(self)
@@ -152,15 +152,15 @@ local function DumpSession(s)
 	-- Memory readout first, session data or not -- lets a lag report be checked against real
 	-- numbers ("does Lua-side memory climb fight over fight?") instead of just going by feel.
 	-- collectgarbage("count") returns KB and is cheap enough to call from a shell command.
-	Turbine.Shell.WriteLine(string.format("Reckoning: Lua memory in use: %.0f KB", collectgarbage("count")))
+	Turbine.Shell.WriteLine(string.format("Basil: Lua memory in use: %.0f KB", collectgarbage("count")))
 
 	if s == nil then
-		Turbine.Shell.WriteLine("Reckoning: no session data yet.")
+		Turbine.Shell.WriteLine("Basil: no session data yet.")
 		return
 	end
 
 	Turbine.Shell.WriteLine(string.format(
-		"Reckoning session: %s, %.0fs (%ds active)%s",
+		"Basil session: %s, %.0fs (%ds active)%s",
 		s.startClock, s:Duration(), s:ActiveSeconds(), s.died and ", died" or ""))
 
 	DumpCategory("Damage done", s.agg.done)
@@ -175,7 +175,7 @@ end
 -- enable flag (same effect as the options panel checkboxes) -- "analysis" is the one window
 -- that's genuinely opened/closed by hand.
 local function UnknownWindow(name)
-	Turbine.Shell.WriteLine("Reckoning: unknown window '" .. name .. "'. Use live | death | analysis | options.")
+	Turbine.Shell.WriteLine("Basil: unknown window '" .. name .. "'. Use live | death | analysis | options.")
 end
 
 local function ShowWindow(name)
@@ -193,12 +193,12 @@ local function ShowWindow(name)
 		-- Same path the options window's own checkbox takes, so the meter reappears now rather
 		-- than on its next throttled Update().
 		liveMeter:ApplySettings()
-		Turbine.Shell.WriteLine("Reckoning: live meter enabled.")
+		Turbine.Shell.WriteLine("Basil: live meter enabled.")
 	elseif name == "death" then
 		_G.settings.deathCauseEnabled = true
 		Settings.Save()
 		deathCause:ApplySettings()
-		Turbine.Shell.WriteLine("Reckoning: death cause window enabled.")
+		Turbine.Shell.WriteLine("Basil: death cause window enabled.")
 	else
 		UnknownWindow(name)
 	end
@@ -263,10 +263,10 @@ local function TestDeath()
 	session.endTime = Turbine.Engine.GetGameTime()
 
 	deathCause:Show(session)
-	Turbine.Shell.WriteLine("Reckoning: triggered a test death popup.")
+	Turbine.Shell.WriteLine("Basil: triggered a test death popup.")
 end
 
--- `/reck buffs` -- what self-effect tracking is currently seeing, and the ignore list that shapes
+-- `/basil buffs` -- what self-effect tracking is currently seeing, and the ignore list that shapes
 -- it. The default Buffs.Ignore entries are a best guess at the client's own effect names and are
 -- not verified against a running game, so this command (not that table) is the real mechanism for
 -- keeping mounts and travel skills out of the uptime table.
@@ -276,9 +276,9 @@ local function BuffsCommand(action, name)
 		local rows = Buffs.Stats(session, nil, nil)
 
 		if table.getn(rows) == 0 then
-			Turbine.Shell.WriteLine("Reckoning: no self-effects tracked yet (nothing fought, or every effect is ignored).")
+			Turbine.Shell.WriteLine("Basil: no self-effects tracked yet (nothing fought, or every effect is ignored).")
 		else
-			Turbine.Shell.WriteLine("Reckoning: self-effects in the most recent fight --")
+			Turbine.Shell.WriteLine("Basil: self-effects in the most recent fight --")
 			for i = 1, table.getn(rows) do
 				local row = rows[i]
 				Turbine.Shell.WriteLine(string.format("  %s [%s]: %s uptime (%s), %d applied, longest gap %ds, icon=%s(%s)",
@@ -314,18 +314,18 @@ local function BuffsCommand(action, name)
 	end
 
 	if name == "" then
-		Turbine.Shell.WriteLine("Reckoning: /reck buffs ignore <name> | unignore <name> | list")
+		Turbine.Shell.WriteLine("Basil: /basil buffs ignore <name> | unignore <name> | list")
 		return
 	end
 
 	if action == "ignore" then
 		Buffs.AddIgnore(name)
-		Turbine.Shell.WriteLine("Reckoning: ignoring self-effect '" .. name .. "'.")
+		Turbine.Shell.WriteLine("Basil: ignoring self-effect '" .. name .. "'.")
 	elseif action == "unignore" then
 		Buffs.RemoveIgnore(name)
-		Turbine.Shell.WriteLine("Reckoning: no longer ignoring '" .. name .. "'.")
+		Turbine.Shell.WriteLine("Basil: no longer ignoring '" .. name .. "'.")
 	else
-		Turbine.Shell.WriteLine("Reckoning: /reck buffs ignore <name> | unignore <name> | list")
+		Turbine.Shell.WriteLine("Basil: /basil buffs ignore <name> | unignore <name> | list")
 	end
 end
 
@@ -343,7 +343,7 @@ local function ResetAll()
 	optionsWindow:RefreshPages()
 	OptionsWindow.ApplyAll()
 
-	Turbine.Shell.WriteLine("Reckoning: settings reset to defaults.")
+	Turbine.Shell.WriteLine("Basil: settings reset to defaults.")
 end
 
 -- Prints the post the analysis window currently has armed, to YOUR chat window only.
@@ -356,7 +356,7 @@ end
 local function PostPreview()
 	local session = analysis and analysis.selectedSession or (Sessions.current or Sessions.list[1])
 	if session == nil then
-		Turbine.Shell.WriteLine("Reckoning: no session data yet.")
+		Turbine.Shell.WriteLine("Basil: no session data yet.")
 		return
 	end
 
@@ -371,7 +371,7 @@ local function PostPreview()
 
 	local line = ChatPost.BuildLine(session, preset, view, who, fromSec, toSec)
 	if line == nil then
-		Turbine.Shell.WriteLine("Reckoning: nothing to post for the current view"
+		Turbine.Shell.WriteLine("Basil: nothing to post for the current view"
 			.. (preset == "death" and " (this fight had no death)." or "."))
 		return
 	end
@@ -381,13 +381,13 @@ local function PostPreview()
 	-- immediately. The character count stays because it is what diagnosed the "prohibited because
 	-- of a content, size, or mixed-alphabet restriction" refusal in the first place.
 	Turbine.Shell.WriteLine(string.format(
-		"Reckoning: %s -> %s, %d chars (limit %d):",
+		"Basil: %s -> %s, %d chars (limit %d):",
 		ChatPost.PresetLabel(preset), ChatPost.ChannelLabel(_G.settings.postChannel),
 		string.len(line), ChatPost.MAX_MESSAGE))
 	Turbine.Shell.WriteLine(line)
 end
 
--- /reck probe -- the SetRotation diagnostic window.
+-- /basil probe -- the SetRotation diagnostic window.
 --
 -- Turbine has no line primitive, so the analysis window's plot can only become a real line graph
 -- if a control can be ROTATED. Gibberish3's circular timer proves SetRotation exists and works,
@@ -420,7 +420,7 @@ function command:Execute(_, str)
 	end
 
 	if cmd == "" or cmd == "help" then
-		Turbine.Shell.WriteLine("Reckoning v" .. Reckoning.Version .. ": /reck help | options | dump | post | buffs [list|ignore <name>|unignore <name>] | testdeath | show [live|death|analysis|options] | hide [live|death|analysis|options] | move <live|death|analysis|options> | reset | probe")
+		Turbine.Shell.WriteLine("Basil v" .. Basil.Version .. ": /basil help | options | dump | post | buffs [list|ignore <name>|unignore <name>] | testdeath | show [live|death|analysis|options] | hide [live|death|analysis|options] | move <live|death|analysis|options> | reset | probe")
 	elseif cmd == "options" or cmd == "config" then
 		optionsWindow:Toggle()
 	elseif cmd == "dump" then
@@ -440,11 +440,11 @@ function command:Execute(_, str)
 	elseif cmd == "probe" then
 		Probe()
 	else
-		Turbine.Shell.WriteLine("Reckoning: unknown command '" .. cmd .. "'. Try /reck help.")
+		Turbine.Shell.WriteLine("Basil: unknown command '" .. cmd .. "'. Try /basil help.")
 	end
 end
 
-Turbine.Shell.AddCommand("reck", command)
+Turbine.Shell.AddCommand("basil", command)
 
 ---------------------------------------------------------------------
 --== Lifecycle ===--

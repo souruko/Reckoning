@@ -4,28 +4,28 @@
 #
 #   apt-get install lua5.1     (or: brew install lua@5.1)
 #
-# Usage: sh tools/offline/run.sh        (from anywhere; RECK_ROOT overrides the repo path)
+# Usage: sh tools/offline/run.sh        (from anywhere; BASIL_ROOT overrides the repo path)
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
-RECK_ROOT=${RECK_ROOT:-$(cd "$here/../.." && pwd)}
-export RECK_ROOT
+BASIL_ROOT=${BASIL_ROOT:-$(cd "$here/../.." && pwd)}
+export BASIL_ROOT
 
 echo "== luac -p =="
 # -exec, not `for f in $(find ...)`: the live plugin path contains spaces ("The Lord of the Rings
 # Online"), and word-splitting the find output silently checked nothing and reported a bogus
 # "cannot open .../The" error. Only the no-space symlinked path used to work.
-find "$RECK_ROOT" -name '*.lua' -not -path '*/.git/*' -not -path '*/tools/*' \
+find "$BASIL_ROOT" -name '*.lua' -not -path '*/.git/*' -not -path '*/tools/*' \
 	-exec luac5.1 -p {} + || exit 1
 echo "  all files parse under Lua 5.1"
 echo
 
 status=0
-for t in slice graph buffs lifecycle chatpost analysis windows options load; do
+for t in resources slice graph buffs lifecycle chatpost analysis windows options load; do
 	echo "== $t =="
-	if (cd "$here" && lua5.1 "${t}_test.lua" > /tmp/reck_$t.out 2>&1); then
-		tail -1 /tmp/reck_$t.out
+	if (cd "$here" && lua5.1 "${t}_test.lua" > /tmp/basil_$t.out 2>&1); then
+		tail -1 /tmp/basil_$t.out
 	else
-		cat /tmp/reck_$t.out
+		cat /tmp/basil_$t.out
 		status=1
 	fi
 	echo

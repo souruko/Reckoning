@@ -13,7 +13,7 @@
 -- holding a Shortcut(ShortcutType.Alias, "/f <text>") that the USER CLICKS. Arebel tried firing
 -- one programmatically (slot:Use()/:Execute()/:DoClick(), Main.lua:7403-7428) and none of those
 -- methods exist; it falls back to telling the user to click. So: no auto-post on combat end, and
--- `/reck post` can only ever print locally.
+-- `/basil post` can only ever print locally.
 --
 -- A POST IS ONE LINE, and that was learned the hard way. The first version built a 6-line post and
 -- joined it with "\n", on the strength of CombatAnalysis and Arebel/ParseGraph both doing exactly
@@ -29,7 +29,7 @@
 -- builds one line and clamps it with `output:sub(1, 256)` (UI/OutputWindow.lua:125).
 --
 -- So there is exactly one output shape: `BuildLine` returns a string. There is no multi-line form
--- and no separate preview form -- `/reck post` prints the same line, so what you check is what
+-- and no separate preview form -- `/basil post` prints the same line, so what you check is what
 -- you send. An earlier draft had both and the two drifted apart immediately.
 --
 -- COLOUR is emitted as <rgb=#RRGGBB>..</rgb>, and it is budgeted rather than assumed free. Nothing
@@ -253,7 +253,7 @@ local function FindKillingBlow(session)
 end
 
 -- Death report:
---   Reckoning - died to Khardamu Blood-sworn's Cleave for 15,482 | 01:33 fight
+--   Basil - died to Khardamu Blood-sworn's Cleave for 15,482 | 01:33 fight
 --       | -8s Lingering Pain 17,919 | +0s Cleave 15,482
 --
 -- Whole-fight by nature: it ignores the range slider and the counterpart filter that the summary
@@ -282,7 +282,7 @@ local function DeathSegments(session)
 
 	-- Every character the header spends is one the last-hits list cannot use, and under colour the
 	-- budget is tight enough that it shows -- hence "(01:33)" rather than "| 01:33 fight", and no
-	-- "Reckoning - " prefix at all (a chat post is obviously from a person).
+	-- "Basil - " prefix at all (a chat post is obviously from a person).
 	segments[table.getn(segments) + 1] = {
 		text = " (" .. Format.Clock(session:Duration()) .. ")",
 		hex = Theme.Hex.DimText,

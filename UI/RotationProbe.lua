@@ -1,5 +1,5 @@
 --=================================================================================================
--- RotationProbe -- `/reck probe`, a throwaway diagnostic window.
+-- RotationProbe -- `/basil probe`, a throwaway diagnostic window.
 --
 -- ROUND 6, and rounds four and five between them settled the mechanism completely.
 --
@@ -38,7 +38,7 @@
 -- This round is that idea, and only that idea. If cell E reads as a line, the rework is a
 -- mechanical port of `DrawStep` in UI/AnalysisGraph.lua.
 --
--- NOTHING ELSE IMPORTS THIS. It is built on demand by /reck probe and is meant to be deleted once
+-- NOTHING ELSE IMPORTS THIS. It is built on demand by /basil probe and is meant to be deleted once
 -- the answers are written into docs/redesign/GRAPH_RESEARCH.md section 7.
 --=================================================================================================
 
@@ -69,14 +69,14 @@ local DOT = 3
 local STROKE_N = 64
 local STROKE_TARGET = 2
 local STROKE_SPRITES = {
-	{ band = 1.0, image = "Reckoning/Resources/stroke_10.tga" },
-	{ band = 1.5, image = "Reckoning/Resources/stroke_15.tga" },
-	{ band = 2.0, image = "Reckoning/Resources/stroke_20.tga" },
-	{ band = 2.5, image = "Reckoning/Resources/stroke_25.tga" },
-	{ band = 3.0, image = "Reckoning/Resources/stroke_30.tga" },
-	{ band = 4.0, image = "Reckoning/Resources/stroke_40.tga" },
-	{ band = 5.0, image = "Reckoning/Resources/stroke_50.tga" },
-	{ band = 6.0, image = "Reckoning/Resources/stroke_60.tga" },
+	{ band = 1.0, image = "Basil/Resources/stroke_10.tga" },
+	{ band = 1.5, image = "Basil/Resources/stroke_15.tga" },
+	{ band = 2.0, image = "Basil/Resources/stroke_20.tga" },
+	{ band = 2.5, image = "Basil/Resources/stroke_25.tga" },
+	{ band = 3.0, image = "Basil/Resources/stroke_30.tga" },
+	{ band = 4.0, image = "Basil/Resources/stroke_40.tga" },
+	{ band = 5.0, image = "Basil/Resources/stroke_50.tga" },
+	{ band = 6.0, image = "Basil/Resources/stroke_60.tga" },
 }
 
 local function StrokeSprite(side)
@@ -356,7 +356,7 @@ end
 function RotationProbe:Report()
 	local function Say(text) Turbine.Shell.WriteLine("  " .. text) end
 
-	Turbine.Shell.WriteLine("Reckoning rotation probe (round 6) -- " .. self:Status())
+	Turbine.Shell.WriteLine("Basil rotation probe (round 6) -- " .. self:Status())
 	Say("Rounds 4-5 settled the mechanism: the control's RECT never rotates -- the IMAGE is")
 	Say("rotated and then FITTED to the rect (a 64x16 wedge at 90 came back 64x16, reoriented).")
 	Say("So a thin control can never be a diagonal, but a SQUARE one can: side = the segment's")

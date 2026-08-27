@@ -1,4 +1,4 @@
-# Implementation plan — Reckoning
+# Implementation plan — Basil
 
 A build order for the plugin described in `DESIGN.md`. Each phase ends somewhere
 you can load in-game and see something real; nothing is left half-wired between
@@ -11,9 +11,9 @@ what is buildable. This file is only the order of work.
 
 ## Phase 0 — Skeleton that loads
 
-**Goal:** `/plugins load Reckoning` prints a line and nothing errors.
+**Goal:** `/plugins load Basil` prints a line and nothing errors.
 
-- `Reckoning.plugin` + `Reckoning.plugincompendium` (keep `<Version>` in sync in
+- `Basil.plugin` + `Basil.plugincompendium` (keep `<Version>` in sync in
   both — same rule as `VitalSelf`).
 - `Main.lua` as the package entry point.
 - Vendor `Utils/Class.lua` + `Utils/Type.lua` from `VitalSelf` unchanged. They are
@@ -22,10 +22,10 @@ what is buildable. This file is only the order of work.
 - `Constants.lua` — the font table (copy the shape from `Gibberish3/Constants.lua`),
   the theme palette, event-code and damage-type enums.
 - `Settings.lua` — load/save via
-  `Turbine.PluginData.Save(Turbine.DataScope.Character, "Reckoning", settings)`,
+  `Turbine.PluginData.Save(Turbine.DataScope.Character, "Basil", settings)`,
   plus a `FixColors()` that rebuilds **every** colour key on load.
   Read unknown keys defensively.
-- `/reck` shell command with `help`.
+- `/basil` shell command with `help`.
 
 **Done when:** loads clean, saves and reloads settings without error.
 
@@ -97,11 +97,11 @@ Session = {
 
 - Session lifecycle: opens on the first own event; closes after **5s** of
   silence; discarded under **3s**; ring buffer of 10 with pinned sessions exempt.
-- Sanity check before touching UI: `/reck dump` writing totals to chat. Feed the
+- Sanity check before touching UI: `/basil dump` writing totals to chat. Feed the
   captures in `reference/` through the parser line by line as fixtures and
   compare.
 
-**Done when:** `/reck dump` after a fight prints totals that match the log.
+**Done when:** `/basil dump` after a fight prints totals that match the log.
 
 ---
 
@@ -188,7 +188,7 @@ Build in this order — each step is independently useful:
 - Options panel (`plugin.GetOptionsPanel`) extending `Turbine.UI.ListBox`, same
   shape as `VitalSelf/UI/Settings.lua`: window scale, auto-hide duration, which
   windows are enabled, colours.
-- `/reck` subcommands: `show`, `hide`, `move`, `reset`, `dump`.
+- `/basil` subcommands: `show`, `hide`, `move`, `reset`, `dump`.
 - Decide whether pins should survive a reload (persist the session, not just the flag).
 - German and French parser files.
 

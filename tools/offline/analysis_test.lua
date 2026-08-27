@@ -3,8 +3,8 @@
 -- sorting and the skill/buff splitter -- checking that the block stack stays consistent and the
 -- numbers agree with what Session:Slice says they should be.
 local env = dofile("stub.lua"); local ROOT = env.ROOT
-import "Reckoning.Constants"
-Trigger = {}; import "Reckoning.Parse.en"; import "Reckoning.Settings"
+import "Basil.Constants"
+Trigger = {}; import "Basil.Parse.en"; import "Basil.Settings"
 
 local effectSet = {}
 local function MakeEffect(name, icon, debuff)
@@ -24,8 +24,8 @@ _G.lp = {
 }
 LocalPlayer = _G.lp; LocalPlayer.name = LocalPlayer:GetName()
 Settings.Load()
-import "Reckoning.Session"; import "Reckoning.Sessions"; import "Reckoning.Buffs"
-import "Reckoning.Events"; import "Reckoning.ChatPost"; import "Reckoning.UI"
+import "Basil.Session"; import "Basil.Sessions"; import "Basil.Buffs"
+import "Basil.Events"; import "Basil.ChatPost"; import "Basil.UI"
 
 local fails = 0
 local function check(label, ok, detail)
@@ -1028,6 +1028,119 @@ check("switching back restores the post", PostText() == fullText)
 pb:Shutdown()
 check("shutdown collapses the overlay", select(1, pb.overlay:GetSize()) == 0)
 check("shutdown hides the overlay", pb.overlay:IsVisible() == false)
+
+-- 19. The graph's rotation pass must not run while the window is off screen. A fight ending
+-- redraws the plot through Sessions.OnClosed whether the window is open or not, and a rotation
+-- applied to a control that is not being drawn is the "set before it painted" case the engine
+-- drops -- which revealed those segments flat until the next redraw. Reported in-game as a plot
+-- that was sometimes unrotated and came right the moment the range was moved.
+local function SegmentsShown()
+  local n = 0
+  for slot = 1, 2 do
+    for i = 1, GraphBucketCount() - 1 do
+      if w.graph.seg[slot][i]:IsVisible() then n = n + 1 end
+    end
+  end
+  return n
+end
+
+w:SetVisible(false)
+w:RefreshContent()                     -- the redraw a fight ending would cause
+for _ = 1, 6 do w:Update() end         -- heartbeat ticks while hidden
+check("a hidden window does not run the rotation pass", SegmentsShown() == 0,
+  SegmentsShown() .. " revealed while hidden")
+check("...and the pass is still armed for when it is shown", w.graph.rotateIn ~= nil)
+
+w:SetVisible(true)
+w:Update()
+-- ArmRotation sets the full delay and this same Update then spends one frame of it.
+check("showing the window re-arms the pass", w.graph.rotateIn == 1, tostring(w.graph.rotateIn))
+for _ = 1, 6 do w:Update() end
+check("the pass then runs and reveals the line", SegmentsShown() > 0, tostring(SegmentsShown()))
+check("every revealed segment carries its rotation", (function()
+  for slot = 1, 2 do
+    for i = 1, GraphBucketCount() - 1 do
+      local seg = w.graph.seg[slot][i]
+      if seg:IsVisible() and seg:GetRotation() == nil then return false end
+    end
+  end
+  return true end)())
+check("the pass settles rather than running every frame", w.graph.rotateIn == nil)
+
+-- The backstop for the reported "the analysis window itself is rotated": while a pass is running,
+-- Update holds this window's own rotation at zero, so a stray angle that lands on the window
+-- rather than on a segment self-corrects instead of persisting until a reload.
+w:RefreshContent()
+w:SetRotation({ x = 0, y = 0, z = 42 })
+for _ = 1, 8 do w:Update() end
+check("a stray rotation on the window itself is scrubbed by the pass",
+  w:GetRotation() ~= nil and w:GetRotation().z == 0,
+  tostring(w:GetRotation() and w:GetRotation().z))
+
+-- 20. Switching sessions off the rail: every segment on screen must carry the angle it was DRAWN
+-- for, not merely some angle. Section 19 checks that a revealed segment is rotated at all, which a
+-- STALE rotation passes -- and a stale one is the shape a session switch could produce, since
+-- DrawSegment deliberately leaves an unchanged segment untouched and the pass only rotates what is
+-- shown and visible. Two real fights of different durations, so the bucket count differs and
+-- essentially every segment moves.
+Turbine.Engine._time = clock + 600
+clock = clock + 600
+Feed(ROOT .. "/reference/Enemy_20260819_2.txt", Turbine.ChatType.EnemyCombat)
+local second = Sessions.current
+Sessions.Close()
+check("a second fight archived to switch between", second ~= nil and second ~= session)
+
+local function Frames(n) for _ = 1, (n or 12) do w:Update() end end
+
+-- Returns visible / rotation-missing / rotation-stale counts over the whole segment pool.
+local function AuditAngles()
+  local visible, missing, stale = 0, 0, 0
+  for slot = 1, 2 do
+    local pool = w.graph.seg[slot]
+    for i = 1, #pool do
+      local seg = pool[i]
+      if seg:IsVisible() then
+        visible = visible + 1
+        local applied = seg:GetRotation()
+        if applied == nil then
+          missing = missing + 1
+        elseif math.abs(applied.z - (seg.rotation.z or 0)) > 0.001 then
+          stale = stale + 1
+        end
+      end
+    end
+  end
+  return visible, missing, stale
+end
+
+local function CheckAngles(label)
+  local visible, missing, stale = AuditAngles()
+  check("session switch: " .. label .. " -- the line is on screen", visible > 0, tostring(visible))
+  check("session switch: " .. label .. " -- every segment carries its own angle",
+    missing == 0 and stale == 0, missing .. " unrotated, " .. stale .. " stale")
+end
+
+w:SetVisible(true)
+w:SelectSession(session); Frames()
+CheckAngles("first session")
+
+w:SelectSession(second); Frames()
+CheckAngles("after switching")
+
+w:SelectSession(session); Frames()
+CheckAngles("after switching back")
+
+-- A switch landing mid-pass, which is what a second click on the rail before the first has settled
+-- produces. The re-arm has to start the reveal/rotate sequence over rather than leave the segments
+-- it already revealed carrying the previous fight's angles.
+w:SelectSession(second); w:Update(); w:Update()
+w:SelectSession(session); Frames()
+CheckAngles("switch landing mid-pass")
+
+-- A view change on top of a session change brings the second series' pool onto the plot for the
+-- first time -- the case the reveal-before-rotate order was written for.
+w:SelectSession(second); w:SelectView("taken"); Frames()
+CheckAngles("session and view together")
 
 print("")
 if fails == 0 then print("ALL ANALYSIS CHECKS PASSED") else print(fails .. " CHECK(S) FAILED"); os.exit(1) end

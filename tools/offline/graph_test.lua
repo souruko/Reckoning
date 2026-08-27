@@ -2,15 +2,15 @@
 -- a real Session built from the repo's reference logs, on a Turbine stub that asserts on
 -- non-numeric / negative SetSize args. Checks geometry invariants rather than pixels.
 local env = dofile("stub.lua"); local ROOT = env.ROOT
-import "Reckoning.Utils.Type"; import "Reckoning.Utils.Class"; import "Reckoning.Constants"
-Trigger = {}; import "Reckoning.Parse.en"; import "Reckoning.Settings"
+import "Basil.Utils.Type"; import "Basil.Utils.Class"; import "Basil.Constants"
+Trigger = {}; import "Basil.Parse.en"; import "Basil.Settings"
 _G.lp = { GetName=function() return "Luxtheninth" end, GetMorale=function() return 5e5 end,
   GetMaxMorale=function() return 9e5 end, GetTarget=function() return nil end,
   IsInCombat=function() return true end }  -- heals only count in combat, see Sessions.lua
 LocalPlayer = _G.lp; LocalPlayer.name = LocalPlayer:GetName()
 Settings.Load()
-import "Reckoning.Session"; import "Reckoning.Sessions"; import "Reckoning.Events"
-import "Reckoning.UI.RangeSlider"; import "Reckoning.UI.AnalysisGraph"
+import "Basil.Session"; import "Basil.Sessions"; import "Basil.Events"
+import "Basil.UI.RangeSlider"; import "Basil.UI.AnalysisGraph"
 
 local clock = 1000
 local function Feed(path, ct)
@@ -58,9 +58,35 @@ check("plot: no segment is visible before it has been rotated", drawnEarly == 0,
   drawnEarly .. " shown flat")
 check("plot: no segment is rotated in the same pass that sized it", rotatedEarly == 0,
   rotatedEarly .. " early")
+-- The pass reveals on one frame and rotates on the next few. Rotating a HIDDEN segment is what
+-- turned the whole analysis window in-game (see Graph:FlushRotation), so the check that matters
+-- here is that no segment ever carries a rotation while it is invisible -- stepped frame by frame,
+-- because the end state alone cannot tell the two orders apart.
 check("plot: the rotation pass is still pending", g:FlushRotation())
-check("plot: the pass completes on the next call", not g:FlushRotation())
-check("plot: the pass does not re-arm itself", not g:FlushRotation())
+local applies, rotatedWhileHidden = 0, 0
+while g:FlushRotation() do
+  applies = applies + 1
+  for slot = 1, 2 do
+    for i = 1, GraphBucketCount() - 1 do
+      local seg = g.seg[slot][i]
+      if seg:GetRotation() ~= nil and not seg:IsVisible() then
+        rotatedWhileHidden = rotatedWhileHidden + 1
+      end
+    end
+  end
+  if applies > 10 then break end   -- a pass that never finishes would hang the harness
+end
+check("plot: no segment is ever rotated while it is hidden", rotatedWhileHidden == 0,
+  rotatedWhileHidden .. " rotated hidden")
+check("plot: the pass reveals, then re-applies the rotation for a few frames, then completes",
+  applies == 3, applies .. " frames")
+check("plot: the completed pass stays completed", not g:FlushRotation())
+
+-- Re-arming is what Analysis:Update does when the window comes back on screen, so that a redraw
+-- that happened while it was hidden gets a pass that can actually stick.
+g:ArmRotation()
+check("plot: ArmRotation re-arms the pass", g:FlushRotation())
+while g:FlushRotation() do end
 
 -- Everything below reads what is on screen, so it runs after that pass. Settle() is the harness's
 -- stand-in for Analysis:Update, and every later SetData/ToggleSeries needs one too.

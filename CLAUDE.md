@@ -5,10 +5,25 @@ repository.
 
 ## What this is
 
-Reckoning is a Lord of the Rings Online (LotRO) plugin written in Lua. It reads the combat
+Basil is a Lord of the Rings Online (LotRO) plugin written in Lua. It reads the combat
 chat log and reports on the local player's own combat via three windows: an always-on live
 meter, a death post-mortem, and a post-combat analysis window. It runs inside the game via the
 Turbine plugin engine -- there is no build step, package manager, linter, or test runner.
+
+**It was called Reckoning until the v0.6.0 rename, and three things survive that.** (1) The
+package name is the FOLDER name: every `import "Basil.X"`, every `Basil/Resources/*.tga` path and
+`<Package>Basil.Main</Package>` all resolve against `plugins/Basil`, so the directory cannot be
+renamed without renaming all of those in the same pass. (2) `Settings.Load()` falls back to the
+old `"Reckoning"` `PluginData` key when there is no save under `"Basil"` (`LEGACY_DATA_KEY`), which
+is what carries ~30 settings and four window geometries across the rename -- the first
+`Settings.Save()` writes them back under the new key, and the fallback is deletable once every
+character has loaded the plugin at least once. A legacy save's `palettePreset = "Reckoning"` is no
+longer a `Theme.Presets` key and `Settings.Clamp` resets it to the (identically-coloured) `"Basil"`
+default, which is correct and needs no special case. (3) Two references keep the old spelling on
+purpose: `design_handoff_reckoning_redesign/` names an external bundle that still has that name,
+and `docs/redesign/mock/Reckoning Analyzer.dc.html` is a vendored design artifact whose filename
+the surrounding docs cite. Everything else -- code, manifests, commands (`/basil`), docs, the
+changelog -- is renamed.
 
 Read `docs/DESIGN.md` first (the data model and parser facts that decide what is buildable),
 then `docs/IMPLEMENTATION_PLAN.md` (the phased build order), then `docs/redesign/` -- the v0.2.0
@@ -26,16 +41,16 @@ immediately live in the game. Reload to see a change:
 
 ```
 /plugins refresh
-/plugins load Reckoning
+/plugins load Basil
 ```
 
 Runtime errors surface in the LotRO chat window; there is no other log.
 
 ## Version bumps
 
-The version appears in **three** places and must be kept in sync: `Reckoning.plugin`
-(`<Version>`), `Reckoning.plugincompendium` (`<Version>`), and `Constants.lua`
-(`Reckoning.Version`). `CHANGELOG.md` gets a matching entry, written for players rather than
+The version appears in **three** places and must be kept in sync: `Basil.plugin`
+(`<Version>`), `Basil.plugincompendium` (`<Version>`), and `Constants.lua`
+(`Basil.Version`). `CHANGELOG.md` gets a matching entry, written for players rather than
 developers. `tools/offline/load_test.lua` asserts the `Constants.lua` value, so a half-done bump
 fails there.
 
@@ -51,7 +66,7 @@ the player-facing version and `REDESIGN_SPEC.md` for the spec each piece came fr
 **There is now a real offline test suite: `tools/offline/`.** Unlike the original scratch harness
 (described below), it runs the **real** classes and the **real** `Main.lua` under a **real Lua
 5.1** interpreter against a `Turbine` stub built on this repo's own `class()` shim. `sh
-tools/offline/run.sh` runs 758 checks in about a second. It caught three genuine bugs during the
+tools/offline/run.sh` runs 800 checks in about a second. It caught three genuine bugs during the
 redesign that `luac -p` could not have: an index-base probe that could not actually distinguish a
 0-based from a 1-based `EffectList`, a `nil` layout constant reaching `SetPosition`, and the
 analysis window failing to adopt an already-archived session. It caught three more during the
@@ -196,7 +211,7 @@ be wrong:
   contradicted by Gibberish3's own code, which the round-5 grep had missed: its
   `ResolveTimerIcon` (`UTILS/Functions.lua`) returns a plain effect-icon id completely unwrapped,
   only ever rewriting *string* paths, for an unrelated external-image feature. Round 4's own
-  diagnostic (`/reck buffs`, still in `Main.lua`, prints each tracked buff's `row.icon` value and
+  diagnostic (`/basil buffs`, still in `Main.lua`, prints each tracked buff's `row.icon` value and
   Lua type) confirmed real data was never the problem: every tracked buff's icon is a real number
   in the `0x41000000`-`0x42000000` range, the same "0x41-prefixed" asset-id format used
   everywhere else in this environment that a bare `SetBackground(numericId)` is confirmed
@@ -265,15 +280,41 @@ these dictates a line of `UI/AnalysisGraph.lua` and none is optional:
 1. **`SetRotation` is ABSENT on `Turbine.UI.Control` and present on `Turbine.UI.Window`.** On a
    Control the call throws. Every segment in the pool is a Window; Gibberish3 rotating only Windows
    was never a style choice.
-2. **A rotation applied before the control has painted is silently dropped.** One apply on a LATER
-   frame is enough and it sticks. This is why `Graph:Redraw` only *arms* a pass (`rotateIn`) and
+2. **A rotation applied before the control has painted is silently dropped.** An apply on a LATER
+   frame sticks. This is why `Graph:Redraw` only *arms* a pass (`rotateIn`) and
    `Graph:FlushRotation` runs it, driven by `Analysis:Update`. Three rounds of a completely flat
-   plot were this one fact. **A segment is therefore drawn HIDDEN and revealed by that pass**
+   plot were this one fact. **One apply on a later frame is not reliably enough, though** --
+   reported in-game as a plot that sometimes came up with unrotated segments and corrected itself
+   the moment the range was moved (i.e. as soon as any later redraw ran a fresh pass). Two things
+   fix that, both in place now: the pass re-applies the rotation for `ROTATE_APPLIES` (3) frames
+   rather than once, since the *first* apply is also the one that reveals the segments and so
+   necessarily lands on a control that has not painted at its new size; and `Analysis:Update`
+   **holds the pass entirely while the window is hidden** and calls `Graph:ArmRotation` on the way
+   back in. That second half matters because a redraw does not need the window to be open --
+   `Sessions.OnClosed` reaches `RefreshContent` when any fight ends -- and a pass that ran then was
+   rotating controls that were not being drawn, then revealing them flat.
+   **A segment is drawn HIDDEN and revealed by that pass**
    (`segment.shown`): between being sized -- which clears its rotation -- and being rotated it
    paints flat, which in-game read as the line snapping to a horizontal bar on every redraw.
    `DrawSegment` also leaves an unchanged segment completely untouched, and that is what stops the
    hide from *becoming* the flicker: dragging the range slider redraws on every bucket it crosses
    without moving the series at all, and re-specifying an unchanged segment would blink it.
+   **But the pass must REVEAL first and rotate second, never the other way round.** It originally
+   rotated and then revealed in the same frame, so every angle in the plot was applied to a control
+   that was hidden at the time -- and that was reported in-game as **the whole analysis window
+   coming up rotated**, most often just after picking a session off the rail (the redraw that
+   brings previously-unused pool segments onto the plot for the first time). So a rotation aimed at
+   a Window that is not being drawn does not merely get dropped the way probe cell D's did: it can
+   land on the top-level window instead. Both working line graphs in the installed plugins set
+   visible before rotating and never the reverse (`Thurallor/Common/UI/Line.lua:15-33`,
+   `PrimePlugins/Parse/GraphWindow.lua:873/891` and `929/932`) -- rotating a hidden Window was the
+   one thing this file did that neither of them does. The cost of the correct order is one frame in
+   which a freshly-drawn segment paints flat, paid only by segments whose geometry actually
+   changed. `Analysis:Update` carries a second line of defence: while a pass is running it holds
+   this window's own rotation at `{0,0,0}`, so a stray angle self-corrects in a frame instead of
+   leaving the window sideways until a reload. `graph_test.lua` steps the pass frame by frame and
+   asserts no segment ever carries a rotation while invisible; `analysis_test.lua` puts a stray 42°
+   on the window and checks the pass scrubs it.
 3. **The control's rect never rotates -- the IMAGE is rotated and then FITTED to the rect.** So a
    2px-tall control can never be a diagonal at any angle: a rotated white rectangle refitted into a
    2px slot is still a 2px horizontal bar. The segment control is instead a **SQUARE whose side is
@@ -319,7 +360,7 @@ And *when a cell renders nothing, that is a result about the RECIPE, not a missi
 question the cell was written to ask* -- round two's blank icons were a stretch-mode bug being
 mistaken for a rotation one.
 
-**`/reck probe` (`UI/RotationProbe.lua`) has now answered everything it was built for and should be
+**`/basil probe` (`UI/RotationProbe.lua`) has now answered everything it was built for and should be
 deleted** -- along with its command, `Resources/wedge.tga`, `Resources/line.tga`,
 `Resources/line_long.tga`, and the `windows.probe` key it leaves in saved settings -- once the line
 graph itself is confirmed in-game. **Not yet confirmed in-game**: the plot as ported. The failure
@@ -543,7 +584,7 @@ plain function and the table-of-functions shape that convention leaves behind --
 chain-don't-clobber reasoning `Events.lua` already applies to `Turbine.Chat.Received`. Restored on
 unload via `Session.ShutdownMorale()`, called from `Main.lua`'s `plugin.Unload`. Offline-verified
 (all five non-`load` harnesses set up `_G.lp` with `GetMorale`/`GetMaxMorale` before `import
-"Reckoning.Session"`, exactly the order this hook needs, so `tools/offline/run.sh` exercises the
+"Basil.Session"`, exactly the order this hook needs, so `tools/offline/run.sh` exercises the
 cache-population path already; the event-firing path itself cannot be exercised offline since the
 stub's `_G.lp` is a plain table, not a real Turbine object that invokes the field on change).
 **Not yet confirmed in-game** -- specifically, whether `_G.lp.MoraleChanged`/`MaxMoraleChanged`
@@ -565,7 +606,7 @@ poor match for. `CombatAnalysis` has the same "free state, then `collectgarbage(
 that call was added to `Sessions.Close()`, right after `TrimRing()`, gated to the real-archive
 path only.
 
-**This was wrong, and made things measurably worse.** `/reck dump`'s new memory readout (added in
+**This was wrong, and made things measurably worse.** `/basil dump`'s new memory readout (added in
 the same pass) showed nothing alarming on its own -- 4192 KB in one session, 2710 KB fresh after a
 reload, not a runaway climb. What came back instead was a much more specific and much worse
 symptom: the death loading screen taking 2-3x longer than normal, then 5-10s of total
@@ -574,7 +615,7 @@ would produce -- it is exactly what a **client-wide** GC pause would produce. LO
 ONE Lua VM across every loaded addon, not one per plugin (this install has a lot of them --
 RaidTools, LootLogs, CombatAnalysis, Thurallor, Darf, TbdBars, and more). `collectgarbage()` with
 no arguments forces a full stop-the-world collection of *that whole shared heap*, not just
-Reckoning's own few MB -- and `Sessions.Close()` fires it ~5s after the last combat event, which
+Basil's own few MB -- and `Sessions.Close()` fires it ~5s after the last combat event, which
 for a death is often right around when the player releases spirit and the real zone-transition
 loading screen begins. A full sweep of a heap that likely spans tens of MB across every other
 addon, landing at exactly that moment, is sufficient on its own to explain both symptoms. Reverted
@@ -586,13 +627,13 @@ shared-VM cost, only that nobody happened to report it. Precedent in a sibling p
 call is *accepted syntax*, never that it is *cheap* -- that has to be checked against what the
 call actually does process-wide, not just against whether another plugin also calls it. If a
 future change wants to nudge GC at all, `collectgarbage("count")` (read-only, already used by
-`/reck dump`) is safe; anything that actually forces work (`collectgarbage()` bare or
+`/basil dump`) is safe; anything that actually forces work (`collectgarbage()` bare or
 `"collect"`) needs to be weighed against the fact that it is never scoped to this plugin's own
 heap, no matter how it's justified.
 
-The `/reck dump` memory readout itself is not reverted -- it is read-only and the only real
+The `/basil dump` memory readout itself is not reverted -- it is read-only and the only real
 diagnostic available here (no profiler exists for this environment), and it's what caught this.
-If lag reports come in again, get a `/reck dump` reading at the start of a session and again after
+If lag reports come in again, get a `/basil dump` reading at the start of a session and again after
 several fights before assuming growth is the shape of the problem -- the one data point gathered
 so far does not show it.
 
@@ -628,7 +669,7 @@ uncaught throw there is not a one-off cost -- it's every subsequent line for as 
 caused it stays true, which is a very plausible shape for "unresponsive for 5-10s." The dispatch
 body is now a separate `Dispatch(args)` local function called via `pcall(Dispatch, args)`,
 deliberately *not* wrapping the call to `previousChatReceived` (another plugin's own handler,
-chained ahead of ours) -- only Reckoning's own logic. This is meant as a backstop for whatever the
+chained ahead of ours) -- only Basil's own logic. This is meant as a backstop for whatever the
 next instance of this exact bug shape turns out to be, not a replacement for finding and fixing
 real instances when they're found, the same trade this codebase already makes everywhere else
 defensive (`Buffs.lua`: "a failed read is a no-op, never mistaken for real data").
@@ -647,7 +688,7 @@ would need to be found.
 **The options panel became window 4** (`design_handoff_options_panel/`: `README.md`,
 `IMPLEMENTATION_PLAN.md`, `SETTINGS_KEYS.md`, and an interactive HTML mock covering four
 directions -- **1b, "Rail & pages", is the one built**; 1c and 1d are explicitly out of scope).
-`/reck options` opens a 560x452 `Frame` with a category rail and seven pages, and the Plugin
+`/basil options` opens a 560x452 `Frame` with a category rail and seven pages, and the Plugin
 Manager panel shrank to a stub with an **Open options** button. Roughly thirty new settings landed
 with it; `Settings.lua`'s `DEFAULTS` is the single list, and `SETTINGS_KEYS.md` is the authority
 for every range and label string. Things worth knowing before touching any of it:
@@ -682,7 +723,7 @@ for every range and label string. Things worth knowing before touching any of it
   `palettePreset` would put a nil hex into `Theme.Color`, and an unknown `numberFont` a nil font
   into `SetFont`.
 - **`Settings.ResetWindow(windowKey)` is the single definition of what "Reset" does to a window**
-  -- `/reck move <name>` and the options window's per-row Reset buttons both call it. It is the one
+  -- `/basil move <name>` and the options window's per-row Reset buttons both call it. It is the one
   place allowed to *replace* `_G.settings.windows[key]` rather than mutate it, because clearing the
   saved size and split is the point; everywhere else must still mutate (see `Frame`'s drag handler
   and the bug it used to cause).
@@ -758,7 +799,7 @@ have caught a wrong field name on the real chat event object. `Events.lua` read 
 which doesn't exist (the real field is `args.ChatType` -- confirmed against Gibberish3, LootLogs,
 and CombatAnalysis, all three of which use it identically). `nil ~= Turbine.ChatType.X` is always
 true, so every chat line was silently discarded before ever reaching the parser: plugin loaded
-fine, UI drew fine, `/reck dump` after a real fight reported "no session data yet". Fixed, plus
+fine, UI drew fine, `/basil dump` after a real fight reported "no session data yet". Fixed, plus
 added the `args.Message == nil` guard those same three plugins all have before touching the text.
 **Lesson for next time**: anywhere this codebase reads a field off a Turbine-supplied event
 object (`args.*`) without a same-directory precedent already confirmed working (mouse events were
@@ -793,7 +834,7 @@ this codebase constructed itself.
 
 **The predicted third bug did show up, and it was exactly that shape.** With both bugs above
 fixed, regular damage/heal tracking worked correctly in-game (confirmed with real accumulated
-numbers), but the death window never appeared -- even though `/reck testdeath` (which calls
+numbers), but the death window never appeared -- even though `/basil testdeath` (which calls
 `DeathCause:Show()` directly, bypassing detection) proved the window itself was fine. The user
 captured a real combat log to a file and shared it; `Trigger.ParseCombatChat("The Utûgi Destroyer
 incapacitated you.")` parsed correctly and `Sessions.OnSelfDefeat` fired correctly when tested
@@ -815,7 +856,7 @@ combine multiple channel types into one tab, so "it appeared in the Enemy tab" d
 
 ## Load order
 
-`Reckoning.plugin` names `Reckoning.Main` as the package entry point. `Main.lua` imports drive
+`Basil.plugin` names `Basil.Main` as the package entry point. `Main.lua` imports drive
 everything else:
 
 ```
@@ -826,36 +867,36 @@ Main.lua  ->  Constants.lua  ->  (Trigger = {} declared)  ->  Parse/en.lua  ->  
 ```
 
 `Utils/Class.lua` / `Utils/Type.lua` are vendored unchanged from `VitalSelf` (renamed package
-paths only, `VitalSelf.Utils.*` -> `Reckoning.Utils.*`) -- the shared Turbine OOP shim
+paths only, `VitalSelf.Utils.*` -> `Basil.Utils.*`) -- the shared Turbine OOP shim
 (`class()`, `static_class()`, `abstract_class()`, `final_class()`, metatable single
-inheritance + mixins). Treat them as vendored, not Reckoning-specific.
+inheritance + mixins). Treat them as vendored, not Basil-specific.
 
 ## Architecture
 
 | File | Role |
 |---|---|
-| `Main.lua` | Import order, `_G.lp` / `LocalPlayer` globals, settings load, `/reck` shell command, `plugin.Unload`. |
+| `Main.lua` | Import order, `_G.lp` / `LocalPlayer` globals, settings load, `/basil` shell command, `plugin.Unload`. |
 | `Constants.lua` | `L` (localisation), `EventCode` / `AvoidType` / `CritType` / `DamageType` enums mirroring the parser's return codes, `Font` table (only the faces/sizes the design actually uses), `Theme` palette + `Theme.Color(hex)`, `Format` (`Number`/`Percent`/`Rate`/`Clock`, plus `CharCount`/`Truncate` -- UTF-8-safe, shared by the analysis window's picker chips and `ChatPost`'s line cap), `Icon.Size`/`Icon.Apply` (setting a numeric effect-icon id as a Control's background, modelled on Gibberish3's `IconElement` -- see "Build status" below). |
 | `Settings.lua` | `Settings.Load()` / `Settings.Save()` / `Settings.FixColors()` via `Turbine.PluginData`, `DEFAULTS` as single source of truth, `COLOR_KEYS` for colour rebuild. |
 | `Parse/en.lua` | `Trigger.ParseCombatChat` -- ported **verbatim** from `souruko/Gibberish3` (`UTILS/COMBATCHATPARSE/en.lua`). Do not rewrite it; `de.lua` / `fr.lua` are later drop-ins with the same signature. |
 | `Session.lua` | The `Session` class -- one fight's aggregate (`agg.done/taken/healOut/healIn`, `buckets`, `lastTaken` ring). One `Add*`/`On*` method per event kind: `AddDone`, `AddTaken`, `AddHealOut`, `AddHealIn`, `AddTempMoraleLoss`, `OnDefeat`, `OnRevive`. Each `buckets[second]` entry also carries a `<field>ByWho[counterpartName] = amount` table alongside its pooled scalar (`done`/`taken`/`healOut`/`healIn`) -- added so the analysis window's graph can respect the target/source picker; the pooled scalar is always exactly the sum of its own `ByWho` table (`AddToBucket()` updates both together, in one place, so they can't drift apart). Verified offline (a synthetic multi-target fight, checked the per-target and pooled sums against hand-computed expectations). |
 | `Sessions.lua` | The manager singleton (not a class): `Sessions.current` / `Sessions.list` (a ring of `settings.sessionsKept` -- 10/25/50 -- pinned exempt) / `Sessions.selected`; opens a `Session` lazily on the first own **combat** event, closes it after `settings.idleTimeout` seconds of combat silence via `Sessions.Tick()`, discards anything whose *combat* span is under `settings.minFightLength`. With `settings.mergeFights` off it instead closes as soon as the client's combat flag drops (with a 1s floor -- `UNMERGED_FLOOR` -- because damage opens a session before the flag has come up). `Sessions.CheckZone`/`DropUnpinned`/`ClearAll`/`SelectFallback` back `settings.dropOnZoneChange` and the options window's **Clear data**. `Sessions.OnClosed` / `Sessions.OnSelfDefeat` are the callback lists Phase 3/4 UI hooks into. **A session starts and ends with combat, not with any parsed event** -- see the heal-gating note in Build status. |
 | `Events.lua` | Wraps `Turbine.Chat.Received` (chaining to whatever was already registered), strips `<rgb=#......>` tags and trims before calling `Trigger.ParseCombatChat`, dispatches into `Sessions.*`. Also hosts the heartbeat (`Events.heartbeat`, a bare `Turbine.UI.Window` with `SetWantsUpdates(true)`) that drives `Sessions.Tick()`, since session-close-on-silence has to run even when chat is quiet. `Events.Shutdown()` restores the previous `Turbine.Chat.Received` and stops the heartbeat -- called from `plugin.Unload`. The heartbeat also calls `analysis:SyncPostOverlay(false)`: the post button's quickslot overlay is a separate top-level Window that does not follow the analysis window's visibility, which is toggled from at least four places. It only re-*positions* -- it must never call `Activate`, which takes chat focus. |
-| `Buffs.lua` | Self-**effect** uptime tracking -- **every** effect on the local player, benefit or not (the `IsDebuff` filter this file used to apply was dropped per direct user request: debuffs/DoTs on you are exactly what's worth reading next to a damage-taken graph). **`IsDebuff` is still read, but as a LABEL, not a filter**: `Buffs.Kinds[name]` caches `Buffs.Kind.Buff`/`.Debuff`/`.Unknown` at first sighting (re-probed as long as it reads Unknown, so a client that only answers once an effect is fully applied still gets a real label later), `Buffs.Stats` rows carry it as `row.kind`, and the analysis window renders it as the buff table's TYPE column. Three states, not a boolean, because `Effect:IsDebuff` is still not confirmed to exist here -- a missing or throwing method must read as Unknown (which is true) rather than silently labelling everything a buff (which would not be); the probe is `pcall`'d per effect rather than leaning on `Read`'s outer one, so a throw costs one label instead of abandoning the enumeration mid-walk. The module, its `session.buffs` field, `chartedBuffs`/`buffIgnore` and the `/reck buffs` command all keep the "buff" name -- read it as "tracked effect"; only the analysis window's user-facing label changed (SELF BUFFS -> SELF EFFECTS). The one remaining filter is the ignore list, which is the player's: `Buffs.Ignore` holds unverified best-guess defaults (mounts, travel), and `_G.settings.buffIgnore[name]` overrides them in **both** directions -- `true` ignores, `false` un-ignores a default, so `/reck buffs unignore Riding` actually works. Polls `_G.lp:GetEffects()` at 4Hz from Events.lua's heartbeat (**not** the live meter's Update, as the spec suggested -- that meter can be switched off and uptime must keep recording either way), opening/closing an interval per effect name on `session.buffs[name] = { intervals, apps }`. `Buffs.Stats(session, fromSec, toSec)` clips every interval to a range and returns uptime / uptime% / apps / longest gap, sorted. Data source is the live effect list, **not** parser event 17 -- event 17 carries no duration and no fade, so uptime from it would be a guess. Everything here is defensive (one pcall around the whole enumeration; a failed read is a no-op, never "everything faded"; the 0-vs-1-based index base of `EffectList:Get` is **detected**, by probing index 0, not assumed) because nothing in this codebase has touched `Turbine.Gameplay.EffectList` before -- see the three "guessed the shape of a Turbine object" bugs in Build status. |
+| `Buffs.lua` | Self-**effect** uptime tracking -- **every** effect on the local player, benefit or not (the `IsDebuff` filter this file used to apply was dropped per direct user request: debuffs/DoTs on you are exactly what's worth reading next to a damage-taken graph). **`IsDebuff` is still read, but as a LABEL, not a filter**: `Buffs.Kinds[name]` caches `Buffs.Kind.Buff`/`.Debuff`/`.Unknown` at first sighting (re-probed as long as it reads Unknown, so a client that only answers once an effect is fully applied still gets a real label later), `Buffs.Stats` rows carry it as `row.kind`, and the analysis window renders it as the buff table's TYPE column. Three states, not a boolean, because `Effect:IsDebuff` is still not confirmed to exist here -- a missing or throwing method must read as Unknown (which is true) rather than silently labelling everything a buff (which would not be); the probe is `pcall`'d per effect rather than leaning on `Read`'s outer one, so a throw costs one label instead of abandoning the enumeration mid-walk. The module, its `session.buffs` field, `chartedBuffs`/`buffIgnore` and the `/basil buffs` command all keep the "buff" name -- read it as "tracked effect"; only the analysis window's user-facing label changed (SELF BUFFS -> SELF EFFECTS). The one remaining filter is the ignore list, which is the player's: `Buffs.Ignore` holds unverified best-guess defaults (mounts, travel), and `_G.settings.buffIgnore[name]` overrides them in **both** directions -- `true` ignores, `false` un-ignores a default, so `/basil buffs unignore Riding` actually works. Polls `_G.lp:GetEffects()` at 4Hz from Events.lua's heartbeat (**not** the live meter's Update, as the spec suggested -- that meter can be switched off and uptime must keep recording either way), opening/closing an interval per effect name on `session.buffs[name] = { intervals, apps }`. `Buffs.Stats(session, fromSec, toSec)` clips every interval to a range and returns uptime / uptime% / apps / longest gap, sorted. Data source is the live effect list, **not** parser event 17 -- event 17 carries no duration and no fade, so uptime from it would be a guess. Everything here is defensive (one pcall around the whole enumeration; a failed read is a no-op, never "everything faded"; the 0-vs-1-based index base of `EffectList:Get` is **detected**, by probing index 0, not assumed) because nothing in this codebase has touched `Turbine.Gameplay.EffectList` before -- see the three "guessed the shape of a Turbine object" bugs in Build status. |
 | `Utils/Class.lua`, `Utils/Type.lua` | Vendored OOP shim, see above. |
 
 | `UI/Frame.lua` | `Frame` (extends `Turbine.UI.Window`) -- shared chrome every window subclasses: background + 1px border Controls, header with `TrajanPro13` title + close glyph, manual drag on the header, position persisted to `_G.settings.windows[key]`. The header drag fires an optional `frame.OnMoved` hook on every `MouseMove`, for subclasses owning a control positioned in **screen** coordinates (the analysis window's post-button overlay, its own top-level Window) -- deferring that to `MouseUp` would strand it for the whole drag. `Frame` knows nothing about what the hook does. |
 | `UI/Bar.lua` | `Bar` -- 1px-border track Control with a fill child; `SetPercent(pct)` sets width directly (no tweening anywhere, per `docs/DESIGN.md`). |
 | `UI/Row.lua` | `Row` -- a fixed-column-offset row of Labels for tables; pooled and reused across refreshes, never rebuilt per redraw. |
 | `UI/RangeSlider.lua` | `RangeSlider` -- the two-handle time-range control under the plot. Snaps to the graph's 48 bucket stops, not to pixels, so the numbers in the window and the marks on the plot agree exactly and only 48 distinct ranges per endpoint can ever be asked for. Drag uses the same MouseDown/MouseMove/MouseUp shape as `Frame:WireDrag` and the resize gripper -- confirmed-working precedent, no new assumption about mouse delivery. Handles clamp to `other handle -/+ 1`; a zero-width range would divide by zero everywhere downstream. |
-| `UI/RotationProbe.lua` | `RotationProbe` (extends `Frame`) -- the `/reck probe` diagnostic window (round 6), and the only thing in this codebase that calls `SetRotation`. Nothing imports it but `UI/__init__.lua`; it exists to answer the questions the line-graph rework depends on and is meant to be **deleted once they are answered** (`docs/redesign/GRAPH_RESEARCH.md` section 7 holds the answer table) -- along with the `windows.probe` entry it leaves behind in saved settings, since it takes a `Frame` key like any other window. |
+| `UI/RotationProbe.lua` | `RotationProbe` (extends `Frame`) -- the `/basil probe` diagnostic window (round 6), and the only thing in this codebase that calls `SetRotation`. Nothing imports it but `UI/__init__.lua`; it exists to answer the questions the line-graph rework depends on and is meant to be **deleted once they are answered** (`docs/redesign/GRAPH_RESEARCH.md` section 7 holds the answer table) -- along with the `windows.probe` entry it leaves behind in saved settings, since it takes a `Frame` key like any other window. |
 
-`UI/__init__.lua` imports Frame/Bar/Row in that order; `Main.lua` does `import "Reckoning.UI"`
+`UI/__init__.lua` imports Frame/Bar/Row in that order; `Main.lua` does `import "Basil.UI"`
 once. **Cross-directory class visibility**: a bare `X = class(...)` assigned inside `UI/*.lua`
 is only visible to *other files in `UI/`* (same-directory sibling access, confirmed against
 `VitalSelf/UI/Vital.lua`, which is referenced from root-level `Main.lua` as `UI.Vital()`, not
 bare `Vital()`). Root-level files (`Main.lua`, `Constants.lua`, `Session.lua`, `Sessions.lua`,
-`Settings.lua`, `Events.lua` -- anything directly in `Reckoning/`) behave differently: a bare
+`Settings.lua`, `Events.lua` -- anything directly in `Basil/`) behave differently: a bare
 global assigned there (`Trigger`, `L`, `EventCode`, `Theme`, `Font`, `Session`, `Sessions`, ...)
 *is* visible everywhere, because the root package's own environment is `_G` itself. So: Phase
 3-5 window classes (`LiveMeter`, `DeathCause`, `Analysis`) go in `UI/`, get instantiated from
@@ -867,7 +908,7 @@ and can freely reference `Frame`/`Bar`/`Row` bare since they're siblings in the 
 | `UI/DeathCause.lua` | `DeathCause` (extends `Frame`, `key = "deathCause"`, death-specific fill/border/header-rule colours) -- window 2. Fires from `Sessions.OnSelfDefeat`. "Last hit by" resolved by scanning `session.lastTaken` backward for the last `kind == "damage"` entry (temp-morale-loss rows don't carry an attacker). 5 pooled `Row` instances (never rebuilt), tinted per row: the killing-blow row's amount goes `DamageFatal`, temp-morale rows go `MutedText` end to end, everything else scales `DamageTaken`/`DamageSevere` off post-hit `moralePct`. Countdown is a `Bar`, `_G.settings.deathAutoHide` seconds (default 15) -- tracked as `self.remaining` (seconds left, decremented by real elapsed `dt` each `Update()` tick) rather than an absolute target timestamp, specifically so **pausing is just "skip subtracting this tick"**: `self.MouseEnter`/`self.MouseLeave` toggle `self.paused`, per direct feedback that hovering the window to read it shouldn't race the auto-hide closing it. Row time column widened (38px -> 46px) and format changed from one decimal (`"-3.7s"`) to whole seconds (`"-4s"`) per feedback that the times "seemed broken" -- most likely a width/overflow problem given the format itself checked out fine standalone, but the exact in-game rendering was never confirmed, so this is a defensive fix (shorter string, wider column) rather than a diagnosed-and-proven one; if it's still wrong, the underlying `entry.time - self.deathTime` computation itself is the next thing to check with a real capture, the way the `ChatType.Death` bug was found. The morale column is now a `Bar` per row (`self.moraleBars`, pooled) instead of a `Format.Percent` Label, matching the analysis window's own bar style per feedback. Depends on `UI/Row.lua`'s rows being mouse-invisible (`SetMouseVisible(false)`, changed from `true` -- nothing in a `Row` was ever individually clickable) so a row sitting over the window doesn't swallow the hover before it reaches the window's own `MouseEnter`/`MouseLeave`. **Unverified**: whether `Turbine.UI.Window.MouseEnter`/`.MouseLeave` fire based on the window's own bounds regardless of mouse-invisible children on top (assumed, consistent with how mouse-invisible children behave for click-through elsewhere, but not confirmed for Enter/Leave specifically) -- if hover-pause doesn't trigger in-game, check this first. |
 
 | `UI/Analysis.lua` | `Analysis` (extends `Frame`, `key = "analysis"`, resizable 1080x820, min 1080x600, max 1440 wide by the display's own height less 40px -- see `MaxHeight()`) -- window 3, redesigned in v0.2.0. Session rail (unchanged), 4 view tabs in **damage-pair-then-healing-pair** order (`done`/`taken`/`healOut`/`healIn`) with centred labels, picker chips, 5 KPI cards, the graph block, the skill table at **full content width**, then the SELF BUFFS table and the two 233px side panels sharing the bottom row. `RESET RANGE`, the range chip and the `POST` button (`BuildPostButton`, see `UI/PostButton.lua`) live in `Frame`'s own header, laid out right-to-left by `LayoutHeaderExtras`. State: `viewTab`, `filter[view]`, `selectedSession`, `rangeFrom`/`rangeTo`, `charted` (ordered, max 3), `tableSort`/`buffSort`, `splitBottom` (the user's skill/buff split; `splitEffective` is what the window could give it). **Everything is range-scoped through one `Session:Slice` per refresh** -- KPIs, table, both panels and the buff table are all fed from that single result, never from their own separate passes. `Layout()` and `RefreshContent()` call each other exactly once each: `RefreshContent` detects that the charted-lane or picker-row count changed shape, sets `laneCountWanted` and re-runs `Layout()`, which ends by calling back with `skipRelayout` set -- that flag is the only thing stopping an infinite bounce, so do not remove it. The buff table (labelled SELF EFFECTS) carries a **TYPE** column between EFFECT and UPTIME % -- `BUFF_KIND_TEXT`/`BUFF_KIND_HEX`/`BuffKindText` render `row.kind` (see `Buffs.lua`) as Buff/Debuff/Unknown, it sorts on the word it displays, and `FilterBuffStats` matches the search box against it as well as the name. Its 66px came out of the name column, which is the one that absorbs slack in `LayoutBuffColumns` -- and that function's name floor dropped 120 -> 100 in the same change, because at the window's **minimum** width the old floor made the eight columns sum wider than the section they sit in (which clips the last column instead of shortening the name; `analysis_test.lua` pins `buffWidth == 594` against the 604px section for exactly this). The SELF BUFFS table now scrolls (`self.buffScrollView`/`self.buffScrollBar`, the same `ListBox` + `Lotro.ScrollBar` host as the skill table's `scrollView`/`tableScrollBar` -- see `BuildTable`'s comment) instead of the section growing to fit every tracked buff and silently dropping whatever didn't fit past the `BUFF_POOL` pool size or the space the window had -- `REDESIGN_SPEC.md` section 7 already called for this ("let the skill table shrink to its 150px floor first and the buff table scroll second"), it just wasn't wired up. `BuildBuffRow`'s container is unparented until `RefreshBuffSection`'s `ClearItems`/`AddItem` loop, mirroring `BuildTableRowSlot`'s own comment. **The target/source picker wraps** (`RefreshPicker`/`FlowChips`): chips used to flow left-to-right off the right edge of the content column with no wrap, cap or clip, which at ~5 chips per row (848px at min width, `ChipWidth` is `16 + chars*7`) made every target past the fifth unreachable in any fight with more than a handful of enemies. Now: labels truncate to `PICKER_MAX_CHARS` on a **character** boundary (`TruncateChip`/`ChipWidth` are now thin wrappers over `Format.Truncate`/`Format.CharCount` in `Constants.lua`, which count UTF-8 lead bytes by hand -- Lua 5.1 has no `utf8` library and mob names carry accented characters; the marker is ASCII `..`, not `…`, per the pin-glyph lesson above. They moved out of this file when `ChatPost.lua` needed the identical logic for its line-length cap), chips flow into at most 2 rows, and the remainder folds into a trailing `+N more` chip that expands the picker to at most `PICKER_ROWS_EXPANDED` (5) rows with a `less` chip to fold it back. `pickerExpanded` is ephemeral and resets on view/session change. Row count feeds the same shape-change relayout path as lanes/buff rows (`pickerRowsWanted`/`layoutPickerRows`), and `Layout()` re-runs `RefreshPicker` itself before sizing the row so a resize that changes the chips-per-row count can't leave the geometry a pass behind. Chip **labels** are truncated but chip **values** stay the full name -- filtering matches on the value, so a shortened label never breaks the filter (offline-checked). |
-| `UI/AnalysisGraph.lua` | `Graph` -- the time plot. Owns four stacked rows: the 150px plot, 0-3 charted buff lanes, the range slider, and the timeline + legend; `GraphHeightFor(laneCount)` is a plain global so `Analysis:Layout` can ask for the total before a Graph exists. **The series are real line graphs** (v0.6.0): one pooled `Turbine.UI.Window` per step, sized to a SQUARE the length of the step it draws, carrying a rung of the `Resources/stroke_*.tga` ladder (picked by length, so the drawn stroke stays near 2px instead of scaling with the segment) and rotated to the step's angle -- see the file header and the Build-status note for the six probe rounds behind every call in `DrawSegment`, none of which is interchangeable. `Graph:Redraw` only ARMS the rotation (`rotateIn`); `Graph:FlushRotation`, driven by `Analysis:Update`, applies it a couple of frames later, because a rotation set before the control has painted is silently dropped. Morale is a **background bar graph** (48 bars + 48 brighter 1px top edges, low-morale pair below `MORALE_DANGER`, guide lines at 100%/50%) and stays bars deliberately; unsampled buckets carry the last known value forward, because a second in which you took no damage is not a second at 0 morale. **Hovering is one mouse-visible Control -- the plot ground -- not 48 zones on top of the data**: the old per-bucket zones hid the morale trace underneath them (found in-game, mechanism never pinned down), and putting the hover surface *behind* everything sidesteps that question entirely while relying only on the click-through behaviour `UI/Row.lua` already depends on. Pools: 2x(48 dots + 47 segments) + 96 morale + 3x24 lane segments, all built once. **A lane's icon tile is clickable and un-charts that buff** (`Graph.OnLaneRemoved`, wired in `Analysis:LayoutGraph` to the same `Analysis:ToggleCharted` the buff table's checkbox calls, so the checkbox clears in the same refresh). The tile is the only mouse-visible thing the `Graph` builds besides the plot ground and the slider; its two children stay mouse-invisible, the same hover-wrapper shape as `Frame`'s close button. `DrawLanes` writes `lane.name`/`lane.colorHex` for the handlers to read and **nils them on a dead lane** -- a pooled lane left holding last refresh's name would answer a click by un-charting a buff that is no longer on screen. Hover brightens the tile's border (its own `BackColor`) rather than filling it with `Theme.Hex.Hover`, which would sit behind the art and not read as a hover at all. |
+| `UI/AnalysisGraph.lua` | `Graph` -- the time plot. Owns four stacked rows: the 150px plot, 0-3 charted buff lanes, the range slider, and the timeline + legend; `GraphHeightFor(laneCount)` is a plain global so `Analysis:Layout` can ask for the total before a Graph exists. **The series are real line graphs** (v0.6.0): one pooled `Turbine.UI.Window` per step, sized to a SQUARE the length of the step it draws, carrying a rung of the `Resources/stroke_*.tga` ladder (picked by length, so the drawn stroke stays near 2px instead of scaling with the segment) and rotated to the step's angle -- see the file header and the Build-status note for the six probe rounds behind every call in `DrawSegment`, none of which is interchangeable. `Graph:Redraw` only ARMS the rotation (`Graph:ArmRotation`/`rotateIn`); `Graph:FlushRotation`, driven by `Analysis:Update`, applies it a couple of frames later and then re-applies it on the next two, because a rotation set before the control has painted is silently dropped and the first apply is also the one that reveals the segment. `Analysis:Update` runs the pass **only while the window is visible** and re-arms it when the window is shown -- see item 2 of the Build-status list. Morale is a **background bar graph** (48 bars + 48 brighter 1px top edges, low-morale pair below `MORALE_DANGER`, guide lines at 100%/50%) and stays bars deliberately; unsampled buckets carry the last known value forward, because a second in which you took no damage is not a second at 0 morale. **Hovering is one mouse-visible Control -- the plot ground -- not 48 zones on top of the data**: the old per-bucket zones hid the morale trace underneath them (found in-game, mechanism never pinned down), and putting the hover surface *behind* everything sidesteps that question entirely while relying only on the click-through behaviour `UI/Row.lua` already depends on. Pools: 2x(48 dots + 47 segments) + 96 morale + 3x24 lane segments, all built once. **A lane's icon tile is clickable and un-charts that buff** (`Graph.OnLaneRemoved`, wired in `Analysis:LayoutGraph` to the same `Analysis:ToggleCharted` the buff table's checkbox calls, so the checkbox clears in the same refresh). The tile is the only mouse-visible thing the `Graph` builds besides the plot ground and the slider; its two children stay mouse-invisible, the same hover-wrapper shape as `Frame`'s close button. `DrawLanes` writes `lane.name`/`lane.colorHex` for the handlers to read and **nils them on a dead lane** -- a pooled lane left holding last refresh's name would answer a click by un-charting a buff that is no longer on screen. Hover brightens the tile's border (its own `BackColor`) rather than filling it with `Theme.Hex.Hover`, which would sit behind the art and not read as a hover at all. |
 
 **Two documented deviations from the mockup's literal pixel values**, both explained in
 `UI/Analysis.lua`'s header comment: the graph and skill table stretch to fill the available
@@ -891,8 +932,8 @@ turns out to be) in-game first, on a low-stakes control, before relying on it an
 
 | `UI/Options.lua` | `Options` (extends `Turbine.UI.ListBox`) -- the **Plugin Manager stub**, returned via `plugin.GetOptionsPanel`. Every real setting moved to `UI/OptionsWindow.lua`; this is one title, one line of text and an **Open options** button. The old panel is gone rather than kept in parallel, because two surfaces editing the same keys would reintroduce the exact problem the options window exists to remove (it had two commit models in one place -- checkboxes saved on change, the numeric box only on Accept). `Options:Refresh()` survives as a no-op so older callers stay valid. |
 | `UI/Controls.lua` | `Slider` (single-handle) and `Segment` (a strip of shared-edge cells), the two controls the options window needed that this codebase did not already have. `Slider`'s drag is `RangeSlider`'s idiom verbatim, including the rule the resize-gripper bug established: a handler reading `args.X` off the dragged control must move that control inside the same `MouseMove`. `OnChange` fires per value, `OnCommit` once on release -- callers save in `OnCommit` only. `Segment`'s cell width tries `Label:GetWidth()` and falls back to a `Format.CharCount(text) * 7 + 20` estimate if it reads implausibly small; nothing in this codebase had ever relied on text measurement (see `ChipWidth` in `UI/Analysis.lua`), so both paths are live and the wider one wins. |
-| `UI/OptionsPage.lua` | `OptionsPage` (extends `Turbine.UI.Control`) -- a y-cursor container so the seven pages read as declarative lists instead of 400 lines of `SetPosition`. `Section`/`Note`/`Check`/`Slider`/`Segment`/`Button`/`ButtonRow`, each returning its control, appending a 1px `RowBorder` rule and advancing the cursor. Every `Add*` registers a **refresher** (`OnRefresh`) that re-reads its own key -- `Refresh()` runs them all, which is what makes Defaults and `/reck reset` land on a page that was built minutes ago. `OptionsPage.Width` (402) is the pane's 412 less a 10px scrollbar gutter. A page can nest another `OptionsPage` inside itself (the Self buffs page does, so the ignore section's cursor need not know where the fixed-height picker above it ended). |
-| `UI/OptionsWindow.lua` | `OptionsWindow` (extends `Frame`, `key = "options"`, 560x452) -- window 4, `/reck options`. Rail (7 rows) + one reused `ListBox` pane + footer. `BUILDERS[pageKey]` builds a page lazily on first open and caches it; `page.Repaint()` (optional) re-reads anything that comes from live data rather than from `_G.settings` -- the saved-geometry readouts and the buff picker -- every time the page is shown. `OptionsWindow.ApplyAll()` is the single place that pushes settings into all four windows, guarded so a handler firing during load cannot reach a window that does not exist yet. `Update()` exists only to disarm the Sessions page's two-step **Clear data** button. |
+| `UI/OptionsPage.lua` | `OptionsPage` (extends `Turbine.UI.Control`) -- a y-cursor container so the seven pages read as declarative lists instead of 400 lines of `SetPosition`. `Section`/`Note`/`Check`/`Slider`/`Segment`/`Button`/`ButtonRow`, each returning its control, appending a 1px `RowBorder` rule and advancing the cursor. Every `Add*` registers a **refresher** (`OnRefresh`) that re-reads its own key -- `Refresh()` runs them all, which is what makes Defaults and `/basil reset` land on a page that was built minutes ago. `OptionsPage.Width` (402) is the pane's 412 less a 10px scrollbar gutter. A page can nest another `OptionsPage` inside itself (the Self buffs page does, so the ignore section's cursor need not know where the fixed-height picker above it ended). |
+| `UI/OptionsWindow.lua` | `OptionsWindow` (extends `Frame`, `key = "options"`, 560x452) -- window 4, `/basil options`. Rail (7 rows) + one reused `ListBox` pane + footer. `BUILDERS[pageKey]` builds a page lazily on first open and caches it; `page.Repaint()` (optional) re-reads anything that comes from live data rather than from `_G.settings` -- the saved-geometry readouts and the buff picker -- every time the page is shown. `OptionsWindow.ApplyAll()` is the single place that pushes settings into all four windows, guarded so a handler firing during load cannot reach a window that does not exist yet. `Update()` exists only to disarm the Sessions page's two-step **Clear data** button. |
 | `ChatPost.lua` | Turns a `Session` into a chat post. One output shape: **`BuildLine`** returns a single string within `MAX_MESSAGE`, optionally coloured -- the summary preset is a fixed shape (fight, range, view label, total, rate, hits, crit%, largest hit + its skill, DIED) with **no** per-skill list, and the death preset is the killing blow plus as many of `lastTaken` as the budget allows. `Alias(channelKey, line)` wraps it in the channel's slash verb. Pure string building, no `Turbine.UI`, so `tools/offline/chatpost_test.lua` exercises every branch. Root level (not `UI/`) because both `Main.lua` and `UI/PostButton.lua` need it. **ASCII only in post text** -- separators are `" - "`/`" | "`, never an em dash or middle dot: everywhere else a questionable glyph only has to survive *our* client's fonts (and this codebase has been caught twice already), but a post renders on other players' clients. Every interpolated name goes through `Clean()` (strips `[\r\n]+` and `<>`) -- a newline in a mob name would forge an extra chat line, since the whole post is one alias the client splits on `\n`. Lines are built as `{ text, hex }` segment lists so `Render()` can measure the *plain* length for the 240-char cap while emitting the tinted form, and coalesce adjacent same-colour runs into one tag pair. |
 | `UI/PostButton.lua` | `PostButton` (extends `Turbine.UI.Control`) -- the post control pair in the analysis window's header. `PostButton` itself is the themed **POST** button, with an invisible `Turbine.UI.Lotro.Quickslot` floating over it inside its own 0x0 opacity-0 top-level Window (`self.overlay`) -- that quickslot is what actually fires the post. `self.channel` beside it is a plain `Control` naming the destination (`SAY`/`FELL`/`RAID`/`KIN`) whose `MouseClick` opens the channel/preset `ContextMenu`. `Place(x, y)` positions all three (deliberately not an override of the native `SetPosition`); `SyncOverlay(force)` keeps the overlay on the button in **screen** coordinates; `Raise()` puts it back above the window after anything activates it. `PostButton.Width` is what `Analysis:LayoutHeaderExtras` reserves. See the note below -- every part of this shape is there because a simpler-looking one failed in-game. |
 
@@ -904,7 +945,7 @@ chat-send API in Turbine: `Turbine.Shell.WriteLine` prints only to your own wind
 holding a `Shortcut(ShortcutType.Alias, "/f <text>")` that the user clicks. `Arebel` explicitly
 tried firing one programmatically (`slot:Use()` / `:Execute()` / `:DoClick()`,
 `ParseGraph/Main.lua:7403-7428`); none of those methods exist and it falls back to telling the user
-to click. So: **no auto-post on combat end**, and `/reck post` can only ever print a local preview.
+to click. So: **no auto-post on combat end**, and `/basil post` can only ever print a local preview.
 The alias is also a **static string**, so it must be rebuilt whenever view/filter/range/session/
 channel/preset changes -- `RefreshContent` is the single funnel all of those already pass through
 (CombatAnalysis calls its equivalent from six scattered sites for want of one).
@@ -950,7 +991,7 @@ sibling plugin's code over what this client actually does. All of them are worth
    re-activates from a **per-frame `Update()`** -- that was a misread. `StatOverviewWindow:Update`
    is gated on `not self:GetWantsUpdates()` and `WantsUpdates` is only ever true during the
    minimize/maximize animation, so that body runs on the animation's last frame, not every frame.)
-   Reckoning now gets the same funnel without 60 forwarding calls by hooking the window's real
+   Basil now gets the same funnel without 60 forwarding calls by hooking the window's real
    **`Activated`** event (`Analysis:BuildPostButton`), which fires however the window came to the
    front, including a client-initiated raise from a click on a child -- a confirmed-real Window
    event (`Thurallor/Common/Utils/Utils_13.lua:657` hooks it for exactly this meaning, alongside
@@ -979,7 +1020,7 @@ comment calling its approach a "hack" as a reason to look for a second precedent
 copy it.
 
 **Still not confirmed in-game**: that `Turbine.UI.ContextMenu`/`MenuItem` behave as
-CombatAnalysis's use implies -- nothing else in Reckoning had touched them. `tools/offline/stub.lua`'s
+CombatAnalysis's use implies -- nothing else in Basil had touched them. `tools/offline/stub.lua`'s
 `SetOpacity` guard was narrowed from "never call it" to "never call it on a Control that has a
 `BackColor`", which is what the original lesson actually established. Offline-verified: the builder
 in full (`chatpost_test.lua` -- single-line, within the cap, balanced 6-digit tags, colour
@@ -987,11 +1028,11 @@ stripping back to exactly the plain line, and the newline/angle-bracket injectio
 overlay tracking the window through drag, resize, show/hide, re-raise and shutdown
 (`analysis_test.lua` section 18).
 
-`/reck options` (alias `/reck config`),
-`/reck show|hide [live\|death\|analysis\|options]`, `/reck move <live\|death\|analysis\|options>`,
-`/reck testdeath`, `/reck reset`, `/reck post`,
-`/reck buffs [list|ignore <name>|unignore <name>]`,
-`/reck probe` are in
+`/basil options` (alias `/basil config`),
+`/basil show|hide [live\|death\|analysis\|options]`, `/basil move <live\|death\|analysis\|options>`,
+`/basil testdeath`, `/basil reset`, `/basil post`,
+`/basil buffs [list|ignore <name>|unignore <name>]`,
+`/basil probe` are in
 `Main.lua`. `options` toggles the settings window (window 4) -- the same thing the Plugin Manager
 stub's button does. `buffs` re-parses its arguments from the **raw** command string, not the lower-cased
 single-token parse the other subcommands use -- buff names are case-sensitive and contain spaces. `show`/`hide` for `live`/`death` only flip
@@ -1019,7 +1060,7 @@ also the fallback if the quickslot mechanism turns out to misbehave in-game.
 `_G.settings.windows` directly to `DEFAULTS.windows` (the same table object, since `windows = {}`
 in `DEFAULTS` is itself just a table value like any other and the merge did `_G.settings[key] =
 value`). Every window drag or resize was therefore also silently mutating `DEFAULTS.windows`,
-which `Settings.ResetToDefaults()` (added for `/reck reset`) would then have copied right back
+which `Settings.ResetToDefaults()` (added for `/basil reset`) would then have copied right back
 out -- reset would have restored whatever the *current* window positions already were, not the
 real defaults. Fixed by giving any table-valued default a fresh `{}` on merge instead of the
 `DEFAULTS` table itself. Worth remembering if a future setting is table-shaped: table defaults
@@ -1041,7 +1082,7 @@ need this same fresh-copy treatment, not a bare reference.
   than declaring its own global. Mirrors Gibberish3's `Variables.lua`.
 - `L` -- localisation table. `L.DirectDamage` is the fallback skill name for a hit with no
   named skill. **Gibberish3 itself never defines this key** (verified against the live
-  Gibberish3 install: dead in the source `Parse/en.lua` was ported from) -- Reckoning defines
+  Gibberish3 install: dead in the source `Parse/en.lua` was ported from) -- Basil defines
   it directly in `Constants.lua` instead of leaving `skillName` nil.
 
 ## The parser and its wiring
@@ -1066,7 +1107,7 @@ that are not written down in the design bundle and are easy to miss, both applie
 ## Persistence
 
 Follow the `VitalSelf` pattern: `Turbine.PluginData.Save(Turbine.DataScope.Character,
-"Reckoning", _G.settings)`, done in `Settings.Save()`.
+"Basil", _G.settings)`, done in `Settings.Save()`.
 
 - `Turbine.UI.Color` does **not** survive serialization -- it returns as a plain `{R,G,B}`
   table. `Settings.FixColors()` rebuilds every key listed in `COLOR_KEYS` on load. That list is
@@ -1125,17 +1166,40 @@ Follow the `VitalSelf` pattern: `Turbine.PluginData.Save(Turbine.DataScope.Chara
 
 ## Testing
 
+**A resource path that does not resolve is completely silent, and it is the first thing to rule out
+when something "draws wrong" rather than throws.** `SetBackground("Basil/Resources/x.tga")` on a
+path the client cannot resolve does not error into chat -- it writes one line to
+`<Documents>/The Lord of the Rings Online/Script.log`:
+
+```
+...\Plugins\Basil\UI\AnalysisGraph.lua:1028: Failed to load background image.
+```
+
+and leaves an empty control behind. That file is the ONLY place this surfaces, it is never shown
+in-game, and it is worth reading after any load that looks wrong -- it is the closest thing to a
+log this environment has for the whole class of "the call succeeded and drew nothing."
+
+This bit for real during the **Reckoning -> Basil rename**: the Lua was updated to say
+`"Basil/Resources/..."` while the installed folder was still named `Reckoning`, so **every** image
+in the plugin failed to load at once. The visible symptom was reported as the analysis window's
+line graph being drawn wrong, because the stroke sprites are exactly what a segment rotates -- a
+missing file there reads as a graph bug, not a missing file, and sends you straight back into the
+rotation code. `tools/offline/resources_test.lua` now pins the pair (every referenced `.tga` exists,
+under a prefix derived from the `.plugin`'s own `<Package>`), so the next rename cannot half-happen.
+**The general shape: when a rendering change "does not work", check `Script.log` and the resource
+paths BEFORE adding another round to whichever rendering saga you are in.**
+
 **Run `sh tools/offline/run.sh` before every in-game load** (needs `lua5.1`; see
-`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 758
+`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 800
 checks against the real classes and the real `Main.lua`. It is not a substitute for loading the
 plugin -- it cannot tell you whether anything actually *draws* -- but everything it catches is a
 reload you don't have to spend.
 
-Beyond that: `/reck dump` (in `Main.lua`) prints the current or most
+Beyond that: `/basil dump` (in `Main.lua`) prints the current or most
 recent session's totals to chat -- the in-game way to re-check the event pipeline against
 `reference/Combat_20260819_1.txt` / `reference/Enemy_20260819_1.txt` (read the two logs by eye
 and compare). See "Build status" above for how Phase 1 was checked offline before any in-game
-load existed to run `/reck dump` against.
+load existed to run `/basil dump` against.
 
 `reference/Enemy_20260819_2.txt` is a real user-captured log added specifically because it
 contains the local player being defeated and reviving four separate times ("The X incapacitated

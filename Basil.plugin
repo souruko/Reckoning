@@ -1,11 +1,11 @@
 <?xml version="1.0"?>
 <Plugin>
 	<Information>
-		<Name>Reckoning</Name>
+		<Name>Basil</Name>
 		<Author>Souru</Author>
 		<Version>0.6.0</Version>
 		<Description>A combat analyser that reads your own damage, healing and deaths from the combat chat log: a compact always-on live meter, a death post-mortem that appears by itself, and a post-combat analysis window covering the last ten fights.</Description>
 	</Information>
-	<Package>Reckoning.Main</Package>
-	<Configuration Apartment="Reckoning" />
+	<Package>Basil.Main</Package>
+	<Configuration Apartment="Basil" />
 </Plugin>

@@ -1,6 +1,6 @@
-# Handoff: Reckoning — analysis window redesign
+# Handoff: Basil — analysis window redesign
 
-For a Claude Code session working in **`souruko/Reckoning`** (`main`), a LOTRO plugin written
+For a Claude Code session working in **`souruko/Basil`** (`main`), a LOTRO plugin written
 in Lua 5.1 against the Turbine UI API. Read this file first, then `REDESIGN_SPEC.md` (the
 implementation plan, file by file) and `GRAPH_RESEARCH.md` (how to draw a line in this API,
 with a probe checklist).
@@ -177,7 +177,7 @@ lanes share one lookup (§6). **The mock cannot show real icons** — it draws t
 tiles as stand-ins, sized and tinted exactly as the real Controls will be, so nothing shifts
 when the art lands. No other assets; everything else is a coloured rect or a label. If you take
 the sprite route for the polyline (`GRAPH_RESEARCH.md` §4) you will author ~17 `.tga` files into
-`Reckoning/RESOURCES/`.
+`Basil/RESOURCES/`.
 
 ## Bugs found while measuring the current UI
 
@@ -200,8 +200,8 @@ mock:
 4. `Buffs.lua` polling, buff table, charted lanes, icons.
 5. Tab order/centring, table columns, KPI cards, layout stack.
 6. Live meter and death-cause passes.
-7. Version bump in `Reckoning.plugin`, `Reckoning.plugincompendium`, `Constants.lua`
-   (`Reckoning.Version`), and a player-facing `CHANGELOG.md` entry.
+7. Version bump in `Basil.plugin`, `Basil.plugincompendium`, `Constants.lua`
+   (`Basil.Version`), and a player-facing `CHANGELOG.md` entry.
 
 ## Files in this bundle
 

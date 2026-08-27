@@ -8,13 +8,13 @@
 -- The stub asserts on non-numeric or negative SetSize/SetPosition arguments, and records
 -- position/size/visibility/colour per instance, so a probe can check real layout arithmetic.
 
-local ROOT = os.getenv("RECK_ROOT") or "/home/user/Reckoning"
+local ROOT = os.getenv("BASIL_ROOT") or "/home/user/Basil"
 
 local loaded = {}
 _G.import = function(path)
 	if loaded[path] then return end
 	loaded[path] = true
-	local rel = path:gsub("^Reckoning%.", ""):gsub("%.", "/")
+	local rel = path:gsub("^Basil%.", ""):gsub("%.", "/")
 	local file = ROOT .. "/" .. rel .. ".lua"
 	local f = io.open(file, "r")
 	if f == nil then
@@ -29,8 +29,8 @@ end
 _G.plugin = {}
 
 -- The OOP shim has to exist before any Turbine class is declared with it.
-import "Reckoning.Utils.Type"
-import "Reckoning.Utils.Class"
+import "Basil.Utils.Type"
+import "Basil.Utils.Class"
 
 ------------------------------------------------------------------ Turbine.UI.Control
 local Control = class()

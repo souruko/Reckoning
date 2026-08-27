@@ -27,13 +27,13 @@ local function check(label, ok, detail)
   print(string.format("%-58s %s%s", label, ok and "OK" or "**FAIL**", detail and ("  " .. detail) or ""))
 end
 
--- Main.lua does `import "Reckoning.UI"` and then `UI.LiveMeter()`. The stub has no per-directory
+-- Main.lua does `import "Basil.UI"` and then `UI.LiveMeter()`. The stub has no per-directory
 -- package environments, so give `UI` the bare globals those files declare, the way the game's
 -- own package scope would.
 local realImport = _G.import
 _G.import = function(path)
-  if path == "Reckoning.UI" then
-    realImport("Reckoning.UI")
+  if path == "Basil.UI" then
+    realImport("Basil.UI")
     _G.UI = { LiveMeter = LiveMeter, DeathCause = DeathCause, Analysis = Analysis,
               OptionsWindow = OptionsWindow, Options = Options }
     return
@@ -42,7 +42,7 @@ _G.import = function(path)
   return realImport(path)
 end
 
-local ok, err = pcall(function() realImport("Reckoning.Main") end)
+local ok, err = pcall(function() realImport("Basil.Main") end)
 check("Main.lua loads top to bottom", ok, ok and "" or tostring(err))
 if not ok then os.exit(1) end
 
@@ -51,7 +51,7 @@ check("options panel stub constructed", optionsPanel ~= nil)
 check("options window constructed", optionsWindow ~= nil)
 check("options window constructed", optionsWindow ~= nil)
 check("LocalPlayer.name monkey-patched", LocalPlayer.name == "Luxtheninth")
-check("version is 0.6.0 in Constants", Reckoning.Version == "0.6.0")
+check("version is 0.6.0 in Constants", Basil.Version == "0.6.0")
 check("Buffs global exists before Events", Buffs ~= nil and Buffs.PollInterval == 0.25)
 check("new settings defaults merged",
   type(_G.settings.chartedBuffs) == "table" and type(_G.settings.buffIgnore) == "table"
@@ -115,14 +115,14 @@ end
 for _, cmd in ipairs({ "help", "dump", "post", "buffs", "buffs list", "testdeath",
                        "show analysis", "hide analysis", "move analysis" }) do
   local okCmd, errCmd = Run(cmd)
-  check("/reck " .. cmd, okCmd, okCmd and "" or tostring(errCmd))
+  check("/basil " .. cmd, okCmd, okCmd and "" or tostring(errCmd))
 end
 local okIg = Run("buffs ignore Writ of Health")
-check("/reck buffs ignore <name> keeps the name's case and spaces",
+check("/basil buffs ignore <name> keeps the name's case and spaces",
   okIg and _G.settings.buffIgnore["Writ of Health"] == true)
 local okUn = Run("buffs unignore Writ of Health")
-check("/reck buffs unignore <name>", okUn and _G.settings.buffIgnore["Writ of Health"] == nil)
--- /reck post must survive every preset and channel, including the ones that legitimately have
+check("/basil buffs unignore <name>", okUn and _G.settings.buffIgnore["Writ of Health"] == nil)
+-- /basil post must survive every preset and channel, including the ones that legitimately have
 -- nothing to say -- it runs against whatever session state happens to exist, so a nil post is a
 -- normal outcome it has to print through rather than throw on.
 for _, preset in ipairs({ "summary", "death" }) do
@@ -130,7 +130,7 @@ for _, preset in ipairs({ "summary", "death" }) do
     _G.settings.postPreset = preset
     _G.settings.postChannel = channel
     local okPost, errPost = Run("post")
-    check("/reck post (" .. preset .. " -> " .. channel .. ")", okPost,
+    check("/basil post (" .. preset .. " -> " .. channel .. ")", okPost,
       okPost and "" or tostring(errPost))
   end
 end
@@ -144,8 +144,8 @@ check("postColor defaulted on", _G.settings.postColor == true)
 check("the removed postRows setting is gone", DEFAULTS.postRows == nil)
 
 local okReset = Run("reset")
-check("/reck reset", okReset)
-check("/reck reset restored the shipped window size",
+check("/basil reset", okReset)
+check("/basil reset restored the shipped window size",
   select(1, analysis:GetSize()) == 1080 and select(2, analysis:GetSize()) == 820,
   select(1, analysis:GetSize()) .. "x" .. select(2, analysis:GetSize()))
 

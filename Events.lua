@@ -20,7 +20,7 @@ end
 -- plugin's chat handling.
 local previousChatReceived = Turbine.Chat.Received
 
--- Reckoning's own dispatch, split out so it can be pcall-wrapped below without also swallowing
+-- Basil's own dispatch, split out so it can be pcall-wrapped below without also swallowing
 -- errors from previousChatReceived (another plugin's handler) -- those are not this plugin's to
 -- catch or hide.
 local function Dispatch(args)
@@ -143,7 +143,7 @@ function Events.heartbeat:Update()
 
 	-- Backstop for the post button's overlay quickslot: it is a separate top-level Window and so
 	-- does not follow the analysis window's visibility, which is toggled from at least four places
-	-- (/reck show|hide|move, the live meter's Details button, the close button, Escape). This only
+	-- (/basil show|hide|move, the live meter's Details button, the close button, Escape). This only
 	-- re-positions -- it never calls Activate(), which would take chat focus four times a second.
 	if analysis ~= nil and analysis.SyncPostOverlay ~= nil then
 		analysis:SyncPostOverlay(false)
