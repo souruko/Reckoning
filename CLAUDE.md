@@ -268,7 +268,12 @@ these dictates a line of `UI/AnalysisGraph.lua` and none is optional:
 2. **A rotation applied before the control has painted is silently dropped.** One apply on a LATER
    frame is enough and it sticks. This is why `Graph:Redraw` only *arms* a pass (`rotateIn`) and
    `Graph:FlushRotation` runs it, driven by `Analysis:Update`. Three rounds of a completely flat
-   plot were this one fact.
+   plot were this one fact. **A segment is therefore drawn HIDDEN and revealed by that pass**
+   (`segment.shown`): between being sized -- which clears its rotation -- and being rotated it
+   paints flat, which in-game read as the line snapping to a horizontal bar on every redraw.
+   `DrawSegment` also leaves an unchanged segment completely untouched, and that is what stops the
+   hide from *becoming* the flicker: dragging the range slider redraws on every bucket it crosses
+   without moving the series at all, and re-specifying an unchanged segment would blink it.
 3. **The control's rect never rotates -- the IMAGE is rotated and then FITTED to the rect.** So a
    2px-tall control can never be a diagonal at any angle: a rotated white rectangle refitted into a
    2px slot is still a 2px horizontal bar. The segment control is instead a **SQUARE whose side is

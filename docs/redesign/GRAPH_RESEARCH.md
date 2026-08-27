@@ -413,3 +413,16 @@ trusting the arithmetic.
 
 The fractional 1.5 rung is not padding: whole-pixel bands can only manage 1.4px or 2.8px on the
 longest segments, and that gap is visible.
+
+### The second thing a probe did not catch
+
+The same load also showed the line "shortly as a horizontal line" on every redraw. That is the
+deferred rotation made visible: a segment is sized -- which clears its rotation -- two frames before
+it is rotated, so in between it paints flat. Segments are now drawn **hidden** and revealed by
+`FlushRotation`, after the angle is on.
+
+That fix has a trap of its own, which is worth more than the fix. Dragging the range slider redraws
+on every bucket it crosses *without moving the series at all*, so hiding on every redraw would have
+blanked the plot for the whole drag -- trading a brief flat line for a much worse flicker.
+`DrawSegment` therefore memoises size, position, angle, sprite and colour, and returns without
+touching the control when none of them changed.
