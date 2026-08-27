@@ -297,94 +297,89 @@ check("a temp-morale-only ring marks nothing and does not crash",
   not d.rows[1].tint:IsVisible() and d.rows[1].maxTag:GetText() == "")
 
 ------------------------------------------------------------------ rotation probe (/reck probe)
--- The probe is a diagnostic, but it is still real UI construction, and the shipping polyline
--- arithmetic lives in it -- so it gets the same treatment as everything else here.
+-- The probe is a diagnostic, but the shipping segment arithmetic lives in it, so it gets the same
+-- treatment as everything else here.
 --
 -- Two load-bearing checks. The stub CLEARS a control's rotation on SetSize and SetBackground,
--- exactly as the real engine does, so a subject with no rotation recorded is one whose SetRotation
--- did not come last -- and the author's scaling sequence ENDS in a SetSize, which is precisely the
--- trap. And the deferred subjects must actually be re-rotated by Update, because a rotation set
--- before the control has painted is silently dropped in the real client.
+-- exactly as the real engine does -- and the scaling sequence ENDS in a SetSize, which is precisely
+-- the trap, so a segment must have no rotation recorded until the deferred pass runs. And every
+-- segment control must be SQUARE: the engine rotates the image and fits it to the rect, so any
+-- other aspect ratio shears the line off its angle.
 local said = {}
 local realWrite = Turbine.Shell.WriteLine
 Turbine.Shell.WriteLine = function(text) said[#said + 1] = text end
 
 local probe = RotationProbe()
 
-check("probe: window is 480x462", probe:GetWidth() == 480 and probe:GetHeight() == 462,
+check("probe: window is 480x404", probe:GetWidth() == 480 and probe:GetHeight() == 404,
   probe:GetWidth() .. "x" .. probe:GetHeight())
-check("probe: all eight cells built", #probe.cells == 8, #probe.cells .. " cells")
-check("probe: no subject was refused", probe.refused == nil, tostring(probe.refused))
-check("probe: 13 rotated subjects (B-G plus the polyline's 7 segments)",
-  #probe.subjects == 13, #probe.subjects .. " rotated")
-check("probe: 12 of them deferred -- only D applies in the constructor",
-  #probe.deferred == 12, #probe.deferred .. " deferred")
+check("probe: all five cells built", #probe.cells == 5, #probe.cells .. " cells")
+check("probe: no segment was refused", probe.refused == nil, tostring(probe.refused))
+check("probe: 20 segments (A 1, B 2, C 3, D 3, polyline 11)",
+  #probe.segments == 20, #probe.segments .. " segments")
 check("probe: reports its API status in the window, not only to chat",
   string.find(probe.statusLine:GetText(), "SetRotation") ~= nil, probe.statusLine:GetText())
 check("probe: prints a key to chat", #said >= 8, #said .. " lines")
 
--- The scaling sequence must leave every scaled subject at its TARGET size, not the asset's native
--- size -- getting the two SetSize calls the wrong way round is the whole failure mode it fixes.
-local sized = true
-for i = 1, #probe.lineBars do
+-- Square, and sized to the segment's own length: both halves of the mechanism round five found.
+local notSquare, badLength = 0, 0
+for i = 1, #probe.linePoints - 1 do
   local bar = probe.lineBars[i]
-  if bar ~= nil and select(2, bar:GetSize()) ~= 2 then sized = false end
+  if bar ~= nil then
+    local w, h = bar:GetSize()
+    if w ~= h then notSquare = notSquare + 1 end
+    local p0, p1 = probe.linePoints[i], probe.linePoints[i + 1]
+    local dx, dy = p1.x - p0.x, p1.y - p0.y
+    if math.abs(w - math.sqrt(dx * dx + dy * dy)) > 1.01 then badLength = badLength + 1 end
+  end
 end
-check("probe: scaling ends at the target size, not the asset's native size", sized)
+check("probe: every segment control is square", notSquare == 0, notSquare .. " not square")
+check("probe: every square's side is the segment's own length", badLength == 0,
+  badLength .. " mis-sized")
 
--- Deferred rotation: one tick must re-rotate every deferred subject, and the counter has to stop.
-probe:Update()
-check("probe: one Update tick re-rotates every deferred subject", probe.ticks == 1,
-  probe.ticks .. " ticks")
-for _ = 1, 200 do probe:Update() end
-check("probe: the tick counter stops at 120", probe.ticks == 120, probe.ticks .. " ticks")
-
--- Reconstruct every polyline segment from what was actually handed to the engine -- position, size
--- and angle -- and check it lands back on the two data points it is supposed to join.
+-- The drawn band runs the full width of the square through its centre, so after rotation its ends
+-- land on the two data points. Reconstruct them from what was handed to the engine.
 local worst = 0
 for i = 1, #probe.linePoints - 1 do
   local bar = probe.lineBars[i]
   if bar ~= nil then
     local px, py = bar:GetPosition()
-    local w, h = bar:GetSize()
-    local rot = bar:GetRotation()
-    local len = w - h                          -- sized to len + stroke
-    local rad = math.rad(rot.z)
-    local cx, cy = px + w / 2, py + h / 2
-    local ax, ay = cx - len / 2 * math.cos(rad), cy - len / 2 * math.sin(rad)
-    local bx, by = cx + len / 2 * math.cos(rad), cy + len / 2 * math.sin(rad)
+    local side = bar:GetSize()
+    local rad = math.rad(bar.rotation.z)
+    local cx, cy = px + side / 2, py + side / 2
     local p0, p1 = probe.linePoints[i], probe.linePoints[i + 1]
     worst = math.max(worst,
-      math.abs(ax - p0.x), math.abs(ay - p0.y), math.abs(bx - p1.x), math.abs(by - p1.y))
+      math.abs(cx - side / 2 * math.cos(rad) - p0.x), math.abs(cy - side / 2 * math.sin(rad) - p0.y),
+      math.abs(cx + side / 2 * math.cos(rad) - p1.x), math.abs(cy + side / 2 * math.sin(rad) - p1.y))
   end
 end
 check("probe: every segment reconstructs onto its two data points", worst <= 1.5,
   string.format("worst error %.2fpx", worst))
 
--- Every subject's ROTATED extent must stay inside the cell it sits in, or a future retune of a
--- length or an angle silently overlaps a neighbour or leaves the window.
-local spilled = {}
-for _, bar in ipairs(probe.subjects) do
-  local px, py = bar:GetPosition()
-  local w, h = bar:GetSize()
-  local rot = bar:GetRotation() or { z = 0 }
-  local c, sn = math.abs(math.cos(math.rad(rot.z))), math.abs(math.sin(math.rad(rot.z)))
-  local halfW, halfH = (w * c + h * sn) / 2, (w * sn + h * c) / 2
-  local cx, cy = px + w / 2, py + h / 2
-  local pw, ph = bar:GetParent():GetSize()
-  if cx - halfW < -0.5 or cy - halfH < -0.5 or cx + halfW > pw + 0.5 or cy + halfH > ph + 0.5 then
-    spilled[#spilled + 1] = string.format("%.0fx%.0f @%.0fdeg in %dx%d", w, h, rot.z, pw, ph)
-  end
+-- The deferred pass is the whole point: a rotation set before the control has painted is silently
+-- dropped in the real client, so nothing may be rotated at construction time.
+local early = 0
+for _, bar in ipairs(probe.segments) do
+  if bar:GetRotation() ~= nil then early = early + 1 end
 end
-check("probe: no subject's rotated extent leaves its cell", #spilled == 0,
-  table.concat(spilled, ", "))
+check("probe: nothing is rotated at construction time", early == 0, early .. " rotated early")
+
+probe:Update(); probe:Update()
+check("probe: still unrotated before the deferred pass", not probe.rotated)
+probe:Update()
+check("probe: the deferred pass rotates every segment exactly once", probe.rotated)
 
 local unrotated = 0
-for _, bar in ipairs(probe.subjects) do
+for _, bar in ipairs(probe.segments) do
   if bar:GetRotation() == nil then unrotated = unrotated + 1 end
 end
-check("probe: no subject lost its rotation to a later SetSize/SetBackground",
-  unrotated == 0, unrotated .. " unrotated")
+check("probe: every segment carries its rotation after the pass", unrotated == 0,
+  unrotated .. " unrotated")
+
+local before = probe.ticks
+for _ = 1, 50 do probe:Update() end
+check("probe: the pass does not repeat once done", probe.ticks == before,
+  probe.ticks .. " vs " .. before)
 
 Turbine.Shell.WriteLine = realWrite
 

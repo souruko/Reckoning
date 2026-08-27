@@ -33,6 +33,7 @@ Every icon in this folder is derived from [Phosphor Icons](https://phosphoricons
 | `line.tga` | -- (plain block) | -- | 8x8 | white | `UI/RotationProbe.lua` (stretched-sprite case) |
 | `line_long.tga` | -- (plain block) | -- | 256x4 | white | `UI/RotationProbe.lua` stroke source, clipped not stretched |
 | `wedge.tga` | -- (plain triangle) | -- | 36x36 | white | `UI/RotationProbe.lua` rotation subject |
+| `stroke.tga` | -- (banded square) | -- | 64x64 | white | `UI/RotationProbe.lua` polyline stroke, rotated |
 
 **Regular weight** (fill only for the "on" state of a two-state glyph), matching Gibberish3's and
 LootLogs' own `RESOURCES`/`Ressources` -- all three plugins now share one window language. At 16px

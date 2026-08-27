@@ -132,3 +132,29 @@ def write_wedge(size, filename):
 
 
 write_wedge(36, "wedge.tga")
+
+
+def write_stroke(size, band, filename):
+    """A square stroke sprite: a full-width white band through the vertical
+    centre, transparent elsewhere, with one antialiased row on each edge.
+
+    SQUARE is load-bearing. The engine rotates a control's IMAGE and then fits
+    the result to the control's rect (round five, cell E: a 64x16 wedge at 90
+    came back still 64x16 with its content reoriented, not 16x64). A square
+    control means that fit is a uniform scale, so a rotated line stays a
+    straight line at the angle asked for; any other aspect ratio shears it.
+    """
+    header = struct.pack(
+        "<BBBHHBHHHHBB", 0, 0, 2, 0, 0, 0, 0, 0, size, size, 32, 0x28
+    )
+    mid = size // 2
+    body = bytearray()
+    for y in range(size):
+        d = abs(y - mid)
+        alpha = 255 if d <= band // 2 else (120 if d <= band // 2 + 1 else 0)
+        body += bytes((255, 255, 255, alpha)) * size
+    (OUT / filename).write_bytes(header + bytes(body))
+    print(f"{filename:20} {size}x{size} band {band}")
+
+
+write_stroke(64, 3, "stroke.tga")

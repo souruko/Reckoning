@@ -51,7 +51,7 @@ the player-facing version and `REDESIGN_SPEC.md` for the spec each piece came fr
 **There is now a real offline test suite: `tools/offline/`.** Unlike the original scratch harness
 (described below), it runs the **real** classes and the **real** `Main.lua` under a **real Lua
 5.1** interpreter against a `Turbine` stub built on this repo's own `class()` shim. `sh
-tools/offline/run.sh` runs 748 checks in about a second. It caught three genuine bugs during the
+tools/offline/run.sh` runs 749 checks in about a second. It caught three genuine bugs during the
 redesign that `luac -p` could not have: an index-base probe that could not actually distinguish a
 0-based from a 1-based `EffectList`, a `nil` layout constant reaching `SetPosition`, and the
 analysis window failing to adopt an already-archived session. It caught three more during the
@@ -361,24 +361,43 @@ quirk from the other direction, using `SetStretchMode(2)` to snap a control to i
 size so it can read it back -- which is also why `Icon.Apply` could never scale a buff icon, and is
 the most likely fix for that whole saga.
 
-**Round five asks the two things the implementation still turns on.** *Cost*: cells C and D apply
-the rotation once after the first paint versus once in the constructor -- if one deferred apply
-sticks, the plot rotates each segment once per data change and forgets about it; if rotation must
-be re-applied every frame, that is 94 `SetRotation` calls per frame and a different feature
-entirely. *Correctness*: every subject that has rotated so far was **square**, and a square's
-rotation fits inside its own bounds, so nothing yet establishes that a rotated draw is not clipped
-to the control itself -- cell E is a 64x16 wedge at 90 that must become 16x64 to be visible, and
-cells F/G are the real 64x2 stroke at 90 and 45. Cell H is a real 8-point polyline: if it reads as
-a line, the rework is a mechanical port of `DrawStep`.
+**Round five finished the mechanism, and one of its answers kills Option B.** The good news
+first: **one deferred apply is enough and it sticks** (cell C rotated once on the first frame after
+painting and stayed rotated; cell D, applied in the constructor, never moved), so the plot rotates
+each segment once per data change rather than every frame; the author's scaling sequence scales
+(cell A); and a scaled image still rotates (cell B) even though scaling ends in a `SetSize` that
+clears the rotation, because the rotation comes later on its own frame.
+
+**The finding that decides the design: the control's rect never rotates -- the IMAGE is rotated and
+then FITTED to the rect.** Cell E's 64x16 wedge at 90 came back still 64x16 with its content
+reoriented, not 16x64. Cells F, G and H confirm the consequence: a 64x2 control carrying a uniform
+white bar shows nothing at any angle, because a rotated white rectangle refitted into a 64x2 slot is
+still a 64x2 white bar. **So a thin control can never draw a diagonal, and Option B as written in
+`GRAPH_RESEARCH.md` is dead.**
+
+**Round six is the design rotate-then-fit hands back instead, and it is better than the atlas Option
+C proposed: make the segment's control SQUARE, with its side equal to the segment's LENGTH.** A
+square rect makes the fit a uniform scale, so a rotated line stays a straight line at exactly the
+angle asked for -- no shear, no slope quantisation, no atlas. `Resources/stroke.tga` is a 64x64
+sprite with a full-width band through its centre, transparent elsewhere; rotated to the segment's
+angle and scaled to an L x L control centred on the segment's midpoint, the band runs from one data
+point to the other and stops. Its ends sit half a width from the centre, well inside the square's
+half-diagonal, so nothing is cropped at any angle, and the transparency means neighbouring squares
+can overlap freely -- which they must, since each is as wide as its segment is long. The five cells
+check that a segment joins its two dots, the shallow and steep extremes, the stroke-width spread
+across segment lengths (the band is 3/64 of the length, so a longer segment draws thicker -- if the
+spread is too visible the fix is a few sprites at different band ratios chosen by length, not a
+different mechanism), that overlapping squares compose, and a real 12-point series as the
+acceptance test.
 
 Three things to carry into the rework itself. **The failure signature**: a plot of long flat bars
-punched through the data is what an unrotated steep segment looks like (its unrotated rect is its
-full diagonal length) -- distinctive, and not to be confused with "the graph is blank" (which was
-the `graphHolder` sizing bug above), but **not by itself a diagnosis**: no rotation, a rotation the
-engine ignores and an image that never rendered all look the same. **The order of operations for a
-segment is now fixed and non-negotiable**: size to the image, `SetBackground`, `SetStretchMode(1)`,
-size to the target, tint, position -- and `SetRotation` last of all, on a later frame than the one
-that sized it. And
+punched through the data is what a segment drawn in a thin, unrotated rect looks like -- and it is
+**not by itself a diagnosis**: no rotation, a rotation the engine ignores, an image that never
+rendered, and rotate-then-fit inside a thin rect all produce it. Do not confuse it with "the graph
+is blank" either (that was the `graphHolder` sizing bug above). **The order of operations for a
+segment is now fixed and non-negotiable**: size to the image, `SetBackground`,
+`SetStretchMode(1)`, size to the target (square, side = the segment's length), tint, position --
+and `SetRotation` last of all, on a **later frame** than the one that sized it, once. And
 **the invariant that makes the whole "rotation does not survive X" bug class impossible**:
 `Redraw()` re-specifies every visible segment completely -- size, colour, position, rotation last
 -- so nothing may touch a segment outside its draw function. `tools/offline/stub.lua` now enforces
@@ -904,7 +923,7 @@ inheritance + mixins). Treat them as vendored, not Reckoning-specific.
 | `UI/Bar.lua` | `Bar` -- 1px-border track Control with a fill child; `SetPercent(pct)` sets width directly (no tweening anywhere, per `docs/DESIGN.md`). |
 | `UI/Row.lua` | `Row` -- a fixed-column-offset row of Labels for tables; pooled and reused across refreshes, never rebuilt per redraw. |
 | `UI/RangeSlider.lua` | `RangeSlider` -- the two-handle time-range control under the plot. Snaps to the graph's 48 bucket stops, not to pixels, so the numbers in the window and the marks on the plot agree exactly and only 48 distinct ranges per endpoint can ever be asked for. Drag uses the same MouseDown/MouseMove/MouseUp shape as `Frame:WireDrag` and the resize gripper -- confirmed-working precedent, no new assumption about mouse delivery. Handles clamp to `other handle -/+ 1`; a zero-width range would divide by zero everywhere downstream. |
-| `UI/RotationProbe.lua` | `RotationProbe` (extends `Frame`) -- the `/reck probe` diagnostic window (round 5), and the only thing in this codebase that calls `SetRotation`. Nothing imports it but `UI/__init__.lua`; it exists to answer the questions the line-graph rework depends on and is meant to be **deleted once they are answered** (`docs/redesign/GRAPH_RESEARCH.md` section 7 holds the answer table) -- along with the `windows.probe` entry it leaves behind in saved settings, since it takes a `Frame` key like any other window. |
+| `UI/RotationProbe.lua` | `RotationProbe` (extends `Frame`) -- the `/reck probe` diagnostic window (round 6), and the only thing in this codebase that calls `SetRotation`. Nothing imports it but `UI/__init__.lua`; it exists to answer the questions the line-graph rework depends on and is meant to be **deleted once they are answered** (`docs/redesign/GRAPH_RESEARCH.md` section 7 holds the answer table) -- along with the `windows.probe` entry it leaves behind in saved settings, since it takes a `Frame` key like any other window. |
 
 `UI/__init__.lua` imports Frame/Bar/Row in that order; `Main.lua` does `import "Reckoning.UI"`
 once. **Cross-directory class visibility**: a bare `X = class(...)` assigned inside `UI/*.lua`
@@ -1182,7 +1201,7 @@ Follow the `VitalSelf` pattern: `Turbine.PluginData.Save(Turbine.DataScope.Chara
 ## Testing
 
 **Run `sh tools/offline/run.sh` before every in-game load** (needs `lua5.1`; see
-`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 748
+`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 749
 checks against the real classes and the real `Main.lua`. It is not a substitute for loading the
 plugin -- it cannot tell you whether anything actually *draws* -- but everything it catches is a
 reload you don't have to spend.

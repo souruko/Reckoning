@@ -297,40 +297,65 @@ mode had no native-sized control to scale from. (`Icon.Size` in `Constants.lua` 
 the same ordering quirk from the other direction, using `SetStretchMode(2)` to snap a control to
 its image's native size so it can read it back.)
 
-### Round five -- what the implementation still needs to know
+### Round five -- the mechanism, completely
+
+- **One deferred apply is enough and it sticks.** Cell C rotated a wedge once, on the first frame
+  after it had painted, and it stayed rotated for the whole session; cell D, applied in the
+  constructor, never moved. So the plot rotates each segment **once per data change**, not every
+  frame -- the cost question is settled in the cheap direction.
+- **The author's scaling sequence works.** Cell A's lens scaled 16 -> 48 as one big glyph, next to
+  a reference that tiled because it was sized before its background was set.
+- **A scaled image still rotates** (cell B), even though scaling ends in a `SetSize` that clears
+  the rotation -- because the rotation comes later, on its own frame.
+
+**And the finding that decides the design: the control's rect never rotates. The IMAGE is rotated
+and then FITTED to the rect.** Cell E's 64x16 wedge at 90 came back still 64x16 with its content
+reoriented -- not 16x64. Cells F, G and H confirm the consequence: a 64x2 control carrying a
+uniform white bar shows nothing at any angle, because a rotated white rectangle refitted into a
+64x2 slot is still a 64x2 white bar. The polyline was flat bars again.
+
+**So Option B as written in section 3 is dead.** A thin control cannot draw a diagonal, whatever
+angle it is given.
+
+### Round six -- square controls, which rotate-then-fit makes work
+
+Rotate-then-fit hands back something better than Option C's slope atlas:
+
+> **Make the segment's control SQUARE, with its side equal to the segment's LENGTH.**
+
+A square rect makes the fit a uniform scale, so a rotated line stays a straight line at exactly the
+angle asked for -- no shear, no slope quantisation, no atlas. `stroke.tga` is a 64x64 sprite with a
+full-width band through its centre and transparent elsewhere; rotated to the segment's angle and
+scaled to an L x L control centred on the segment's midpoint, the band runs from one data point to
+the other and stops. The band's ends sit half a width from the centre, well inside the square's
+half-diagonal, so nothing is cropped at any angle, and the transparent region means neighbouring
+squares can overlap freely.
 
 | Cell | Subject | Reads as |
 | --- | --- | --- |
-| A | 16x16 lens scaled to 48x48 by the author's sequence, no rotation | one big lens = it scales; a 3x3 grid = still tiling |
-| B | the same, rotated @45 every tick | scaling ends in a `SetSize`, which clears rotation |
-| C | wedge @90, rotation applied **once** after the first paint | does one apply stick? |
-| D | wedge @90, applied **in the constructor** | the known-bad control, for contrast |
-| E | a **64x16** wedge @90 | must become 16x64, i.e. draw well OUTSIDE its own rect |
-| F, G | a 64x2 stroke @90 and @45 | the shape the plot actually draws |
-| H | a real 8-point polyline | if this reads as a line, the rework is a mechanical port |
+| A | one segment @45, with a dot on each endpoint | a line that turns but misses its dots is a different bug from one that does not turn |
+| B | a near-flat and a near-vertical segment | the two extremes real combat data produces |
+| C | segments of length 24 / 44 / 64 | stroke is 3/64 of the length -- how visible is the spread? |
+| D | three overlapping segments | the squares overlap by design; does the sprite's transparency hold? |
+| E | a real 12-point series | **the acceptance test** -- if this reads as a line graph, the rework is a port |
 
-**C vs D is the cost question.** If one apply after the first paint sticks, the plot rotates each
-segment once per data change and forgets about it. If rotation has to be re-applied every frame,
-that is 94 `SetRotation` calls per frame, which is a different feature entirely.
-
-**E is the correctness question.** Every subject that has rotated so far was **square**, and a
-square's rotation fits inside its own bounds -- so nothing yet establishes that a rotated draw is
-not clipped to the control itself. A 2px-tall segment has to draw far outside its rect or it cannot
-be a diagonal at all.
+If C's spread is too visible, the fix is a handful of sprites at different band ratios chosen by
+length -- not a different mechanism.
 
 ### Answers
 
 | Question | Answer |
 | --- | --- |
 | `SetRotation` on `Turbine.UI.Control` | **ABSENT** -- the call throws |
-| `SetRotation` on `Turbine.UI.Window` | **present and working** |
-| Rotation applied before the first paint | **silently dropped** -- round 4, E vs F |
-| Arbitrary angles | **yes** -- round 4, G rotated at 45 |
+| `SetRotation` on `Turbine.UI.Window` | **present and working**, at arbitrary angles |
+| Rotation applied before the first paint | **silently dropped** |
+| One apply on a later frame | **enough, and it sticks** |
+| The control's rect rotates | **no -- the IMAGE rotates and is FITTED to the rect** |
+| Therefore a thin control can draw a diagonal | **no** -- Option B is dead |
 | Scaling an image | `SetSize(native)` -> `SetBackground` -> `SetStretchMode(1)` -> `SetSize(target)` |
-| Size set before background | every stretch mode **tiles** -- rounds 1-4's mistake |
-| A native-size image renders | **yes** |
+| Size set before background | every stretch mode **tiles** |
 | `SetBackColorBlendMode(Overlay)` + `SetBackColor` tints an image | **yes** |
-| Clipping | **Controls clip to their parent, Windows do not** -- author |
-| One deferred apply is enough (round 5, C vs D) | |
-| A rotated draw escapes the control's rect (round 5, E-G) | |
-| Positive z turns (cw / ccw) -> `ROT_SIGN` | |
+| Clipping | **Controls clip to their parent, Windows do not** |
+| A square control + full-width stroke sprite draws a true diagonal (round 6) | |
+| Stroke-width spread across segment lengths (round 6, C) | |
+| Sprite transparency composes across overlapping squares (round 6, D) | |
