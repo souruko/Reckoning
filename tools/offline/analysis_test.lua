@@ -1077,5 +1077,70 @@ check("a stray rotation on the window itself is scrubbed by the pass",
   w:GetRotation() ~= nil and w:GetRotation().z == 0,
   tostring(w:GetRotation() and w:GetRotation().z))
 
+-- 20. Switching sessions off the rail: every segment on screen must carry the angle it was DRAWN
+-- for, not merely some angle. Section 19 checks that a revealed segment is rotated at all, which a
+-- STALE rotation passes -- and a stale one is the shape a session switch could produce, since
+-- DrawSegment deliberately leaves an unchanged segment untouched and the pass only rotates what is
+-- shown and visible. Two real fights of different durations, so the bucket count differs and
+-- essentially every segment moves.
+Turbine.Engine._time = clock + 600
+clock = clock + 600
+Feed(ROOT .. "/reference/Enemy_20260819_2.txt", Turbine.ChatType.EnemyCombat)
+local second = Sessions.current
+Sessions.Close()
+check("a second fight archived to switch between", second ~= nil and second ~= session)
+
+local function Frames(n) for _ = 1, (n or 12) do w:Update() end end
+
+-- Returns visible / rotation-missing / rotation-stale counts over the whole segment pool.
+local function AuditAngles()
+  local visible, missing, stale = 0, 0, 0
+  for slot = 1, 2 do
+    local pool = w.graph.seg[slot]
+    for i = 1, #pool do
+      local seg = pool[i]
+      if seg:IsVisible() then
+        visible = visible + 1
+        local applied = seg:GetRotation()
+        if applied == nil then
+          missing = missing + 1
+        elseif math.abs(applied.z - (seg.rotation.z or 0)) > 0.001 then
+          stale = stale + 1
+        end
+      end
+    end
+  end
+  return visible, missing, stale
+end
+
+local function CheckAngles(label)
+  local visible, missing, stale = AuditAngles()
+  check("session switch: " .. label .. " -- the line is on screen", visible > 0, tostring(visible))
+  check("session switch: " .. label .. " -- every segment carries its own angle",
+    missing == 0 and stale == 0, missing .. " unrotated, " .. stale .. " stale")
+end
+
+w:SetVisible(true)
+w:SelectSession(session); Frames()
+CheckAngles("first session")
+
+w:SelectSession(second); Frames()
+CheckAngles("after switching")
+
+w:SelectSession(session); Frames()
+CheckAngles("after switching back")
+
+-- A switch landing mid-pass, which is what a second click on the rail before the first has settled
+-- produces. The re-arm has to start the reveal/rotate sequence over rather than leave the segments
+-- it already revealed carrying the previous fight's angles.
+w:SelectSession(second); w:Update(); w:Update()
+w:SelectSession(session); Frames()
+CheckAngles("switch landing mid-pass")
+
+-- A view change on top of a session change brings the second series' pool onto the plot for the
+-- first time -- the case the reveal-before-rotate order was written for.
+w:SelectSession(second); w:SelectView("taken"); Frames()
+CheckAngles("session and view together")
+
 print("")
 if fails == 0 then print("ALL ANALYSIS CHECKS PASSED") else print(fails .. " CHECK(S) FAILED"); os.exit(1) end

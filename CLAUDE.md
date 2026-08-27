@@ -66,7 +66,7 @@ the player-facing version and `REDESIGN_SPEC.md` for the spec each piece came fr
 **There is now a real offline test suite: `tools/offline/`.** Unlike the original scratch harness
 (described below), it runs the **real** classes and the **real** `Main.lua` under a **real Lua
 5.1** interpreter against a `Turbine` stub built on this repo's own `class()` shim. `sh
-tools/offline/run.sh` runs 758 checks in about a second. It caught three genuine bugs during the
+tools/offline/run.sh` runs 800 checks in about a second. It caught three genuine bugs during the
 redesign that `luac -p` could not have: an index-base probe that could not actually distinguish a
 0-based from a 1-based `EffectList`, a `nil` layout constant reaching `SetPosition`, and the
 analysis window failing to adopt an already-archived session. It caught three more during the
@@ -1166,8 +1166,31 @@ Follow the `VitalSelf` pattern: `Turbine.PluginData.Save(Turbine.DataScope.Chara
 
 ## Testing
 
+**A resource path that does not resolve is completely silent, and it is the first thing to rule out
+when something "draws wrong" rather than throws.** `SetBackground("Basil/Resources/x.tga")` on a
+path the client cannot resolve does not error into chat -- it writes one line to
+`<Documents>/The Lord of the Rings Online/Script.log`:
+
+```
+...\Plugins\Basil\UI\AnalysisGraph.lua:1028: Failed to load background image.
+```
+
+and leaves an empty control behind. That file is the ONLY place this surfaces, it is never shown
+in-game, and it is worth reading after any load that looks wrong -- it is the closest thing to a
+log this environment has for the whole class of "the call succeeded and drew nothing."
+
+This bit for real during the **Reckoning -> Basil rename**: the Lua was updated to say
+`"Basil/Resources/..."` while the installed folder was still named `Reckoning`, so **every** image
+in the plugin failed to load at once. The visible symptom was reported as the analysis window's
+line graph being drawn wrong, because the stroke sprites are exactly what a segment rotates -- a
+missing file there reads as a graph bug, not a missing file, and sends you straight back into the
+rotation code. `tools/offline/resources_test.lua` now pins the pair (every referenced `.tga` exists,
+under a prefix derived from the `.plugin`'s own `<Package>`), so the next rename cannot half-happen.
+**The general shape: when a rendering change "does not work", check `Script.log` and the resource
+paths BEFORE adding another round to whichever rendering saga you are in.**
+
 **Run `sh tools/offline/run.sh` before every in-game load** (needs `lua5.1`; see
-`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 758
+`tools/offline/README.md`). It parses every file with the game's own Lua version and runs 800
 checks against the real classes and the real `Main.lua`. It is not a substitute for loading the
 plugin -- it cannot tell you whether anything actually *draws* -- but everything it catches is a
 reload you don't have to spend.
