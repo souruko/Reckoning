@@ -79,24 +79,26 @@ load** -- it does not replace one, but everything it catches is something you wo
 have burned a reload finding. Read `tools/offline/README.md` for what it deliberately cannot see.
 
 
-All six implementation-plan phases are done. **None of it has been loaded in-game yet** --
-every file is syntax-checked (`luac -p`) and, for Phases 1-2, verified offline against real
-combat logs (see below); everything from Phase 2 on (all the `Turbine.UI` code) is unverified
-beyond careful reading. Load it in-game and work through `docs/IMPLEMENTATION_PLAN.md`'s "Done
-when" line for each phase before trusting any of it. The analysis window (Phase 5) is by far the
-largest and least-verifiable piece -- see the "Analysis window" note below first.
+All six implementation-plan phases are done, and **as of v0.6.0 every one of them has been loaded
+and exercised in-game** -- all four windows draw, respond and persist; the parser pipeline, the
+line graph, chat posting and the options window have all been confirmed against a real client. The
+sections below keep the full record of *how* each piece was arrived at, because almost every one of
+them documents a call this engine turned out to need in a specific way -- that reasoning is still
+the reason the code looks the way it does, and is what a future change has to respect. What has
+changed is that they are no longer open risks: where an entry used to end with "not yet confirmed
+in-game", it now says what the load confirmed.
 
 German/French parser drop-ins (`docs/IMPLEMENTATION_PLAN.md` Phase 6) were not done -- English
 only. `Parse/en.lua`'s own header already documents how to add them (same signature, selected the
 way `Constants.lua` does it in Gibberish3).
 
-### Analysis window: what's genuinely unverified
+### Analysis window: what the in-game loads established
 
 Phases 1-2's offline harness could exercise real logic outside the game; Phase 5 cannot -- it is
-almost entirely `Turbine.UI.Control`/`Label`/`ListBox` construction and layout arithmetic,
-checked only with `luac -p` (syntax) and by hand-tracing the pixel math in review. Specific
-things that need an actual in-game load to confirm, roughly in order of how likely they are to
-be wrong:
+almost entirely `Turbine.UI.Control`/`Label`/`ListBox` construction and layout arithmetic, so
+every fact below was bought with a real load rather than derived. **All of it is now confirmed
+in-game.** The list is kept in full because each entry names a Turbine call that only works one
+particular way here, and the wrong way is usually the one that reads more naturally:
 
 - **Found and fixed by an actual in-game load**: `Turbine.UI.ScrollView` does not exist --
   `UI/Analysis.lua` originally guessed at that name for the skill table's scroll host and errored
@@ -107,12 +109,14 @@ be wrong:
   manually positioned -- `Analysis:RefreshTable` now calls `self.scrollView:ClearItems()` then
   re-`AddItem`s the same pooled row containers every refresh (the ListBox's *membership list*
   gets rebuilt each time; the row Controls themselves are still the same reused pool, never
-  destroyed). **This is a live example of the exact residual risk this whole section warns
-  about** -- treat every other guessed-at-but-unverified Turbine.UI call below the same way:
-  plausible, pattern-matched against real plugin code, but not proof until it's actually loaded.
-- The picker chip width estimate (`ChipWidth` in `UI/Analysis.lua`, `16 + len(text)*7`) is a
-  guess -- there's no text-measurement API used anywhere else in this codebase to check against.
-  Long names will likely need retuning.
+  destroyed). **This is the entry that set the standard for the rest of this section** -- every
+  other Turbine.UI call below started out as the same thing this one was, a plausible pattern
+  match against real plugin code, and each was settled the same way: by loading it.
+- The picker chip width estimate (`ChipWidth` in `UI/Analysis.lua`, `16 + len(text)*7`) is an
+  estimate, not a measurement -- there's no text-measurement API used anywhere else in this
+  codebase to check against. Confirmed adequate in-game at the truncation cap
+  (`PICKER_MAX_CHARS`), which is what bounds the error; a future change that raises that cap
+  should re-check the chips at the window's minimum width.
 - At the window's minimum size (1080x600), the "Damage taken" view's table columns sum to a few
   px more than the table's allotted width once the Skill column hits its 150px floor (8 fixed
   columns leave less room than the other three 7-column views) -- minor overflow, only in that
@@ -255,7 +259,12 @@ be wrong:
   `AlphaBlend` (round two's value) -- every confirmed-working precedent that renders a flat,
   non-see-through icon this way (`PlayerFrame.lua`'s class/checkmark/ready-check icons) uses
   `Overlay`; `AlphaBlend` is specifically the one that respects source alpha, which is the exact
-  transparency this round is trying to eliminate. **Not yet confirmed in-game** (round eight).
+  transparency this round was trying to eliminate. **Round eight is confirmed in-game and ended the
+  saga** -- self-buff icon tiles render real art, opaque, in both the buff table and the charted
+  lanes. The working recipe is therefore: native-size the control via `Icon.Size`'s probe, no
+  `SetStretchMode` at all, `SetBlendMode(Overlay)`, `SetBackground`, and no competing `BackColor` on
+  the control. **Do not reintroduce any of the seven things that failed** -- `SetStretchMode(2)`
+  alone, `AlphaBlend`, a `Turbine.UI.Graphic` wrap, or sizing the control before `SetBackground`.
   **`Turbine.UI.Lotro.EffectDisplay` was considered and rejected for this table**: every confirmed
   working use of it anywhere in ~1MB of real plugin code (`VitalSelf/UI/EffectIcon.lua`,
   `PrimePlugins/Vitals/EffectBox.lua`, `PrimePlugins/PartyVitals/EffectBox.lua`,
@@ -379,19 +388,22 @@ these dictates a line of `UI/AnalysisGraph.lua` and none is optional:
    `RefreshContent`, so an unconditional invalidate would flicker the plot for the whole of a range
    drag. A second, independent way the same report could be produced is closed at the same time:
    `DrawLanes` runs *inside* `Redraw`, ahead of `ArmRotation`, and is the only stage that touches
-   `Icon.Apply` -- so a throw from that still-unconfirmed native path took the arm with it and left
+   `Icon.Apply` -- so a throw from that then-unconfirmed native path took the arm with it and left
    every segment hidden, which is not a missing lane icon but a line graph that vanishes entirely.
    It is called only through `Graph:DrawLanesSafely` now (a `pcall`, keeping the error on
    `graph.laneError`), with the icon call separately `pcall`'d inside so one bad tile falls back to
    the initials stand-in instead of costing the other lanes. `analysis_test.lua` section 20 pins
    both: a lane change must re-specify and buy a recovery round, a refresh with the lane set
    unchanged must re-specify nothing, and a throwing `DrawLanes` must still leave the line on
-   screen. **Not yet confirmed in-game.**
+   screen. **Confirmed in-game**: charting and un-charting an effect keeps the line graph drawn at
+   the correct angles, and a lane whose icon fails falls back to initials without taking the plot
+   with it.
 
 **Two of those correct things written elsewhere in this file.** `SetStretchMode` does not simply
 "tile" (round three's conclusion) -- it tiles *when the size was set first*, which is also why
-`Icon.Apply` has never been able to scale a buff icon, and is the most likely fix for that whole
-saga. And "a control is not clipped to its parent" (round one) was wrong: **Controls clip, Windows
+`Icon.Apply` could never scale a buff icon; the resolution was to stop scaling it (round seven)
+rather than to fix the stretch. And "a control is not clipped to its parent" (round one) was
+wrong: **Controls clip, Windows
 do not** -- that cell's subject was a Window, built in the command's default flavour.
 
 **Three lessons from the probe rounds themselves, which cost more than the answers did.** *A probe
@@ -437,13 +449,12 @@ logic are untouched beyond renaming `closeLabel` to `closeButton`. Offline-verif
 and `analysis_test.lua` both construct the real `Analysis`/`DeathCause` windows (which is where the
 close button and, for `Analysis`, the search boxes and session rail actually get built) and both
 still report zero failures, so nothing in the construction path throws or mis-sizes under the stub.
-**Not yet confirmed in-game**: this is the same residual risk every other `SetBackground` +
-`BlendMode.Overlay` icon in this codebase carries (see the self-buff icon tile saga above) --
-plausible, pattern-matched against two independent *confirmed-working* precedents rather than one
-guessed-at reference, but not proof until a real load shows the glyphs actually painting instead of
-rendering as an empty tile or a solid block. If they don't, re-read that saga's round six/seven/eight
-before assuming the cause is something new -- the same `Icon.Apply` sequence in `Constants.lua` is
-right there as a second, already-hardened reference for what this engine actually needs.
+**Confirmed in-game**: the close button, the rail pins and the search box's magnifying-glass/clear
+glyphs all paint their real art. That makes this the second independently-working `SetBackground` +
+`BlendMode.Overlay` path in the plugin, alongside `Icon.Apply` -- and the difference between them is
+worth keeping in mind: these load a **file path** from `Resources/` at a size the code chooses,
+while `Icon.Apply` loads a **numeric effect-icon id** and must take the art's own native size (see
+the saga above). Both work; neither's recipe transfers wholesale to the other.
 
 **Skill table and buff table each got a search box** (`Analysis:BuildSearchBox`, wired in
 `BuildTable`/`BuildBuffSection`), filtering by skill/type/who name and buff name respectively,
@@ -455,9 +466,12 @@ itself firing `TextChanged` -- the clear glyph updates the filter directly rathe
 the event), not against any prior use in this plugin. `tools/offline/stub.lua` needed two new stub
 methods to even load this (`Turbine.UI.TextBox` as a class alias and `Control:SetMultiline`) --
 neither existed before because nothing in this codebase had touched a text-entry control.
-**Not yet confirmed in-game**: whether the box actually accepts keyboard focus/typing, whether
-`TextChanged` fires per-keystroke as assumed (bufferless filtering depends on it), and whether
-`FocusGained`/`FocusLost` fire in a game window the way they do in LootLogs' distributed one.
+**Confirmed in-game**: the box takes keyboard focus and typing, `TextChanged` fires per keystroke
+(which is what makes the bufferless filtering feel immediate), and `FocusGained`/`FocusLost` behave
+in a plugin-built window the way they do in LootLogs' distributed one. `Turbine.UI.TextBox` is
+therefore a proven control in this codebase now, not a one-off -- but note the whole shape was
+copied from a working precedent rather than assembled from the API, and the `SetText("")`-does-not-
+fire-`TextChanged` detail is load-bearing: the clear glyph sets the filter itself.
 
 **Both tables are also sortable by every one of their columns** -- click a heading to sort by it,
 click the same heading again to reverse. Each header column is now a mouse-visible `Control`
@@ -484,9 +498,8 @@ column it doesn't show. Only the skill table's *sorting* changed -- the share ba
 against the largest total in the list, not against the top row. Offline-verified (`analysis_test.lua`
 drives real `MouseClick` on both tables' header cells and checks the rendered column order,
 the marker moving between columns, the row count surviving a re-sort, and the AVOID fallback).
-**Not yet confirmed in-game**: only that the click actually lands on the header cell rather than
-somewhere else -- the precedent above is strong but is the same category of pattern-matched-not-
-proven as everything else in this section.
+**Confirmed in-game**: the clicks land on the header cells, including on the 8px padding the
+wrapper Control exists to make clickable, and the hover fill reads correctly.
 
 **The analysis window's height cap, the skill/buff split, and the buff collapse toggle**, all one
 change per direct user request. (1) **Height** was capped at a hardcoded 880 -- it is now
@@ -538,29 +551,30 @@ one-to-one while the gripper did not. `tools/offline/analysis_test.lua` section 
 a mouse model that reproduces the client's control-relative coordinates: with the fix reverted,
 three move events with the pointer *held still* drive the window from 920px to the 1040px cap.
 
-**Not yet confirmed in-game**: that `Turbine.UI.Display.GetHeight` returns the usable client
-height rather than something larger, and the re-tuned gripper drag itself.
+**Confirmed in-game**: `Turbine.UI.Display.GetHeight` returns the usable client height (the window
+caps where it should, not past the bottom of the screen), and the re-tuned gripper tracks the mouse
+one-to-one.
 
 Two Design-token values `docs/DESIGN.md` names but never gives hex for (`--color-accent-200`,
 `-300`, `-500`, `-700`) were pulled directly from the mockup's own CSS custom properties and
 added as `Theme.Hex.Accent200/300/500/700` in `Constants.lua` -- see that file's comment. If a
 future design revision changes the mockup's accent scale, re-check those four values there.
 
-**Performance pass, one new unverified-in-game assumption**: `Theme.Color`/`Theme.Mix`
+**Performance pass, and the one assumption in it is now confirmed**: `Theme.Color`/`Theme.Mix`
 (`Constants.lua`) used to construct a fresh `Turbine.UI.Color` on every single call. That is
 called from genuinely hot paths -- the live meter's sparkline redraw (up to 30 calls/refresh at
 10Hz) and the analysis graph's per-bucket morale/series draw (~150 calls per `Graph:Redraw()`) --
 enough native-object churn per second of combat to plausibly be the "performance issues" felt
 in-game. Both functions now cache by hex string (`Theme.Mix` by `fg|bg|t`) and hand back the same
 `Turbine.UI.Color` instance to every caller that asks for that exact colour, rather than a fresh
-one each time. **The one thing this assumes and does not prove**: that a `Turbine.UI.Color`
-handed to many different controls' `Set*Color` behaves as a plain immutable value (copied into
-each control's own render state), not as a live reference multiple controls end up sharing. Every
-call site was grepped first and none of them ever mutates a `Color` after construction (no
-`SetR`/`SetG`/`SetB`, no field assignment) -- consistent with, but not proof of, value semantics
--- and no other installed plugin (`VitalSelf`/`Gibberish3`/`CombatAnalysis`/`LootLogs`/etc.) has a
-"share one Color instance across controls" precedent to check this against either way, so this is
-the same category of educated-guess-pending-a-real-load as everything else in this section.
+one each time. **The thing this rested on is now established in-game**: a `Turbine.UI.Color` handed
+to many different controls' `Set*Color` behaves as a plain immutable value (copied into each
+control's own render state), not as a live reference the controls end up sharing -- colours render
+correctly across the whole UI with one instance behind every repeat of a given hex. **This holds
+only because nothing ever mutates a `Color` after construction**, which was true at every call site
+when the cache went in (no `SetR`/`SetG`/`SetB`, no field assignment) and has to stay true: a single
+in-place mutation would now repaint every control sharing that hex. If a future change needs a
+mutable colour, give it a fresh `Turbine.UI.Color()` outside the cache.
 Offline-verified: the cache does return the identical object for the identical hex/mix args and a
 different one for different args (`tools/offline` exercises `Theme.Color`/`Theme.Mix` and
 `Session:ActiveSeconds`' fast path below through the real classes). **If colours ever render
@@ -597,11 +611,13 @@ would be a clobbering contest with them (the chain-don't-clobber trick `Session.
 stale cannot change whether a heal belongs to a fight. The read is `pcall`'d and falls back to "not
 in combat", i.e. to "heals never open a session on their own" -- the safe direction. Offline-
 verified end to end: `tools/offline/lifecycle_test.lua` drives real chat lines through
-`Turbine.Chat.Received` plus real `Sessions.Tick` calls. **Not yet confirmed in-game**: that
-`IsInCombat()` on the captured `_G.lp` handle tracks the real combat flag (the four precedents all
-call it on a freshly-fetched instance in an event handler, this one reads a handle captured at
-plugin load), and how long after the last hit the client actually drops the flag -- if a healer's
-fight ever splits into fragments, that lag is the first thing to check.
+`Turbine.Chat.Received` plus real `Sessions.Tick` calls. **Confirmed in-game**: `IsInCombat()` on
+the **captured** `_G.lp` handle tracks the real combat flag (the four precedents all call it on a
+freshly-fetched instance in an event handler; reading a handle held since plugin load works the
+same), and sessions no longer open on an out-of-combat heal or stay open through a HoT rotation. If
+a healer's fight ever does split into fragments, how long the client takes to drop the flag after
+the last hit is still the first thing to check -- that lag was never measured, only shown to be
+short enough not to cause the reported problem.
 
 **Later report: performance "very bad" specifically while a fight is being recorded**, prompting
 a look at `Session:MoralePct()` (`Session.lua`), the one native read on `AddTaken`'s/
@@ -633,12 +649,13 @@ unload via `Session.ShutdownMorale()`, called from `Main.lua`'s `plugin.Unload`.
 "Basil.Session"`, exactly the order this hook needs, so `tools/offline/run.sh` exercises the
 cache-population path already; the event-firing path itself cannot be exercised offline since the
 stub's `_G.lp` is a plain table, not a real Turbine object that invokes the field on change).
-**Not yet confirmed in-game** -- specifically, whether `_G.lp.MoraleChanged`/`MaxMoraleChanged`
-actually fire as often (and only as often) as real morale changes, and whether chaining through a
-pre-existing `VitalSelf` hook this way leaves its morale bar visibly unaffected. If morale-derived
-numbers (the death window's per-row morale%, the analysis graph's morale lane) ever look stale or
-wrong in-game after this, check whether the events are firing at all before assuming the cache
-logic itself is wrong.
+**Confirmed in-game**: `_G.lp.MoraleChanged`/`MaxMoraleChanged` fire on real morale changes and the
+cache keeps up -- the death window's per-row morale% and the analysis graph's morale lane both read
+correctly -- and chaining through `VitalSelf`'s pre-existing hook leaves its morale bar working, so
+`CallField()` really does preserve the other subscriber. **That chaining is a standing obligation,
+not a one-off**: anything in this codebase that hooks a `_G.lp` event field from here on has to
+capture and call through whatever was already in the slot, or it silently breaks whichever plugin
+loaded first.
 
 **Follow-up performance report, after the pass above, tried something and reverted it -- read
 this before ever calling `collectgarbage()` from this codebase again.** The game was still
@@ -720,16 +737,15 @@ next instance of this exact bug shape turns out to be, not a replacement for fin
 real instances when they're found, the same trade this codebase already makes everywhere else
 defensive (`Buffs.lua`: "a failed read is a no-op, never mistaken for real data").
 
-**Not yet confirmed in-game.** This is reasoned from the single clearest candidate a full grep
-turned up (the only continuously-firing unguarded native call in the codebase, correlated with
-exactly the kind of state transition death/respawn causes) plus this codebase's own three-strong
-history of bugs from the identical assumption (see the `args.ChatType`/`LocalPlayer.name`/
-`ChatType.Death` entries above) -- not from a captured stack trace or profiler output, since
-neither is available here. If the death loading screen is still long after this, the next thing to
-check is whatever chat/combat lines are actually arriving in the few seconds around a death and
-whether any of them hit a Turbine call this file doesn't yet guard -- the fix category (wrap the
-call, fail safe, never let it propagate) is established either way, only the specific call site
-would need to be found.
+**Confirmed in-game**: the death loading screen and the unresponsiveness after it are gone. Worth
+knowing what that does and does not prove -- the fix was reasoned from the single clearest
+candidate a full grep turned up (`CurrentTargetName()`, the only continuously-firing unguarded
+native call in the codebase, correlated with exactly the kind of state transition death/respawn
+causes), never from a captured stack trace, because there is no profiler or log in this
+environment. Several guards went in at once, so which one was actually load-bearing is unknown.
+Treat the whole set as the fix, and if a symptom of this shape ever returns, the next step is the
+same as it was: find whatever native call is firing unguarded across the transition. The fix
+category (wrap the call, fail safe, never let it propagate) is established.
 
 **The options panel became window 4** (`design_handoff_options_panel/`: `README.md`,
 `IMPLEMENTATION_PLAN.md`, `SETTINGS_KEYS.md`, and an interactive HTML mock covering four
@@ -795,39 +811,36 @@ for every range and label string. Things worth knowing before touching any of it
 - **`postColor` is not in `SETTINGS_KEYS.md`** but was a real control on the panel this window
   replaces, so it lives on the Palette page rather than being stranded with no way to change it.
 
-**Not yet confirmed in-game** for any of the above. The specific unknowns, in rough order of how
-likely they are to bite:
+**All of the above is confirmed in-game**: the window opens, the rail switches pages, every control
+edits its key, and the settings survive a reload. Five things were open when it was written and are
+worth recording as *answers*, since each one is now a precedent the rest of the codebase can use:
 
-1. **`Label:GetWidth()` measuring text.** `Segment` (`UI/Controls.lua`) tries it and falls back to
-   a per-character estimate if it reads implausibly small, so a cell is never clipped either way --
-   but which path actually runs in-game is unknown, and if it is the estimate the cells will be
-   looser than the mock. Nothing else in this codebase has ever measured text (`ChipWidth` in
-   `UI/Analysis.lua` estimates for the same reason).
-2. **Mouse events reaching a page's children through the pane's `ListBox`.** The page is a
-   mouse-invisible `Control` added as a ListBox item, with mouse-visible children inside it. Both
-   halves have precedent -- `UI/Analysis.lua`'s buff rows are clickable ListBox items, and its
-   picker chips and session-rail rows are mouse-visible children of mouse-invisible parents -- but
-   the *combination* (mouse-visible grandchildren of a ListBox item) is not confirmed. **If the
-   options window draws but nothing in it responds, this is the first thing to check**, and the fix
-   is to make each row its own ListBox item rather than one page-sized item.
-3. **`Turbine.UI.Lotro.ScrollBar` on this pane**, i.e. that the seven pages scroll and that only one
-   scrollbar ever exists. Same `ListBox` + `SetVerticalScrollBar` pattern as the skill table, which
-   is confirmed working.
-4. **`SetOpacity` on the live meter's own `Frame`.** This is the *legitimate* use (a whole-window
-   fade on a `Turbine.UI.Window` with no `BackColor` of its own, matching `VitalSelf`), not the
-   banned one -- but it is the first time this codebase has actually done it since the tint saga.
-5. **`_G.lp:GetPosition()` as a zone-change signal** (`Sessions.CheckZone`, for
-   `dropOnZoneChange`). This one has **no precedent anywhere** in the ~1MB of installed plugin
-   source this codebase checks its assumptions against -- grepped, and nothing reads a zone, map or
-   region name. It is `pcall`'d and a failed read disables the feature permanently for that
-   session, which fails in the safe direction (sessions kept, never wrongly dropped). If the
-   feature simply never fires in-game, that read is why.
+1. **`Label:GetWidth()` does measure text here.** `Segment` (`UI/Controls.lua`) tries it and falls
+   back to a per-character estimate only if it reads implausibly small; in-game the real
+   measurement is what runs. This is the **first confirmed text-measurement API in this codebase**
+   -- `ChipWidth` in `UI/Analysis.lua` still estimates only because it predates this, and could be
+   switched to a real measurement if its chips ever need to be tighter.
+2. **Mouse events do reach mouse-visible grandchildren of a `ListBox` item.** The page is a
+   mouse-invisible `Control` added as a ListBox item with mouse-visible children inside it, and
+   clicks land. So the shape is proven end to end now: clickable ListBox items, mouse-visible
+   children of mouse-invisible parents, and the two combined.
+3. **`Turbine.UI.Lotro.ScrollBar` works on this pane** -- the seven pages scroll and exactly one
+   scrollbar exists, the same `ListBox` + `SetVerticalScrollBar` pattern as the skill table.
+4. **`SetOpacity` on the live meter's own `Frame` works.** This is the *legitimate* use (a
+   whole-window fade on a `Turbine.UI.Window` with no `BackColor` of its own, matching `VitalSelf`)
+   and it confirms the boundary the tint saga established: `SetOpacity` fades a Window that owns no
+   solid fill, and does nothing useful on a Control that has a `BackColor`. Both halves are now
+   observations rather than inferences.
+5. **`_G.lp:GetPosition()` works as a zone-change signal** (`Sessions.CheckZone`, for
+   `dropOnZoneChange`), despite having **no precedent anywhere** in the ~1MB of installed plugin
+   source this codebase checks itself against. It stays `pcall`'d with the same fail-safe (a failed
+   read disables the feature for the session, keeping sessions rather than wrongly dropping them),
+   because being the only known user of a call is a reason to keep the guard, not to remove it.
 
-Phase 2 (window chrome) has **not** been exercised even offline -- it is pure `Turbine.UI`
-(`Turbine.UI.Window`/`Control`/`Label`), which the offline harness described below cannot stub
-meaningfully (no real layout, sizing, or mouse-event system to fake). It is syntax-checked only
-(`luac -p`). Confirming it actually draws, drags, and persists its position needs an in-game
-load.
+Phase 2 (window chrome) is **confirmed in-game** -- every window draws, drags by its header and
+persists its position across a reload. The offline harness still cannot exercise it (no real
+layout, sizing or mouse-event system to stub), so it remains `luac -p` plus a real load, and a
+change to `UI/Frame.lua` still needs one.
 
 Phase 1 (event pipeline) was verified **offline**, not in-game: `Utils/Class.lua`,
 `Utils/Type.lua`, `Constants.lua`, `Parse/en.lua`, `Session.lua` and `Sessions.lua` were
@@ -952,9 +965,9 @@ global assigned there (`Trigger`, `L`, `EventCode`, `Theme`, `Font`, `Session`, 
 `Main.lua` via `UI.LiveMeter()` etc. (matching `vital = UI.Vital()` in `VitalSelf/Main.lua`),
 and can freely reference `Frame`/`Bar`/`Row` bare since they're siblings in the same directory.
 
-| `UI/LiveMeter.lua` | `LiveMeter` (extends `Frame`, `key = "liveMeter"`, `closable = false`) -- window 1. Bespoke header: accent tick (colour toggles `Accent`/`Border` for in-combat/idle) + "IN COMBAT"/"IDLE" label + an "open the analysis window" button (`BuildAnalysisButton`, reads the root-level `analysis` global at click time, not captured at construction) + elapsed clock. The header doubles as a small button bar per direct feedback -- what used to be a static "LAST FIGHT" text state is that button instead; more buttons can go in the same header the same way. 4 tabs, 4-line body. One `local` provider function per tab (`DoneLine`/`TakenLine`/`HealOutLine`/`HealInLine`) normalizes very different per-tab content (see `docs/DESIGN.md`'s table) into one `{headline,second,stat,max}` shape so the body-refresh code stays generic. Refreshed on a throttled `Update()` (~10Hz, bumped from ~5Hz per feedback). The "max" line (`self.lineLabels[3]`) is a real two-line value cell -- the number on top (`MaxLine()`, LucidaConsole12, unchanged from every other value), the skill name on a second, smaller Verdana10 line directly below it (`self.lineLabels[3].sub`) -- **not** appended to the same string. An earlier draft truncated a single combined `"29,557  Strike Towards the Sky"` string instead; that was reportedly not wanted even once it stopped overflowing, so it's a real second line now, in the vertical room the row already had (13px number + 11px name = the row's existing 24px). **Permanently visible** whenever `settings.liveMeterEnabled` is true -- per direct user feedback, this overrides `docs/DESIGN.md`'s original "dims and holds the last fight 8s, then hides": it now shows the live fight, or the last finished one, or (if nothing has been fought yet this play session) a permanent zeroed `self.idleSession` placeholder -- a real empty `Session` instance, not a separate "no data" rendering path. `ActiveSession()` therefore never returns nil; every provider function can assume a real session. **No opacity change at all now** (also per feedback -- the original 0.55 out-of-combat dim was removed too; full opacity always). **`settings.compactMode` is a second shape for the same window**, 160x76 instead of 260x186 -- a quarter of the area, showing the clock, the tab row and exactly **one** number. `liveBarValue` still picks *which* number (it is the "big slot" half of that setting); the corner cell it would otherwise fill goes with the rest of the detail, which is what lets the number span the whole 144px content row. Everything the compact shape does not show (caption, `rateLabel`, sparkline, divider, the three stat rows, the sub-line) is **hidden, never torn down** -- there is no confirmed-safe `SetParent(nil)` in this codebase, and a visibility flip is reversible for free. `LiveMeter:ApplyMode()` is the single place both shapes are described; it early-returns when the mode has not changed, calls `Frame.Resize` (chrome only, which is why the three `Layout*` helpers beside it re-lay out the meter's own content) and is reached from the Constructor and from `ApplySettings`. **`LayoutHeader`/`LayoutTabs`/`LayoutBody` deliberately only touch the widgets compact mode SHOWS** -- everything hidden keeps its full-width coordinates permanently, since it is never visible at 160px. **`TAB_LABELS_COMPACT` is what makes 160 possible at all, and it is the binding constraint on the width** -- not the header and not the body. The tab strip has four cells that must each hold their label, so "Heal out"/"Heal in" (8 chars, ~56px by this codebase's own `chars * 7` estimate) were what cost the width: they shorten to "H out"/"H in" while DONE and TAKEN keep their full words, giving a 5-char maximum (~35px) in a 40px cell. **Going narrower than 160 means shortening the headings again**, nothing else; `windows_test.lua` asserts every compact heading clears its cell on that same estimate, which is the check that would catch it. Keep the width divisible by 4 -- `LayoutTabs` divides it straight into four cells and a fractional tab width would reach `SetPosition`/`SetSize`. The compact header drops the "IN COMBAT"/"IDLE" text entirely (the accent tick already carries that state by colour) and pulls the clock to the left edge -- that is precisely what buys room for the Details button at 160px, so restoring the text means giving up the button. Two guards are load-bearing and were both written for the 10Hz refresh, not for tidiness: `RefreshSparkline`'s `show` now also fails on `self.compact` (without it every tick re-shows the 60 columns `ApplyMode` just hid, straight over the number in a 28px body), and `Refresh` skips the caption and the three stat rows in compact. `self.valueHit` is compact mode's second way into the analysis window: a transparent mouse-visible `Control` over the headline row (created after the two labels so it sits above them), sharing `LiveMeter:ToggleAnalysis()` with the header's Details button. **Not yet confirmed in-game**: that a `Control` with no `BackColor` over two Labels actually receives the click -- the precedent is `Frame`'s close button and the analysis table's header cells, both the same shape, and if it is dead the first thing to check is that z-order, not the handler. |
+| `UI/LiveMeter.lua` | `LiveMeter` (extends `Frame`, `key = "liveMeter"`, `closable = false`) -- window 1. Bespoke header: accent tick (colour toggles `Accent`/`Border` for in-combat/idle) + "IN COMBAT"/"IDLE" label + an "open the analysis window" button (`BuildAnalysisButton`, reads the root-level `analysis` global at click time, not captured at construction) + elapsed clock. The header doubles as a small button bar per direct feedback -- what used to be a static "LAST FIGHT" text state is that button instead; more buttons can go in the same header the same way. 4 tabs, 4-line body. One `local` provider function per tab (`DoneLine`/`TakenLine`/`HealOutLine`/`HealInLine`) normalizes very different per-tab content (see `docs/DESIGN.md`'s table) into one `{headline,second,stat,max}` shape so the body-refresh code stays generic. Refreshed on a throttled `Update()` (~10Hz, bumped from ~5Hz per feedback). The "max" line (`self.lineLabels[3]`) is a real two-line value cell -- the number on top (`MaxLine()`, LucidaConsole12, unchanged from every other value), the skill name on a second, smaller Verdana10 line directly below it (`self.lineLabels[3].sub`) -- **not** appended to the same string. An earlier draft truncated a single combined `"29,557  Strike Towards the Sky"` string instead; that was reportedly not wanted even once it stopped overflowing, so it's a real second line now, in the vertical room the row already had (13px number + 11px name = the row's existing 24px). **Permanently visible** whenever `settings.liveMeterEnabled` is true -- per direct user feedback, this overrides `docs/DESIGN.md`'s original "dims and holds the last fight 8s, then hides": it now shows the live fight, or the last finished one, or (if nothing has been fought yet this play session) a permanent zeroed `self.idleSession` placeholder -- a real empty `Session` instance, not a separate "no data" rendering path. `ActiveSession()` therefore never returns nil; every provider function can assume a real session. **No opacity change at all now** (also per feedback -- the original 0.55 out-of-combat dim was removed too; full opacity always). **`settings.compactMode` is a second shape for the same window**, 160x76 instead of 260x186 -- a quarter of the area, showing the clock, the tab row and exactly **one** number. `liveBarValue` still picks *which* number (it is the "big slot" half of that setting); the corner cell it would otherwise fill goes with the rest of the detail, which is what lets the number span the whole 144px content row. Everything the compact shape does not show (caption, `rateLabel`, sparkline, divider, the three stat rows, the sub-line) is **hidden, never torn down** -- there is no confirmed-safe `SetParent(nil)` in this codebase, and a visibility flip is reversible for free. `LiveMeter:ApplyMode()` is the single place both shapes are described; it early-returns when the mode has not changed, calls `Frame.Resize` (chrome only, which is why the three `Layout*` helpers beside it re-lay out the meter's own content) and is reached from the Constructor and from `ApplySettings`. **`LayoutHeader`/`LayoutTabs`/`LayoutBody` deliberately only touch the widgets compact mode SHOWS** -- everything hidden keeps its full-width coordinates permanently, since it is never visible at 160px. **`TAB_LABELS_COMPACT` is what makes 160 possible at all, and it is the binding constraint on the width** -- not the header and not the body. The tab strip has four cells that must each hold their label, so "Heal out"/"Heal in" (8 chars, ~56px by this codebase's own `chars * 7` estimate) were what cost the width: they shorten to "H out"/"H in" while DONE and TAKEN keep their full words, giving a 5-char maximum (~35px) in a 40px cell. **Going narrower than 160 means shortening the headings again**, nothing else; `windows_test.lua` asserts every compact heading clears its cell on that same estimate, which is the check that would catch it. Keep the width divisible by 4 -- `LayoutTabs` divides it straight into four cells and a fractional tab width would reach `SetPosition`/`SetSize`. The compact header drops the "IN COMBAT"/"IDLE" text entirely (the accent tick already carries that state by colour) and pulls the clock to the left edge -- that is precisely what buys room for the Details button at 160px, so restoring the text means giving up the button. Two guards are load-bearing and were both written for the 10Hz refresh, not for tidiness: `RefreshSparkline`'s `show` now also fails on `self.compact` (without it every tick re-shows the 60 columns `ApplyMode` just hid, straight over the number in a 28px body), and `Refresh` skips the caption and the three stat rows in compact. `self.valueHit` is compact mode's second way into the analysis window: a transparent mouse-visible `Control` over the headline row (created after the two labels so it sits above them), sharing `LiveMeter:ToggleAnalysis()` with the header's Details button. **Confirmed in-game**: a `Control` with no `BackColor` over two Labels does receive the click, so a transparent hit area works as long as it is created *after* the controls it covers -- that creation order is the load-bearing part, not the handler. |
 
-| `UI/DeathCause.lua` | `DeathCause` (extends `Frame`, `key = "deathCause"`, death-specific fill/border/header-rule colours) -- window 2. Fires from `Sessions.OnSelfDefeat`. "Last hit by" resolved by scanning `session.lastTaken` backward for the last `kind == "damage"` entry (temp-morale-loss rows don't carry an attacker). 5 pooled `Row` instances (never rebuilt), tinted per row: the killing-blow row's amount goes `DamageFatal`, temp-morale rows go `MutedText` end to end, everything else scales `DamageTaken`/`DamageSevere` off post-hit `moralePct`. Countdown is a `Bar`, `_G.settings.deathAutoHide` seconds (default 15) -- tracked as `self.remaining` (seconds left, decremented by real elapsed `dt` each `Update()` tick) rather than an absolute target timestamp, specifically so **pausing is just "skip subtracting this tick"**: `self.MouseEnter`/`self.MouseLeave` toggle `self.paused`, per direct feedback that hovering the window to read it shouldn't race the auto-hide closing it. Row time column widened (38px -> 46px) and format changed from one decimal (`"-3.7s"`) to whole seconds (`"-4s"`) per feedback that the times "seemed broken" -- most likely a width/overflow problem given the format itself checked out fine standalone, but the exact in-game rendering was never confirmed, so this is a defensive fix (shorter string, wider column) rather than a diagnosed-and-proven one; if it's still wrong, the underlying `entry.time - self.deathTime` computation itself is the next thing to check with a real capture, the way the `ChatType.Death` bug was found. The morale column is now a `Bar` per row (`self.moraleBars`, pooled) instead of a `Format.Percent` Label, matching the analysis window's own bar style per feedback. Depends on `UI/Row.lua`'s rows being mouse-invisible (`SetMouseVisible(false)`, changed from `true` -- nothing in a `Row` was ever individually clickable) so a row sitting over the window doesn't swallow the hover before it reaches the window's own `MouseEnter`/`MouseLeave`. **Unverified**: whether `Turbine.UI.Window.MouseEnter`/`.MouseLeave` fire based on the window's own bounds regardless of mouse-invisible children on top (assumed, consistent with how mouse-invisible children behave for click-through elsewhere, but not confirmed for Enter/Leave specifically) -- if hover-pause doesn't trigger in-game, check this first. |
+| `UI/DeathCause.lua` | `DeathCause` (extends `Frame`, `key = "deathCause"`, death-specific fill/border/header-rule colours) -- window 2. Fires from `Sessions.OnSelfDefeat`. "Last hit by" resolved by scanning `session.lastTaken` backward for the last `kind == "damage"` entry (temp-morale-loss rows don't carry an attacker). 5 pooled `Row` instances (never rebuilt), tinted per row: the killing-blow row's amount goes `DamageFatal`, temp-morale rows go `MutedText` end to end, everything else scales `DamageTaken`/`DamageSevere` off post-hit `moralePct`. Countdown is a `Bar`, `_G.settings.deathAutoHide` seconds (default 15) -- tracked as `self.remaining` (seconds left, decremented by real elapsed `dt` each `Update()` tick) rather than an absolute target timestamp, specifically so **pausing is just "skip subtracting this tick"**: `self.MouseEnter`/`self.MouseLeave` toggle `self.paused`, per direct feedback that hovering the window to read it shouldn't race the auto-hide closing it. Row time column widened (38px -> 46px) and format changed from one decimal (`"-3.7s"`) to whole seconds (`"-4s"`) per feedback that the times "seemed broken"; the times read correctly in-game since. The underlying cause was never isolated -- the fix was defensive (shorter string, wider column) on the theory that it was width/overflow, since the format itself checked out standalone -- so if times ever look wrong again, check `entry.time - self.deathTime` itself against a real capture rather than assuming it is the column width a second time. The morale column is now a `Bar` per row (`self.moraleBars`, pooled) instead of a `Format.Percent` Label, matching the analysis window's own bar style per feedback. Depends on `UI/Row.lua`'s rows being mouse-invisible (`SetMouseVisible(false)`, changed from `true` -- nothing in a `Row` was ever individually clickable) so a row sitting over the window doesn't swallow the hover before it reaches the window's own `MouseEnter`/`MouseLeave`. **Confirmed in-game**: `Turbine.UI.Window.MouseEnter`/`.MouseLeave` fire on the window's own bounds regardless of mouse-invisible children sitting on top, so hover-pause works -- which also means mouse-invisible children are transparent to Enter/Leave, not just to clicks. That depends on `UI/Row.lua`'s rows staying `SetMouseVisible(false)`; making a row clickable would break the pause. |
 
 | `UI/Analysis.lua` | `Analysis` (extends `Frame`, `key = "analysis"`, resizable 1080x820, min 1080x600, max 1440 wide by the display's own height less 40px -- see `MaxHeight()`) -- window 3, redesigned in v0.2.0. Session rail (unchanged), 4 view tabs in **damage-pair-then-healing-pair** order (`done`/`taken`/`healOut`/`healIn`) with centred labels, picker chips, 5 KPI cards, the graph block, the skill table at **full content width**, then the SELF BUFFS table and the two 233px side panels sharing the bottom row. `RESET RANGE`, the range chip and the `POST` button (`BuildPostButton`, see `UI/PostButton.lua`) live in `Frame`'s own header, laid out right-to-left by `LayoutHeaderExtras`. State: `viewTab`, `filter[view]`, `selectedSession`, `rangeFrom`/`rangeTo`, `charted` (ordered, max 3), `tableSort`/`buffSort`, `splitBottom` (the user's skill/buff split; `splitEffective` is what the window could give it). **Everything is range-scoped through one `Session:Slice` per refresh** -- KPIs, table, both panels and the buff table are all fed from that single result, never from their own separate passes. `Layout()` and `RefreshContent()` call each other exactly once each: `RefreshContent` detects that the charted-lane or picker-row count changed shape, sets `laneCountWanted` and re-runs `Layout()`, which ends by calling back with `skipRelayout` set -- that flag is the only thing stopping an infinite bounce, so do not remove it. The buff table (labelled SELF EFFECTS) carries a **TYPE** column between EFFECT and UPTIME % -- `BUFF_KIND_TEXT`/`BUFF_KIND_HEX`/`BuffKindText` render `row.kind` (see `Buffs.lua`) as Buff/Debuff/Unknown, it sorts on the word it displays, and `FilterBuffStats` matches the search box against it as well as the name. Its 66px came out of the name column, which is the one that absorbs slack in `LayoutBuffColumns` -- and that function's name floor dropped 120 -> 100 in the same change, because at the window's **minimum** width the old floor made the eight columns sum wider than the section they sit in (which clips the last column instead of shortening the name; `analysis_test.lua` pins `buffWidth == 594` against the 604px section for exactly this). The SELF BUFFS table now scrolls (`self.buffScrollView`/`self.buffScrollBar`, the same `ListBox` + `Lotro.ScrollBar` host as the skill table's `scrollView`/`tableScrollBar` -- see `BuildTable`'s comment) instead of the section growing to fit every tracked buff and silently dropping whatever didn't fit past the `BUFF_POOL` pool size or the space the window had -- `REDESIGN_SPEC.md` section 7 already called for this ("let the skill table shrink to its 150px floor first and the buff table scroll second"), it just wasn't wired up. `BuildBuffRow`'s container is unparented until `RefreshBuffSection`'s `ClearItems`/`AddItem` loop, mirroring `BuildTableRowSlot`'s own comment. **The target/source picker wraps** (`RefreshPicker`/`FlowChips`): chips used to flow left-to-right off the right edge of the content column with no wrap, cap or clip, which at ~5 chips per row (848px at min width, `ChipWidth` is `16 + chars*7`) made every target past the fifth unreachable in any fight with more than a handful of enemies. Now: labels truncate to `PICKER_MAX_CHARS` on a **character** boundary (`TruncateChip`/`ChipWidth` are now thin wrappers over `Format.Truncate`/`Format.CharCount` in `Constants.lua`, which count UTF-8 lead bytes by hand -- Lua 5.1 has no `utf8` library and mob names carry accented characters; the marker is ASCII `..`, not `…`, per the pin-glyph lesson above. They moved out of this file when `ChatPost.lua` needed the identical logic for its line-length cap), chips flow into at most 2 rows, and the remainder folds into a trailing `+N more` chip that expands the picker to at most `PICKER_ROWS_EXPANDED` (5) rows with a `less` chip to fold it back. `pickerExpanded` is ephemeral and resets on view/session change. Row count feeds the same shape-change relayout path as lanes/buff rows (`pickerRowsWanted`/`layoutPickerRows`), and `Layout()` re-runs `RefreshPicker` itself before sizing the row so a resize that changes the chips-per-row count can't leave the geometry a pass behind. Chip **labels** are truncated but chip **values** stay the full name -- filtering matches on the value, so a shortened label never breaks the filter (offline-checked). |
 | `UI/AnalysisGraph.lua` | `Graph` -- the time plot. Owns four stacked rows: the 150px plot, 0-3 charted buff lanes, the range slider, and the timeline + legend; `GraphHeightFor(laneCount)` is a plain global so `Analysis:Layout` can ask for the total before a Graph exists. **The series are real line graphs** (v0.6.0): one pooled `Turbine.UI.Window` per step, sized to a SQUARE the length of the step it draws, carrying a rung of the `Resources/stroke_*.tga` ladder (picked by length, so the drawn stroke stays near 2px instead of scaling with the segment) and rotated to the step's angle -- see the file header and the Build-status note for the six probe rounds behind every call in `DrawSegment`, none of which is interchangeable. `Graph:Redraw` only ARMS the rotation (`Graph:ArmRotation`/`rotateIn`); `Graph:FlushRotation`, driven by `Analysis:Update`, applies it a couple of frames later and then re-applies it on the next two, because a rotation set before the control has painted is silently dropped and the first apply is also the one that reveals the segment. `Analysis:Update` runs the pass **only while the window is visible** and re-arms it when the window is shown -- see item 2 of the Build-status list. Morale is a **background bar graph** (48 bars + 48 brighter 1px top edges, low-morale pair below `MORALE_DANGER`, guide lines at 100%/50%) and stays bars deliberately; unsampled buckets carry the last known value forward, because a second in which you took no damage is not a second at 0 morale. **Hovering is one mouse-visible Control -- the plot ground -- not 48 zones on top of the data**: the old per-bucket zones hid the morale trace underneath them (found in-game, mechanism never pinned down), and putting the hover surface *behind* everything sidesteps that question entirely while relying only on the click-through behaviour `UI/Row.lua` already depends on. Pools: 2x(48 dots + 47 segments) + 96 morale + 3x24 lane segments, all built once. **A lane's icon tile is clickable and un-charts that buff** (`Graph.OnLaneRemoved`, wired in `Analysis:LayoutGraph` to the same `Analysis:ToggleCharted` the buff table's checkbox calls, so the checkbox clears in the same refresh). The tile is the only mouse-visible thing the `Graph` builds besides the plot ground and the slider; its two children stay mouse-invisible, the same hover-wrapper shape as `Frame`'s close button. `DrawLanes` writes `lane.name`/`lane.colorHex` for the handlers to read and **nils them on a dead lane** -- a pooled lane left holding last refresh's name would answer a click by un-charting a buff that is no longer on screen. Hover brightens the tile's border (its own `BackColor`) rather than filling it with `Theme.Hex.Hover`, which would sit behind the art and not read as a hover at all. `Graph:SetLanes` **invalidates and redraws the whole plot whenever the lane count changes**, because that resize drops the segments' rotations while leaving their own geometry untouched -- item 8 of the Build-status list, and the reason "adding effects breaks the line graph" was a real bug rather than a flake. `DrawLanes` is reached only through `Graph:DrawLanesSafely` (a `pcall`), since it runs inside `Redraw` ahead of `ArmRotation` and a throw there hides the entire line. |
@@ -1018,10 +1031,13 @@ sibling plugin's code over what this client actually does. All of them are worth
    string including markup, and a line that does not fit its rung falls back to a cheaper palette,
    or to plain, rather than being truncated mid-tag. The split exists because one 240 budget
    measured against the rendered form could not pay for the number highlight at all (13 tag pairs on
-   a 113-character summary). **`MAX_RENDERED` is a judgement call, not an observation** -- nothing
-   establishes whether this client counts markup; what is known is that ~400-1000 characters of
-   multi-*line* alias was refused, that PrimePlugins clamps a plain line at 256, and that Basil's
-   own ~227-character coloured posts are accepted. **If a post is ever refused in-game, that
+   a 113-character summary). **Posts at these two budgets are confirmed accepted in-game, but
+   `MAX_RENDERED` remains a judgement call rather than a measured ceiling** -- nothing establishes
+   whether this client counts markup at all, only that ~400-1000 characters of multi-*line* alias
+   was refused, that PrimePlugins clamps a plain line at 256, and that Basil's own ~227-character
+   coloured posts go through. Confirming the posts work is not the same as confirming the limit is
+   400; a future change that raises either budget is back in unmeasured territory. **If a post is
+   ever refused in-game, that
    constant is the dial: set it equal to `MAX_MESSAGE` and the ladder falls back to the old
    three-tag-pair behaviour on its own, with no other edit.** Two bugs came out of getting this wrong: an empty trailing detail still
    emitted `<rgb=#8b8d9b></rgb>`, 19 characters of nothing that alone pushed the summary over the
@@ -1076,8 +1092,10 @@ behaved as written here. Prefer the candidate with fewer moving parts, and treat
 comment calling its approach a "hack" as a reason to look for a second precedent rather than to
 copy it.
 
-**Still not confirmed in-game**: that `Turbine.UI.ContextMenu`/`MenuItem` behave as
-CombatAnalysis's use implies -- nothing else in Basil had touched them. `tools/offline/stub.lua`'s
+**Confirmed in-game**: `Turbine.UI.ContextMenu`/`MenuItem` behave as CombatAnalysis's use implies --
+the channel/preset menu opens off the channel button and its selections take effect. Posting works
+end to end: the POST button fires, the alias reaches the chosen channel, and the line arrives
+within the client's limit. `tools/offline/stub.lua`'s
 `SetOpacity` guard was narrowed from "never call it" to "never call it on a Control that has a
 `BackColor`", which is what the original lesson actually established. Offline-verified: the builder
 in full (`chatpost_test.lua` -- single-line, within the cap, balanced 6-digit tags, colour

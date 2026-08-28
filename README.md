@@ -10,9 +10,9 @@ the local player only -- nothing is read off targets or the group.
 All six phases of `docs/IMPLEMENTATION_PLAN.md` are built and have been loaded and used in-game:
 the full data pipeline, four windows (live meter, death post-mortem, post-combat analysis,
 options), chat posting, and the `/basil` commands. `CLAUDE.md`'s "Build status" section is the
-running record of what a real load has confirmed and what is still only reasoned-about -- read it
-before changing any `Turbine.UI` call, since most of its entries are bugs that only an in-game
-load could have found.
+running record of what those loads established -- read it before changing any `Turbine.UI` call,
+since most of its entries are bugs only an in-game load could have found, and several document a
+call that works here in exactly one way.
 
 Only English combat chat is parsed (`Parse/en.lua`); German and French drop-ins are documented in
 that file's header but not written.
