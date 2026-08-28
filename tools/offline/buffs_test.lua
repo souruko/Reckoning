@@ -1,8 +1,8 @@
 -- Drives the REAL Buffs.Poll/CloseSession/Stats against a fake Turbine EffectList, including
 -- the 0-vs-1-based index probe, a mid-poll read failure, and range clipping.
 local env = dofile("stub.lua"); local ROOT = env.ROOT
-import "Reckoning.Constants"
-Trigger = {}; import "Reckoning.Parse.en"; import "Reckoning.Settings"
+import "Basil.Constants"
+Trigger = {}; import "Basil.Parse.en"; import "Basil.Settings"
 
 -- A fake effect list whose index base is configurable, so both Turbine conventions get exercised.
 local effectSet, indexBase, readFails = {}, 1, false
@@ -37,7 +37,7 @@ _G.lp = {
 }
 LocalPlayer = _G.lp; LocalPlayer.name = LocalPlayer:GetName()
 Settings.Load()
-import "Reckoning.Session"; import "Reckoning.Sessions"; import "Reckoning.Buffs"
+import "Basil.Session"; import "Basil.Sessions"; import "Basil.Buffs"
 
 local fails = 0
 local function check(label, ok, detail)

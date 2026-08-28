@@ -30,9 +30,6 @@ Every icon in this folder is derived from [Phosphor Icons](https://phosphoricons
 | `search.tga` | `magnifying-glass` | regular | 16x16 | white | `UI/Analysis.lua` search box, left of the text field |
 | `pin_on.tga` | `push-pin-simple` | fill | 12x12 | white | `UI/Analysis.lua` session rail, pinned session |
 | `pin_off.tga` | `push-pin-simple` | regular | 12x12 | white | `UI/Analysis.lua` session rail, unpinned session |
-| `line.tga` | -- (plain block) | -- | 8x8 | white | `UI/RotationProbe.lua` (stretched-sprite case) |
-| `line_long.tga` | -- (plain block) | -- | 256x4 | white | `UI/RotationProbe.lua` stroke source, clipped not stretched |
-| `wedge.tga` | -- (plain triangle) | -- | 36x36 | white | `UI/RotationProbe.lua` rotation subject |
 | `stroke_10` … `stroke_60.tga` | -- (banded squares) | -- | 64x64 | white | `UI/AnalysisGraph.lua` polyline stroke ladder |
 
 **Regular weight** (fill only for the "on" state of a two-state glyph), matching Gibberish3's and
@@ -46,17 +43,6 @@ fonts and rendered as `?`). A real pin glyph sidesteps that the same way Gibberi
 `OPTIONS2/WINDOW/LIBRARY/LibraryItem.lua` pin toggle does: two full white-on-transparent icons
 swapped by state, `BlendMode.Overlay` over the row's own themed fill, no colour baked into the
 asset and no font glyph involved.
-
-`line.tga` is the odd one out: not a Phosphor icon at all, just an opaque white block. It is the
-stroke sprite the analysis window's polyline is drawn from, and it exists because the only
-production-proven `SetRotation` configuration anywhere -- Gibberish3's circular timer
-(`UI_ELEMENTS/TIMER/CIRCEL/Element.lua`) -- rotates controls that carry a **background image**,
-never ones painted with `SetBackColor` alone. Whether a bare back-colour fill rotates at all is
-one of the questions `/reck probe` exists to answer; until it does, the sprite path is the one
-with a working precedent behind it. It is drawn with `SetStretchMode(2)` +
-`SetBackColorBlendMode(Overlay)` + `SetBackColor`, so 8x8 scales to any segment length and takes
-the series colour. Fully opaque, not soft-edged: at a 2px stroke a baked-in feathered edge would
-eat most of the line's own width.
 
 The **stroke ladder** (`stroke_10` … `stroke_60.tga`, eight rungs; the number is the band width in
 tenths of a pixel) is what the analysis window's polyline is drawn from. Each is a square with a

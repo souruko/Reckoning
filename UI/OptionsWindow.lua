@@ -1,5 +1,5 @@
 --=================================================================================================
--- OptionsWindow -- window 4, 560x452. Opened by /reck options (and by the Plugin Manager stub's
+-- OptionsWindow -- window 4, 560x452. Opened by /basil options (and by the Plugin Manager stub's
 -- button). Frame chrome, a 146px category rail, seven pages in one reused ListBox, and a footer
 -- with Defaults and Close. See design_handoff_options_panel/README.md (direction 1b) and
 -- SETTINGS_KEYS.md, which is the authority for every key, range and label string.
@@ -96,7 +96,7 @@ function OptionsWindow:Constructor()
 		-- not worth another round of that. The dim version tag is the same inline <rgb=> trick
 		-- the analysis window's title uses -- Frame turns markup on for every title it renders.
 		key = "options", closable = true,
-		title = "Reckoning - Options  <rgb=" .. Theme.Hex.DimText .. ">v" .. Reckoning.Version .. "</rgb>",
+		title = "Basil - Options  <rgb=" .. Theme.Hex.DimText .. ">v" .. Basil.Version .. "</rgb>",
 		width = W, height = H, headerHeight = HEADER_H,
 	})
 
@@ -230,7 +230,7 @@ function OptionsWindow:BuildFooter()
 	hint:SetParent(footer)
 	hint:SetFont(Font.LucidaConsole12)
 	hint:SetForeColor(Theme.Color(Theme.Hex.Disabled))
-	hint:SetText("/reck options  ·  /reck reset")
+	hint:SetText("/basil options  ·  /basil reset")
 	hint:SetPosition(10, 0)
 	hint:SetSize(280, FOOTER_H)
 	hint:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleLeft)
@@ -370,7 +370,7 @@ BUILDERS["windows"] = function(window)
 	page:Section("Windows")
 	page:Check("liveMeterEnabled", "Live meter", { hint = "shows in combat", apply = ApplyLive })
 	page:Check("deathCauseEnabled", "Death cause window", { hint = "on defeat", apply = ApplyDeath })
-	page:Check("analysisAutoOpen", "Open analysis after every fight", { hint = "/reck" })
+	page:Check("analysisAutoOpen", "Open analysis after every fight", { hint = "/basil" })
 	page:Check("lockWindows", "Lock positions",
 		{ hint = "headers stop dragging", apply = OptionsWindow.ApplyAll })
 
@@ -470,29 +470,20 @@ BUILDERS["appearance"] = function(window)
 		{ indent = 21, apply = OptionsWindow.ApplyAll })
 	page:Check("clickThroughFaded", "Click-through when faded", { apply = OptionsWindow.ApplyAll })
 
-	page:Section("Density and type")
-	-- STORED AND CLAMPED, BUT NOTHING READS IT YET, and the sub-label says so rather than the
-	-- control quietly doing nothing. Theme.RowHeight() (Constants.lua) is the single place a
-	-- consumer would read it. The three windows each have their own row pitch tuned to their own
-	-- content (22px skill/buff rows, 24px death rows), none of them 16 or 20, and the analysis
-	-- window's splitter snaps to whole buff rows -- a shared, variable row height is a layout
-	-- change to window 3, not an options-panel change. See CLAUDE.md.
-	page:Segment("density", "Row density", {
-		{ label = "Compact 16px", value = "Compact" },
-		{ label = "Normal 20px", value = "Normal" },
-	}, { sub = "not wired to the tables yet", apply = OptionsWindow.ApplyAll })
+	page:Section("Numbers and borders")
+	-- NO "Row density" ROW. The `density` key and Theme.RowHeight() (Constants.lua) are still
+	-- there -- stored, clamped, and the single place a consumer would read it -- but nothing reads
+	-- it, so the control is not shown. The three windows each have their own row pitch tuned to
+	-- their own content (22px skill/buff rows, 24px death rows), none of them 16 or 20, and the
+	-- analysis window's splitter snaps to whole buff rows: a shared, variable row height is a
+	-- layout change to window 3, not an options-panel change. Put the row back here when it is.
 	page:Segment("numberFont", "Number font", {
 		{ label = "Lucida 12", value = "Lucida" },
 		{ label = "Verdana 12", value = "Verdana" },
 	}, { sub = "Verdana aligns badly in columns", apply = OptionsWindow.ApplyAll })
 	page:Check("abbreviateNumbers", "Abbreviate big numbers (12.4k)", { apply = OptionsWindow.ApplyAll })
 	page:Check("showBorders", "Window borders", { apply = OptionsWindow.ApplyAll })
-	-- The handoff's own copy here describes a shared row-height system this plugin does not have
-	-- ("Density changes bar height in the live meter and row height everywhere else"). Saying that
-	-- to a player who then sees nothing change is worse than an accurate note, so this one states
-	-- what is actually true today; the row's own sub-label repeats it.
-	page:Note("Opacity applies to the live meter, the one window that is always on screen. "
-		.. "Row density is saved but nothing reads it yet.")
+	page:Note("Opacity applies to the live meter, the one window that is always on screen.")
 
 	return page
 end
@@ -696,14 +687,10 @@ BUILDERS["live"] = function(window)
 		end
 	end })
 
-	-- NOT WIRED TO ANYTHING YET, and deliberately labelled as such. The design's live meter has a
-	-- per-skill row list (it is drawn in the mockup's direction-1c preview strip); the live meter
-	-- as built has a fixed headline plus three stat lines and no row list at all. The setting is
-	-- stored, clamped and shipped so the control exists where the design puts it, but nothing
-	-- reads it -- see CLAUDE.md. Do not quietly drop the sub-label without also building the list.
-	page:Slider("liveRows", "Rows shown", 3, 10, "",
-		{ sub = "for the skill list the meter does not have yet", apply = ApplyLive })
-
+	-- NO "Rows shown" ROW. `liveRows` is still stored and clamped, but the design's per-skill row
+	-- list (drawn in the mockup's direction-1c preview strip) was never built -- the meter has a
+	-- fixed headline plus three stat lines and no row list for the number to size. Put the slider
+	-- back here when the list exists.
 	page:Segment("liveBarValue", "Bar value", {
 		{ label = "Per second", value = "Rate" },
 		{ label = "Total", value = "Total" },
@@ -960,8 +947,9 @@ BUILDERS["buffs"] = function(window)
 
 	tail:Grow(28)
 
-	-- Pooled chips, two rows' worth. Overflow is reported as a count rather than silently
-	-- dropped -- the list is editable from /reck buffs too, so it can grow past what fits here.
+	-- Pooled chips, two rows' worth. Overflow is reported as a count rather than silently dropped:
+	-- a save can carry more ignored names than fit here, and a chip that is simply missing reads
+	-- as the ignore having been forgotten.
 	local chips = {}
 	local chipTop = tail.y
 
@@ -999,7 +987,7 @@ BUILDERS["buffs"] = function(window)
 		crossIcon:SetPosition(0, 0)
 		crossIcon:SetSize(12, 12)
 		crossIcon:SetBlendMode(Turbine.UI.BlendMode.Overlay)
-		crossIcon:SetBackground("Reckoning/Resources/cross.tga")
+		crossIcon:SetBackground("Basil/Resources/cross.tga")
 		crossIcon:SetMouseVisible(false)
 
 		chips[i] = { chip = chip, inset = inset, label = label, cross = cross, name = nil }
@@ -1157,9 +1145,9 @@ BUILDERS["buffs"] = function(window)
 
 		local total = table.getn(names)
 		if total == 0 then
-			overflowLabel:SetText("Nothing ignored. /reck buffs list shows what is being tracked.")
+			overflowLabel:SetText("Nothing ignored. The analysis window's SELF EFFECTS table lists what is tracked.")
 		elseif total > shown then
-			overflowLabel:SetText("+" .. (total - shown) .. " more -- see /reck buffs list")
+			overflowLabel:SetText("+" .. (total - shown) .. " more ignored than fit here")
 		else
 			overflowLabel:SetText("")
 		end

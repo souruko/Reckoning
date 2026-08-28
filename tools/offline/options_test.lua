@@ -5,8 +5,8 @@
 -- calling a refresh, which is the shortcut that hid three bugs in this codebase before.
 local env = dofile("stub.lua"); local ROOT = env.ROOT
 
-import "Reckoning.Constants"
-Trigger = {}; import "Reckoning.Parse.en"; import "Reckoning.Settings"
+import "Basil.Constants"
+Trigger = {}; import "Basil.Parse.en"; import "Basil.Settings"
 
 local morale = 500000
 local effectList = {}
@@ -30,8 +30,8 @@ effectList = { MakeEffect("Writ of Health", 0x41000001), MakeEffect("Bracing Gua
                MakeEffect("Fury of Battle", 0x41000002), MakeEffect("Warrior's Heart", nil) }
 
 Settings.Load()
-import "Reckoning.Session"; import "Reckoning.Sessions"; import "Reckoning.Buffs"
-import "Reckoning.Events"; import "Reckoning.ChatPost"; import "Reckoning.UI"
+import "Basil.Session"; import "Basil.Sessions"; import "Basil.Buffs"
+import "Basil.Events"; import "Basil.ChatPost"; import "Basil.UI"
 
 local fails = 0
 local function check(label, ok, detail)
@@ -156,13 +156,15 @@ check("no row's control runs under its own label", (function()
   end
   return true
 end)())
--- 17 label-plus-control rows across the four pages that have any: Appearance 5 (3 sliders,
--- 2 segments), Live meter 5, Death window 3, Sessions 4. A count here rather than a ">= 1" so
--- that deleting a row from a page cannot silently take its geometry check with it.
+-- 15 label-plus-control rows across the four pages that have any: Appearance 4 (3 sliders,
+-- 1 segment), Live meter 4, Death window 3, Sessions 4. A count here rather than a ">= 1" so
+-- that deleting a row from a page cannot silently take its geometry check with it. It dropped
+-- from 17 when the two rows nothing reads (Appearance "Row density", Live meter "Rows shown")
+-- stopped being shown -- see OptionsWindow.lua.
 check("every label-plus-control row registered itself", (function()
   local n = 0
   for i = 1, #PAGE_KEYS do n = n + #w.pages[PAGE_KEYS[i]].rows end
-  return n == 17, tostring(n)
+  return n == 15, tostring(n)
 end)())
 
 w.railRows.palette.row.MouseEnter()
@@ -325,43 +327,48 @@ for i = 1, #appearance._children do
   local child = appearance._children[i]
   if child.cells ~= nil then segments[#segments + 1] = child end
 end
-check("appearance has two segment strips", #segments == 2, tostring(#segments))
+-- One strip, not two: the "Row density" segment is not shown, because nothing reads `density`.
+-- The key, its clamp and Theme.RowHeight() all still exist -- see the note in OptionsWindow.lua.
+check("appearance has one segment strip", #segments == 1, tostring(#segments))
 
-local density = segments[1]
-check("density segment has two cells", #density.cells == 2, tostring(#density.cells))
+local font = segments[1]
+check("the segment has two cells", #font.cells == 2, tostring(#font.cells))
 check("every cell is wide enough for its own text", (function()
-  for i = 1, #density.cells do
-    local cell = density.cells[i]
+  for i = 1, #font.cells do
+    local cell = font.cells[i]
     local text = cell.label:GetText()
     if select(1, cell.cell:GetSize()) < #text * 5 then return false end
   end
   return true
 end)())
 check("cells share their 1px border (no gaps, no overlap)", (function()
-  local a, b = density.cells[1], density.cells[2]
+  local a, b = font.cells[1], font.cells[2]
   return select(1, b.cell:GetPosition())
     == select(1, a.cell:GetPosition()) + select(1, a.cell:GetSize()) - 1
 end)())
 check("the strip is exactly as wide as its cells", (function()
-  local last = density.cells[#density.cells]
-  return select(1, density:GetSize())
+  local last = font.cells[#font.cells]
+  return select(1, font:GetSize())
     == select(1, last.cell:GetPosition()) + select(1, last.cell:GetSize())
 end)())
 
-local segSaves = CountSaves(function() Click(density.cells[1].cell) end)
-check("clicking a cell writes its value", _G.settings.density == "Compact", tostring(_G.settings.density))
+local segSaves = CountSaves(function() Click(font.cells[2].cell) end)
+check("clicking a cell writes its value", _G.settings.numberFont == "Verdana",
+  tostring(_G.settings.numberFont))
 check("...and saves once", segSaves == 1, tostring(segSaves))
 check("...and repaints the selection",
-  density.cells[1].inner:GetBackColor() ~= nil and density.cells[2].inner:GetBackColor() == nil)
-check("Theme.RowHeight follows density", Theme.RowHeight() == 16, tostring(Theme.RowHeight()))
-Click(density.cells[2].cell)
-check("switching back restores it", Theme.RowHeight() == 20, tostring(Theme.RowHeight()))
+  font.cells[2].inner:GetBackColor() ~= nil and font.cells[1].inner:GetBackColor() == nil)
 
-check("Theme.NumberFont follows numberFont", (function()
-  _G.settings.numberFont = "Verdana"
-  local a = Theme.NumberFont()
-  _G.settings.numberFont = "Lucida"
-  return a == Font.Verdana12 and Theme.NumberFont() == Font.LucidaConsole12
+check("Theme.NumberFont follows numberFont", Theme.NumberFont() == Font.Verdana12)
+Click(font.cells[1].cell)
+check("switching back restores it", Theme.NumberFont() == Font.LucidaConsole12)
+
+-- density has no control any more, but its consumer hook is still live for whoever wires it up.
+check("Theme.RowHeight still follows density", (function()
+  _G.settings.density = "Compact"
+  local compact = Theme.RowHeight()
+  _G.settings.density = "Normal"
+  return compact == 16 and Theme.RowHeight() == 20
 end)())
 
 ---------------------------------------------------------------------------------------------------
@@ -397,13 +404,13 @@ print("== 8. palette presets reach every series ==")
 Click(w.railRows.palette.row)
 local palette = w.pages.palette
 check("palette lists every preset in Theme.PresetOrder order",
-  #Theme.PresetOrder == 4 and Theme.PresetOrder[1] == "Reckoning")
+  #Theme.PresetOrder == 4 and Theme.PresetOrder[1] == "Basil")
 check("the default preset is byte-identical to the Theme.Hex series tokens",
-  Theme.Presets["Reckoning"].done == Theme.Hex.DamageDone
-  and Theme.Presets["Reckoning"].taken == Theme.Hex.DamageTaken
-  and Theme.Presets["Reckoning"].healOut == Theme.Hex.HealingDone
-  and Theme.Presets["Reckoning"].healIn == Theme.Hex.HealingTaken
-  and Theme.Presets["Reckoning"].morale == Theme.Hex.Morale)
+  Theme.Presets["Basil"].done == Theme.Hex.DamageDone
+  and Theme.Presets["Basil"].taken == Theme.Hex.DamageTaken
+  and Theme.Presets["Basil"].healOut == Theme.Hex.HealingDone
+  and Theme.Presets["Basil"].healIn == Theme.Hex.HealingTaken
+  and Theme.Presets["Basil"].morale == Theme.Hex.Morale)
 
 -- The swatch rows are direct children of the page; the clickable ones are the mouse-visible
 -- Controls 30px tall.
@@ -442,10 +449,27 @@ analysis:ApplySettings()
 check("the analysis plot's series recolours with the preset",
   analysis.graph.seriesList[1].colorHex == "#d9a05b",
   tostring(analysis.graph.seriesList[1].colorHex))
-check("a chat post's tint follows the preset too", (function()
+-- A chat post deliberately does NOT follow the palette any more. It renders on a game chat
+-- background nobody here controls, not on this window's fill, and it used to spend five or six tag
+-- pairs -- ~100 characters of a 240-character budget -- on hues that made it harder to read rather
+-- than easier. ChatPost.Hex is its own fixed, near-monochrome palette now (CombatAnalysis's yellow
+-- family, StatOverviewTab.lua:19-23). This check is the inverse of the one it replaced: the preset
+-- must NOT leak into a post.
+check("a chat post keeps its own palette when the preset changes", (function()
   _G.settings.postColor = true
   local line = ChatPost.BuildLine(session, "summary", "taken", nil, nil, nil)
-  return line ~= nil and line:find("d9a05b", 1, true) ~= nil
+  return line ~= nil and line:find("d9a05b", 1, true) == nil
+end)())
+check("...and every tag it does emit is a post token instead", (function()
+  local line = ChatPost.BuildLine(session, "summary", "taken", nil, nil, nil)
+  local tokens = {}
+  for _, hex in pairs(ChatPost.Hex) do tokens[hex] = true end
+  for hex in string.gmatch(line, "<rgb=(#%x%x%x%x%x%x)>") do
+    if not tokens[hex] then
+      return false
+    end
+  end
+  return true
 end)())
 
 Click(swatchRows[1])
@@ -817,7 +841,7 @@ end)())
 check("an unknown palette preset falls back rather than yielding a nil colour", (function()
   _G.settings.palettePreset = "Chartreuse"
   Settings.Clamp()
-  return _G.settings.palettePreset == "Reckoning" and Theme.Series("done") ~= nil
+  return _G.settings.palettePreset == "Basil" and Theme.Series("done") ~= nil
 end)())
 
 ---------------------------------------------------------------------------------------------------
@@ -1095,7 +1119,6 @@ print("== 19. the Plugin Manager stub ==")
 local stub = Options()
 check("the stub is still a ListBox with one item", stub:GetItemCount() == 1)
 check("it carries no setting of its own", stub.boxes == nil and stub.Accept == nil)
-check("Refresh is a safe no-op", pcall(function() stub:Refresh() end))
 
 print("")
 if fails == 0 then print("ALL OPTIONS CHECKS PASSED") else print(fails .. " CHECK(S) FAILED"); os.exit(1) end

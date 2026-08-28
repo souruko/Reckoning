@@ -80,6 +80,10 @@ local SCROLLBAR_WIDTH = 10
 local RAIL_POOL = 20 -- generous: ring cap is 10 but pinned sessions are exempt from it
 local PANEL_WIDTH = 233
 
+-- The identity rotation Analysis:Update holds this window at while the graph's rotation pass runs.
+-- One shared table because SetRotation reads it and never keeps it.
+local ZERO_ROTATION = { x = 0, y = 0, z = 0 }
+
 local BUFF_HEADER_HEIGHT = 26
 local BUFF_TABLE_HEADER_HEIGHT = 20
 local BUFF_ROW_HEIGHT = 22
@@ -263,9 +267,9 @@ function Analysis:Constructor()
 		-- _RefreshTexts, "Brand  <rgb=#5C6076>3.8.0</rgb>"), the only confirmed-working
 		-- precedent anywhere in these plugins for a de-emphasized run of text inside one
 		-- Turbine.UI.Label. Uses Theme.Hex.DimText rather than Gibberish's own hex so it stays
-		-- inside Reckoning's own palette.
+		-- inside Basil's own palette.
 		key = "analysis", closable = true,
-		title = "Reckoning  <rgb=" .. Theme.Hex.DimText .. ">" .. Reckoning.Version .. "</rgb>",
+		title = "Basil  <rgb=" .. Theme.Hex.DimText .. ">" .. Basil.Version .. "</rgb>",
 		width = MIN_WIDTH, height = DEFAULT_HEIGHT, headerHeight = HEADER_HEIGHT,
 	})
 
@@ -427,59 +431,99 @@ function Analysis:BuildHeaderExtras()
 	self:LayoutHeaderExtras()
 end
 
--- The post button reads the window's live state at rebuild time through these two closures rather
--- than being handed a snapshot, so it can never post numbers from a previous refresh. See
+-- The post buttons read the window's live state at rebuild time through this closure rather than
+-- being handed a snapshot, so they can never post numbers from a previous refresh. See
 -- UI/PostButton.lua for why a click is unavoidable and ChatPost.lua for the text itself.
+--
+-- TWO buttons, one per post shape: POST (fight summary, always present, greys when the current
+-- view has nothing to say) and DEATH (death report, present only while the selected fight ended in
+-- one -- ChatPost.BuildLine returns nil for the death preset otherwise, which is what takes the
+-- button off the header). They share the channel, and only POST carries the control that sets it.
 function Analysis:BuildPostButton()
 	local window = self
+
+	-- BuildLine, not Build: what a channel accepts is one plain line (see ChatPost's header).
+	local function LineFor(preset)
+		local session = window.selectedSession
+		if session == nil then
+			return nil
+		end
+		local fromSec, toSec = window:RangeSeconds()
+		return ChatPost.BuildLine(session, preset, window.viewTab,
+			window.filter[window.viewTab], fromSec, toSec)
+	end
 
 	self.postButton = PostButton({
 		parent = self.header,
 		headerHeight = HEADER_HEIGHT,
-		-- BuildLine, not Build: what a channel accepts is one plain line (see ChatPost's header).
-		onNeedLine = function()
-			local session = window.selectedSession
-			if session == nil then
-				return nil
-			end
-			local preset = (_G.settings and _G.settings.postPreset) or "summary"
-			local fromSec, toSec = window:RangeSeconds()
-			return ChatPost.BuildLine(session, preset, window.viewTab,
-				window.filter[window.viewTab], fromSec, toSec)
-		end,
+		preset = "summary",
+		showChannel = true,
+		onNeedLine = LineFor,
 	})
+
+	self.deathButton = PostButton({
+		parent = self.header,
+		headerHeight = HEADER_HEIGHT,
+		preset = "death",
+		showChannel = false,
+		hideWhenDisabled = true,
+		onNeedLine = LineFor,
+	})
+
+	-- The channel and the summary parts both live on POST's menu and both change what DEATH would
+	-- send (the channel bakes the slash verb into the alias), so one edit re-arms both buttons.
+	self.postButton.onChanged = function()
+		window:RearmPostButtons()
+	end
 
 	-- The quickslot lives in its own top-level window positioned in screen coordinates, so it has
 	-- to follow this window rather than being a child of it.
 	self.postButton:Track(self)
+	self.deathButton:Track(self)
 
-	-- Fired by Frame's header drag on every MouseMove, so the invisible click target stays glued
-	-- to the visible button while the window is being dragged.
+	-- Fired by Frame's header drag on every MouseMove, so the invisible click targets stay glued
+	-- to the visible buttons while the window is being dragged.
 	self.OnMoved = function()
 		window:SyncPostOverlay(true)
 	end
 
-	-- Anything that brings this window to the front buries the overlay, so put it back on top in
+	-- Anything that brings this window to the front buries the overlays, so put them back on top in
 	-- the same gesture. This is CombatAnalysis's StatOverviewWindow:Activate() override
 	-- (StatOverviewWindow.lua:56-68), hooked to the real `Activated` event instead of an override:
 	-- the client raises the window itself on a click, without routing through any method call
 	-- here, and mouse events do not bubble, so the window's own MouseDown only sees presses that
 	-- miss every child. The event sees them all. See UI/PostButton.lua's header for the full story.
+	--
+	-- Both overlays are raised, and the order does not matter: they never overlap each other (they
+	-- sit at different x in the header), so all that has to hold is that each ends up above this
+	-- window -- raising one brings it to the front without pushing the other back down past it.
 	self.Activated = function()
-		window.postButton:Raise()
+		window:RaisePostButtons()
 	end
 
 	-- Kept as well: a press that lands on the window's own bare area. Harmless overlap, and it is
 	-- the one path that still works if `Activated` turns out not to fire the way Thurallor's use
 	-- of it implies.
 	self.MouseDown = function()
-		window.postButton:Raise()
+		window:RaisePostButtons()
 	end
+end
 
-	self.postButton.onCanDeath = function()
-		return window.selectedSession ~= nil and window.selectedSession.died == true
-	end
+-- The three fan-outs over both post buttons. They exist as methods rather than being inlined
+-- because Main.lua, Events.lua and Frame's drag handler all reach one of them from outside.
+function Analysis:RaisePostButtons()
+	if self.postButton ~= nil then self.postButton:Raise() end
+	if self.deathButton ~= nil then self.deathButton:Raise() end
+end
 
+function Analysis:RearmPostButtons()
+	if self.postButton ~= nil then self.postButton:Rebuild() end
+	if self.deathButton ~= nil then self.deathButton:Rebuild() end
+end
+
+function Analysis:ShutdownPostButtons()
+	if self.postButton ~= nil then self.postButton:Shutdown() end
+	if self.deathButton ~= nil then self.deathButton:Shutdown() end
 end
 
 function Analysis:LayoutHeaderExtras()
@@ -489,7 +533,15 @@ function Analysis:LayoutHeaderExtras()
 
 	if self.postButton ~= nil then
 		-- Place() moves the themed button, the channel button and the overlay together.
-		self.postButton:Place(width - 22 - 96 - 6 - 220 - 6 - PostButton.Width, 0)
+		local postX = width - 22 - 96 - 6 - 220 - 6 - PostButton.Width
+		self.postButton:Place(postX, 0)
+		-- DEATH sits to POST's left, so the POST/channel pair stays anchored at the same x whether
+		-- or not the fight had a death -- a header whose buttons shuffle sideways between sessions
+		-- would be worse than one with an occasional gap in it. The slot is reserved either way;
+		-- when there was no death it is simply empty header.
+		if self.deathButton ~= nil then
+			self.deathButton:Place(postX - 6 - PostButton.SoloWidth, 0)
+		end
 	end
 end
 
@@ -527,19 +579,20 @@ function Analysis:Resize(width, height)
 	if self.gripper ~= nil then
 		self.gripper:SetPosition(width - 12, height - 12)
 	end
-	-- Same reasoning as the gripper: the post button's overlay is positioned in screen
-	-- coordinates, so it must be re-placed on every resize, not only when Layout() runs.
-	if self.postButton ~= nil then
-		self.postButton:SyncOverlay(true)
-	end
+	-- Same reasoning as the gripper: the post buttons' overlays are positioned in screen
+	-- coordinates, so they must be re-placed on every resize, not only when Layout() runs.
+	self:SyncPostOverlay(true)
 end
 
--- The overlay quickslot is a separate top-level Window, so it does not inherit this window's
+-- Each overlay quickslot is a separate top-level Window, so it does not inherit this window's
 -- position, size or visibility. Called from the drag handler and the resize path (instant) and
 -- from Events.lua's 4Hz heartbeat (the backstop for show/hide, which happens from several places).
 function Analysis:SyncPostOverlay(force)
 	if self.postButton ~= nil then
 		self.postButton:SyncOverlay(force)
+	end
+	if self.deathButton ~= nil then
+		self.deathButton:SyncOverlay(force)
 	end
 end
 
@@ -606,7 +659,7 @@ function Analysis:OnSessionsDropped()
 	self:RefreshContent()
 end
 
--- Back to the shipped size and position, for /reck reset.
+-- Back to the shipped size and position, for /basil reset.
 function Analysis:ResetGeometry()
 	self:Resize(MIN_WIDTH, DEFAULT_HEIGHT)
 	self:SetPosition(200, 200)
@@ -804,7 +857,7 @@ function Analysis:RefreshRail()
 			widgets.control:SetPosition(0, (i - 1) * RAIL_ROW_HEIGHT)
 			widgets.name:SetText(s:DisplayName() .. (s.died and " · died" or ""))
 			widgets.meta:SetText(s.startClock .. " · " .. Format.Clock(s:Duration()) .. " · " .. Format.Rate(s:Rate("done")))
-			widgets.pin:SetBackground(s.pinned and "Reckoning/Resources/pin_on.tga" or "Reckoning/Resources/pin_off.tga")
+			widgets.pin:SetBackground(s.pinned and "Basil/Resources/pin_on.tga" or "Basil/Resources/pin_off.tga")
 			self:RefreshRailRow(widgets)
 		end
 	end
@@ -1251,7 +1304,7 @@ function Analysis:BuildSearchBox(parent, placeholderText)
 	searchIcon:SetPosition(6, math.floor((SEARCH_HEIGHT - 2 - SEARCH_ICON) / 2))
 	searchIcon:SetSize(SEARCH_ICON, SEARCH_ICON)
 	searchIcon:SetBlendMode(Turbine.UI.BlendMode.Overlay)
-	searchIcon:SetBackground("Reckoning/Resources/search.tga")
+	searchIcon:SetBackground("Basil/Resources/search.tga")
 	searchIcon:SetMouseVisible(false)
 
 	local fieldLeft = 6 + SEARCH_ICON + 4
@@ -1297,7 +1350,7 @@ function Analysis:BuildSearchBox(parent, placeholderText)
 	clearIcon:SetSize(SEARCH_ICON, SEARCH_ICON)
 	clearIcon:SetPosition(math.floor((16 - SEARCH_ICON) / 2), math.floor(((SEARCH_HEIGHT - 2) - SEARCH_ICON) / 2))
 	clearIcon:SetBlendMode(Turbine.UI.BlendMode.Overlay)
-	clearIcon:SetBackground("Reckoning/Resources/cross.tga")
+	clearIcon:SetBackground("Basil/Resources/cross.tga")
 	clearIcon:SetMouseVisible(false)
 
 	clear.MouseEnter = function() clear:SetBackColor(Theme.Color(Theme.Hex.Hover)) end
@@ -2519,7 +2572,11 @@ function Analysis:SelectView(key, skipRefresh)
 end
 
 -- Which series each view plots. The two "incoming" views carry both sides of the exchange, since
--- damage taken only means something next to the healing that did or didn't cover it.
+-- damage taken only means something next to the healing that did or didn't cover it -- but the
+-- second one starts HIDDEN (`hidden = true`, seeded into Graph.hidden by SetSeries). It is the
+-- companion line, not the subject: on "Damage taken" the reader is reading damage, and a healing
+-- line sharing the same y-scale rescales the plot around whichever of the two happens to be
+-- bigger. Its legend entry is still there in the "off" colours, so one click brings it back.
 --
 -- Colours are NOT stored here -- only the role key. This table is a module-level local built once
 -- at load, so a hex baked into it could never follow a palette-preset change; SeriesForView()
@@ -2531,11 +2588,11 @@ local SERIES_FOR_VIEW = {
 	healOut = { { key = "healOut", label = "Healing out", role = "healOut" } },
 	taken = {
 		{ key = "taken", label = "Damage taken", role = "taken" },
-		{ key = "healIn", label = "Healing in", role = "healIn" },
+		{ key = "healIn", label = "Healing in", role = "healIn", hidden = true },
 	},
 	healIn = {
 		{ key = "healIn", label = "Healing in", role = "healIn" },
-		{ key = "taken", label = "Damage taken", role = "taken" },
+		{ key = "taken", label = "Damage taken", role = "taken", hidden = true },
 	},
 }
 
@@ -2547,6 +2604,7 @@ local function SeriesForView(view)
 			key = spec[i].key,
 			label = spec[i].label,
 			colorHex = Theme.Series(spec[i].role),
+			hidden = spec[i].hidden,
 		}
 	end
 	return out
@@ -2630,9 +2688,9 @@ function Analysis:RefreshContent(skipRelayout)
 	-- instant any of view/filter/range/session changes. Every one of those changes funnels
 	-- through this function, which makes it the one correct place to rebuild -- CombatAnalysis
 	-- calls its own equivalent from six scattered sites for want of a single funnel like this.
-	if self.postButton ~= nil then
-		self.postButton:Rebuild()
-	end
+	-- This is also what shows and hides the DEATH button: its line is nil for a fight nobody died
+	-- in, and a nil line is what disables it.
+	self:RearmPostButtons()
 end
 
 function Analysis:RefreshKpis(session, view, filterWho, meta, rows, fromSec, toSec)
@@ -3021,15 +3079,72 @@ end
 
 -- The graph's rotation pass, and the ONLY thing this window wants per-frame updates for.
 --
--- Every polyline segment is a rotated Window, and the fact `/reck probe` cost six in-game loads to
--- establish is that **a rotation applied before the control has painted is silently dropped**. So
+-- Every polyline segment is a rotated Window, and the fact six in-game rounds of probing cost most
+-- to establish is that **a rotation applied before the control has painted is silently dropped**. So
 -- Graph:Redraw sizes and positions the segments and arms a pass, and this runs it a couple of
 -- frames later, once. FlushRotation returns immediately when nothing is pending, which is the
 -- common case by a very long way.
-function Analysis:Update()
-	if self.graph ~= nil then
-		self.graph:FlushRotation()
+-- Drives the graph's rotation pass -- but only while this window is actually on screen. A redraw
+-- can happen with the window closed (a fight ending reaches RefreshContent through
+-- Sessions.OnClosed, and every settings change does too), and a rotation applied to a control
+-- that is not being drawn is the "set before it painted" case the engine silently drops -- which
+-- would then reveal those segments FLAT, staying that way until some later redraw ran a fresh
+-- pass. That is the reported "sometimes the lines are not rotated, moving the range fixes it".
+--
+-- So: hold the pass while hidden, and arm a fresh one on the way back in, which covers every path
+-- that shows this window without any of them having to know about it.
+-- The visible/hidden edge, split out of Update because **Update does not run while this window is
+-- hidden** -- a Turbine.UI.Window only receives per-frame Update() once it is shown (Events.lua's
+-- heartbeat is a bare Window kept visible for exactly that reason). Left inside Update, the
+-- `wasVisible = false` line below could therefore never actually execute: the flag stayed true
+-- across a close/reopen, no pass was armed on the way back in, and the plot came up carrying
+-- whatever the engine had left on those segments while they were off screen. That is the reported
+-- "the first line graph after opening the window is broken, and any later redraw fixes it".
+--
+-- So the falling edge is watched by Events.lua's 4Hz heartbeat, which runs whatever this window is
+-- doing, and the rising edge by Update itself, which is prompt. Being up to 250ms late noticing a
+-- close costs nothing -- nothing is drawn in that time either.
+function Analysis:TrackVisibility()
+	if self.graph == nil then
+		return
 	end
+
+	if not self:IsVisible() then
+		self.wasVisible = false
+		return
+	end
+
+	if not self.wasVisible then
+		self.wasVisible = true
+		self.graph:ArmRotation()
+	end
+end
+
+function Analysis:Update()
+	if self.graph == nil then
+		return
+	end
+
+	self:TrackVisibility()
+
+	if not self:IsVisible() then
+		return
+	end
+
+	local pending = self.graph:FlushRotation()
+
+	-- Backstop: hold this window's own rotation at zero for as long as a pass is running, and for
+	-- one frame after it finishes. The graph's pass is the only SetRotation caller in the plugin
+	-- and it has been seen to turn THIS window rather than a segment (reported as the analysis
+	-- window coming up rotated after a session change). Graph:FlushRotation now never hands a
+	-- hidden control to SetRotation, which is the condition that caused it -- this is the second
+	-- line of defence, so that if it ever happens again it self-corrects in a frame instead of
+	-- leaving the window sideways until a reload. Identity rotation on a window that is on screen
+	-- is a no-op, and outside a pass this costs nothing at all.
+	if pending or self.rotationPass then
+		pcall(self.SetRotation, self, ZERO_ROTATION)
+	end
+	self.rotationPass = pending
 end
 
 function Analysis:LayoutGraph(innerWidth)

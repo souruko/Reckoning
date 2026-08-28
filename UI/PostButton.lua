@@ -1,11 +1,23 @@
 --=================================================================================================
--- PostButton -- the post control pair in the analysis window's header.
+-- PostButton -- one post control in the analysis window's header.
 --
---     [ POST ][ FELL ]
+--     [ DEATH ]  [ POST ][ FELL ]
 --
 -- POST is a themed button with an invisible quickslot floating exactly on top of it (the quickslot
 -- is what actually fires the post -- see ChatPost.lua for why a click is unavoidable). FELL is a
--- plain Control naming the destination channel, which opens the channel/preset menu when clicked.
+-- plain Control naming the destination channel, which opens the channel + summary-parts menu when
+-- clicked.
+--
+-- DEATH is a SECOND PostButton, armed with the death-report preset, and it exists only while the
+-- selected fight actually ended in a death -- `hideWhenDisabled` takes it off the header entirely
+-- rather than greying it. The two used to be one button with a preset toggle buried in the menu,
+-- which meant a death report was three clicks away and, worse, that leaving the toggle on "death"
+-- silently disarmed the button for every fight you survived. A button that is there or is not there
+-- answers "did this fight kill me" on sight.
+--
+-- The channel is SHARED (one _G.settings.postChannel), so only the summary button carries the
+-- channel control -- two of them naming the same setting would read as two independent
+-- destinations. `showChannel` decides which button builds one.
 --
 -- THE INVISIBLE QUICKSLOT, and the two ways this has already gone wrong:
 --
@@ -36,7 +48,7 @@
 -- of the minimize animation -- the body is gated on `not self:GetWantsUpdates()`. There is no
 -- per-frame Activate; an earlier comment here said there was, and that was misread.)
 --
--- Reckoning gets the same funnel without 60 forwarding calls, by hooking the window's real
+-- Basil gets the same funnel without 60 forwarding calls, by hooking the window's real
 -- `Activated` event instead: it fires however the window came to the front, including a client-
 -- initiated raise from a click on a child. That is a confirmed-real Window event (Thurallor's
 -- Common/Utils/Utils_13.lua:657 hooks it for exactly this "the window just became active"
@@ -57,7 +69,7 @@
 -- is nearly always the fix -- not a timer.
 --
 -- NOT YET CONFIRMED IN-GAME: that Turbine.UI.ContextMenu / MenuItem behave as CombatAnalysis's
--- use implies (StatOverviewChatMenu.lua) -- nothing else in Reckoning had touched them.
+-- use implies (StatOverviewChatMenu.lua) -- nothing else in Basil had touched them.
 --=================================================================================================
 
 PostButton = class(Turbine.UI.Control)
@@ -67,23 +79,28 @@ local BTN_HEIGHT = 18
 local CHAN_WIDTH = 52
 local GAP = 4
 
+-- The width Analysis:LayoutHeaderExtras reserves for each flavour. The summary button carries the
+-- channel control beside it; the death button is the button alone.
 PostButton.Width = BTN_WIDTH + GAP + CHAN_WIDTH
+PostButton.SoloWidth = BTN_WIDTH
 
--- params: { parent, headerHeight, onNeedLine }
--- `onNeedLine` returns the post's single line for the current window state -- the button never
--- reaches into the analysis window itself, so this file stays independent of its internals.
+-- params: { parent, headerHeight, onNeedLine, preset, showChannel, hideWhenDisabled }
+-- `onNeedLine(preset)` returns the post's single line for the current window state -- the button
+-- never reaches into the analysis window itself, so this file stays independent of its internals.
 function PostButton:Constructor(params)
 	Turbine.UI.Control.Constructor(self)
 
 	self.onNeedLine = params.onNeedLine
 	self.headerHeight = params.headerHeight or 26
+	self.preset = params.preset or "summary"
+	self.hideWhenDisabled = (params.hideWhenDisabled == true)
 	self.line = nil
 	self.enabled = false
 	self.overlayShown = false
 	self.overlayX, self.overlayY = -1, -1
 
-	-- `self` is the themed POST button. The quickslot floats over it; the channel button is a
-	-- separate sibling built below.
+	-- `self` is the themed button. The quickslot floats over it; the channel button, when this
+	-- flavour has one, is a separate sibling built below.
 	self:SetParent(params.parent)
 	self:SetSize(BTN_WIDTH, BTN_HEIGHT)
 	self:SetBackColor(Theme.Color(Theme.Hex.ActiveTab))
@@ -104,10 +121,12 @@ function PostButton:Constructor(params)
 	self.label:SetFont(Font.Verdana10)
 	self.label:SetSize(BTN_WIDTH, BTN_HEIGHT)
 	self.label:SetTextAlignment(Turbine.UI.ContentAlignment.MiddleCenter)
-	self.label:SetText("POST")
+	self.label:SetText(ChatPost.PresetCaption(self.preset))
 	self.label:SetMouseVisible(false)
 
-	self:BuildChannelButton(params.parent)
+	if params.showChannel ~= false then
+		self:BuildChannelButton(params.parent)
+	end
 	self:BuildOverlay()
 	self:Refresh()
 end
@@ -116,8 +135,10 @@ function PostButton:Channel()
 	return (_G.settings and _G.settings.postChannel) or ChatPost.Channels[1].key
 end
 
+-- Fixed at construction, not read from settings. Which shape this button posts is what the button
+-- IS -- see the header note on why that stopped being a mode.
 function PostButton:Preset()
-	return (_G.settings and _G.settings.postPreset) or "summary"
+	return self.preset
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -213,7 +234,9 @@ end
 function PostButton:Place(x, y)
 	local top = y + math.floor((self.headerHeight - BTN_HEIGHT) / 2)
 	self:SetPosition(x, top)
-	self.channel:SetPosition(x + BTN_WIDTH + GAP, top)
+	if self.channel ~= nil then
+		self.channel:SetPosition(x + BTN_WIDTH + GAP, top)
+	end
 	self:SyncOverlay(true)
 end
 
@@ -295,7 +318,7 @@ end
 -- stale numbers. Analysis calls it from RefreshContent, which is the one function all of those
 -- changes already funnel through.
 function PostButton:Rebuild()
-	self.line = self.onNeedLine and self.onNeedLine() or nil
+	self.line = self.onNeedLine and self.onNeedLine(self.preset) or nil
 	self.enabled = (self.line ~= nil and self.line ~= "")
 
 	if self.enabled then
@@ -318,14 +341,31 @@ function PostButton:Tint(fillHex, textHex)
 end
 
 function PostButton:Refresh()
+	-- The death button is taken off the header rather than greyed: an always-present DEATH button
+	-- that is dead nine fights out of ten teaches people to ignore it, where one that appears only
+	-- after a death is itself the report that there was one. The summary button stays visible and
+	-- greys, because "nothing to post in this view" is a state worth showing.
+	if self.hideWhenDisabled then
+		self:SetVisible(self.enabled)
+		if self.channel ~= nil then
+			self.channel:SetVisible(self.enabled)
+		end
+		if not self.enabled then
+			return
+		end
+	end
+
 	if self.enabled then
 		self:Tint(Theme.Hex.ActiveTab, Theme.Hex.Accent200)
 	else
 		self:Tint(Theme.Hex.WindowFill, Theme.Hex.Disabled)
 	end
-	self.channelLabel:SetText(ChatPost.ChannelShort(self:Channel()))
-	self.channelLabel:SetForeColor(Theme.Color(
-		self.enabled and Theme.Hex.Accent200 or Theme.Hex.Disabled))
+
+	if self.channel ~= nil then
+		self.channelLabel:SetText(ChatPost.ChannelShort(self:Channel()))
+		self.channelLabel:SetForeColor(Theme.Color(
+			self.enabled and Theme.Hex.Accent200 or Theme.Hex.Disabled))
+	end
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -334,8 +374,18 @@ end
 
 -- Radio-check pattern from CombatAnalysis/StatOverview/StatOverviewChatMenu.lua, with one
 -- difference: the whole menu is rebuilt each time it opens rather than being built once and
--- re-checked. The death preset's availability depends on which session is selected *now*, and
--- rebuilding is simpler than keeping a long-lived item list in sync with that.
+-- re-checked. Every check mark in here reflects live settings, and rebuilding is simpler than
+-- keeping a long-lived item list in sync with them.
+--
+-- Two groups, separated: WHERE the post goes (a radio set -- one channel), and WHAT is in it (a
+-- check set -- any subset of ChatPost.Parts). Deliberately FLAT rather than a channel submenu plus
+-- a parts submenu: nothing in this codebase has ever nested a Turbine.UI.MenuItem, and this whole
+-- menu is still on the "not confirmed in-game" list as it is (see the file header). Thirteen flat
+-- items is a known quantity; a nested one is a guess.
+--
+-- A menu item closes the menu when clicked, so switching several parts off means reopening the
+-- menu each time. That is the client's behaviour, not a choice here -- and part switching is a
+-- set-it-once thing, unlike the channel.
 --
 -- `self.menu` is kept only so the menu object outlives this function -- letting it be collected
 -- while the client still has it open is not a risk worth taking for one table.
@@ -350,31 +400,39 @@ function PostButton:ShowMenu()
 		item.Click = function()
 			_G.settings.postChannel = channel.key
 			Settings.Save()
-			button:Rebuild()
+			-- The channel is shared by every post button in the header, so one of them changing it
+			-- has to re-arm all of them -- an alias is a static string and the verb is baked into
+			-- it. `onChanged` is the window's own "re-arm everything" hook.
+			button:Changed()
 		end
 		items:Add(item)
 	end
 
 	items:Add(Turbine.UI.MenuItem("-", false, false))
 
-	-- The death preset is offered but disabled when the selected session did not end in a death,
-	-- rather than hidden -- a missing menu entry reads as a bug, a greyed one explains itself.
-	local canDie = (self.onCanDeath == nil) or self.onCanDeath()
-	for i = 1, table.getn(ChatPost.Presets) do
-		local preset = ChatPost.Presets[i]
-		local enabled = (preset.key ~= "death") or canDie
-		local item = Turbine.UI.MenuItem(preset.label, enabled, preset.key == self:Preset())
+	-- The parts govern the SUMMARY line only (ChatPost.Parts' own comment says why the death report
+	-- has none), which is also the only flavour that builds this menu.
+	for i = 1, table.getn(ChatPost.Parts) do
+		local part = ChatPost.Parts[i]
+		local item = Turbine.UI.MenuItem(part.label, true, ChatPost.PartEnabled(part.key))
 		item.Click = function()
-			if not enabled then
-				return
-			end
-			_G.settings.postPreset = preset.key
+			ChatPost.SetPartEnabled(part.key, not ChatPost.PartEnabled(part.key))
 			Settings.Save()
-			button:Rebuild()
+			button:Changed()
 		end
 		items:Add(item)
 	end
 
 	self.menu = menu
 	menu:ShowMenu()
+end
+
+-- Something this menu edits is shared with the other buttons in the header. Falls back to re-arming
+-- just this one if nobody wired the hook, so the button is never left holding a stale alias.
+function PostButton:Changed()
+	if self.onChanged ~= nil then
+		self.onChanged()
+	else
+		self:Rebuild()
+	end
 end

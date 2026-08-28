@@ -1,7 +1,7 @@
 -- Drives the REAL LiveMeter and DeathCause classes against the Turbine stub.
 local env = dofile("stub.lua"); local ROOT = env.ROOT
-import "Reckoning.Constants"
-Trigger = {}; import "Reckoning.Parse.en"; import "Reckoning.Settings"
+import "Basil.Constants"
+Trigger = {}; import "Basil.Parse.en"; import "Basil.Settings"
 local morale = 900000
 _G.lp = {
   GetName = function() return "Luxtheninth" end,
@@ -12,8 +12,8 @@ _G.lp = {
 }
 LocalPlayer = _G.lp; LocalPlayer.name = LocalPlayer:GetName()
 Settings.Load()
-import "Reckoning.Session"; import "Reckoning.Sessions"; import "Reckoning.Buffs"
-import "Reckoning.Events"; import "Reckoning.ChatPost"; import "Reckoning.UI"
+import "Basil.Session"; import "Basil.Sessions"; import "Basil.Buffs"
+import "Basil.Events"; import "Basil.ChatPost"; import "Basil.UI"
 
 local fails = 0
 local function check(label, ok, detail)
@@ -295,93 +295,6 @@ session:PushLastTaken({ time = clock, kind = "tempMorale", amount = 500, moraleP
 d:Show(session)
 check("a temp-morale-only ring marks nothing and does not crash",
   not d.rows[1].tint:IsVisible() and d.rows[1].maxTag:GetText() == "")
-
------------------------------------------------------------------- rotation probe (/reck probe)
--- The probe is a diagnostic, but the shipping segment arithmetic lives in it, so it gets the same
--- treatment as everything else here.
---
--- Two load-bearing checks. The stub CLEARS a control's rotation on SetSize and SetBackground,
--- exactly as the real engine does -- and the scaling sequence ENDS in a SetSize, which is precisely
--- the trap, so a segment must have no rotation recorded until the deferred pass runs. And every
--- segment control must be SQUARE: the engine rotates the image and fits it to the rect, so any
--- other aspect ratio shears the line off its angle.
-local said = {}
-local realWrite = Turbine.Shell.WriteLine
-Turbine.Shell.WriteLine = function(text) said[#said + 1] = text end
-
-local probe = RotationProbe()
-
-check("probe: window is 480x404", probe:GetWidth() == 480 and probe:GetHeight() == 404,
-  probe:GetWidth() .. "x" .. probe:GetHeight())
-check("probe: all five cells built", #probe.cells == 5, #probe.cells .. " cells")
-check("probe: no segment was refused", probe.refused == nil, tostring(probe.refused))
-check("probe: 20 segments (A 1, B 2, C 3, D 3, polyline 11)",
-  #probe.segments == 20, #probe.segments .. " segments")
-check("probe: reports its API status in the window, not only to chat",
-  string.find(probe.statusLine:GetText(), "SetRotation") ~= nil, probe.statusLine:GetText())
-check("probe: prints a key to chat", #said >= 8, #said .. " lines")
-
--- Square, and sized to the segment's own length: both halves of the mechanism round five found.
-local notSquare, badLength = 0, 0
-for i = 1, #probe.linePoints - 1 do
-  local bar = probe.lineBars[i]
-  if bar ~= nil then
-    local w, h = bar:GetSize()
-    if w ~= h then notSquare = notSquare + 1 end
-    local p0, p1 = probe.linePoints[i], probe.linePoints[i + 1]
-    local dx, dy = p1.x - p0.x, p1.y - p0.y
-    if math.abs(w - math.sqrt(dx * dx + dy * dy)) > 1.01 then badLength = badLength + 1 end
-  end
-end
-check("probe: every segment control is square", notSquare == 0, notSquare .. " not square")
-check("probe: every square's side is the segment's own length", badLength == 0,
-  badLength .. " mis-sized")
-
--- The drawn band runs the full width of the square through its centre, so after rotation its ends
--- land on the two data points. Reconstruct them from what was handed to the engine.
-local worst = 0
-for i = 1, #probe.linePoints - 1 do
-  local bar = probe.lineBars[i]
-  if bar ~= nil then
-    local px, py = bar:GetPosition()
-    local side = bar:GetSize()
-    local rad = -math.rad(bar.rotation.z) -- the stored angle is negated, see PlaceSegment
-    local cx, cy = px + side / 2, py + side / 2
-    local p0, p1 = probe.linePoints[i], probe.linePoints[i + 1]
-    worst = math.max(worst,
-      math.abs(cx - side / 2 * math.cos(rad) - p0.x), math.abs(cy - side / 2 * math.sin(rad) - p0.y),
-      math.abs(cx + side / 2 * math.cos(rad) - p1.x), math.abs(cy + side / 2 * math.sin(rad) - p1.y))
-  end
-end
-check("probe: every segment reconstructs onto its two data points", worst <= 1.5,
-  string.format("worst error %.2fpx", worst))
-
--- The deferred pass is the whole point: a rotation set before the control has painted is silently
--- dropped in the real client, so nothing may be rotated at construction time.
-local early = 0
-for _, bar in ipairs(probe.segments) do
-  if bar:GetRotation() ~= nil then early = early + 1 end
-end
-check("probe: nothing is rotated at construction time", early == 0, early .. " rotated early")
-
-probe:Update(); probe:Update()
-check("probe: still unrotated before the deferred pass", not probe.rotated)
-probe:Update()
-check("probe: the deferred pass rotates every segment exactly once", probe.rotated)
-
-local unrotated = 0
-for _, bar in ipairs(probe.segments) do
-  if bar:GetRotation() == nil then unrotated = unrotated + 1 end
-end
-check("probe: every segment carries its rotation after the pass", unrotated == 0,
-  unrotated .. " unrotated")
-
-local before = probe.ticks
-for _ = 1, 50 do probe:Update() end
-check("probe: the pass does not repeat once done", probe.ticks == before,
-  probe.ticks .. " vs " .. before)
-
-Turbine.Shell.WriteLine = realWrite
 
 print("")
 if fails == 0 then print("ALL WINDOW CHECKS PASSED") else print(fails .. " CHECK(S) FAILED"); os.exit(1) end

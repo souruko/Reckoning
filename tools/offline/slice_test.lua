@@ -4,12 +4,12 @@
 local env = dofile("stub.lua")
 local ROOT = env.ROOT
 
-import "Reckoning.Utils.Type"
-import "Reckoning.Utils.Class"
-import "Reckoning.Constants"
+import "Basil.Utils.Type"
+import "Basil.Utils.Class"
+import "Basil.Constants"
 Trigger = {}
-import "Reckoning.Parse.en"
-import "Reckoning.Settings"
+import "Basil.Parse.en"
+import "Basil.Settings"
 
 _G.lp = {
 	GetName = function() return "Luxtheninth" end,
@@ -26,9 +26,9 @@ LocalPlayer.name = LocalPlayer:GetName()
 
 Settings.Load()
 
-import "Reckoning.Session"
-import "Reckoning.Sessions"
-import "Reckoning.Events"
+import "Basil.Session"
+import "Basil.Sessions"
+import "Basil.Events"
 
 -- Feed a log file through the REAL chat handler, one line per simulated second-ish so events
 -- spread across buckets the way a real fight does.

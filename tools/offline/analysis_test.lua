@@ -3,8 +3,8 @@
 -- sorting and the skill/buff splitter -- checking that the block stack stays consistent and the
 -- numbers agree with what Session:Slice says they should be.
 local env = dofile("stub.lua"); local ROOT = env.ROOT
-import "Reckoning.Constants"
-Trigger = {}; import "Reckoning.Parse.en"; import "Reckoning.Settings"
+import "Basil.Constants"
+Trigger = {}; import "Basil.Parse.en"; import "Basil.Settings"
 
 local effectSet = {}
 local function MakeEffect(name, icon, debuff)
@@ -24,8 +24,8 @@ _G.lp = {
 }
 LocalPlayer = _G.lp; LocalPlayer.name = LocalPlayer:GetName()
 Settings.Load()
-import "Reckoning.Session"; import "Reckoning.Sessions"; import "Reckoning.Buffs"
-import "Reckoning.Events"; import "Reckoning.ChatPost"; import "Reckoning.UI"
+import "Basil.Session"; import "Basil.Sessions"; import "Basil.Buffs"
+import "Basil.Events"; import "Basil.ChatPost"; import "Basil.UI"
 
 local fails = 0
 local function check(label, ok, detail)
@@ -205,14 +205,24 @@ check("filter and range combine",
 w:SelectFilter(nil)
 w.resetButton.MouseClick()
 
--- 10. a hidden series survives a range drag (SetSeries must not fire per refresh)
+-- 10. the companion series starts hidden, and a legend toggle survives a range drag
+-- (SetSeries must not fire per refresh)
 w:SelectView("taken")
+check("the companion series starts hidden on 'taken'", w.graph.hidden.healIn == true)
+check("...but the view's own series does not", w.graph.hidden.taken ~= true)
 w.graph:ToggleSeries("healIn")
-check("series hidden by the legend", w.graph.hidden.healIn == true)
+check("legend click un-hides the companion series", w.graph.hidden.healIn ~= true)
 w:OnRangeChanged(5, 44)
-check("still hidden after a range drag", w.graph.hidden.healIn == true)
+check("still shown after a range drag", w.graph.hidden.healIn ~= true)
+w.graph:ToggleSeries("taken")
+check("either series can be hidden by the legend", w.graph.hidden.taken == true)
 w:SelectView("healOut"); w:SelectView("taken")
-check("switching views clears the hidden set", w.graph.hidden.healIn ~= true)
+check("switching views restores the default hidden set",
+  w.graph.hidden.healIn == true and w.graph.hidden.taken ~= true)
+w:SelectView("healIn")
+check("'healing in' hides damage taken by default", w.graph.hidden.taken == true)
+check("...and shows its own series", w.graph.hidden.healIn ~= true)
+w:SelectView("taken")
 w.resetButton.MouseClick()
 
 -- 11. buff section
@@ -838,7 +848,7 @@ w:SelectView("done")
 w:SelectFilter(nil)
 w:ResetRange()
 _G.settings.postChannel = "fellowship"
-_G.settings.postPreset = "summary"
+_G.settings.postOmit = {}
 w:RefreshContent()
 
 -- Header layout: the pair sits left of the range chip, inside the window.
@@ -860,8 +870,14 @@ check("the alias is addressed to the chosen channel",
 -- The refusal this replaced: a multi-line alias sent as one oversized message.
 local armed = pb.shortcut:GetData()
 check("the armed alias is a single line", string.find(armed, "\n", 1, true) == nil)
-check("the armed alias fits the message limit",
-  string.len(armed) <= ChatPost.MAX_MESSAGE + 12, tostring(string.len(armed)))
+-- Two limits, not one: MAX_MESSAGE caps the VISIBLE text (what the reader gets), MAX_RENDERED the
+-- string with its <rgb=..> markup (what the client is handed). The +12 on each is the slash verb the
+-- alias carries in front of the line.
+check("the armed alias's visible text fits the message limit",
+  string.len((string.gsub(string.gsub(armed, "<rgb=#%x+>", ""), "</rgb>", "")))
+    <= ChatPost.MAX_MESSAGE + 12, tostring(string.len(armed)))
+check("the armed alias fits the rendered limit",
+  string.len(armed) <= ChatPost.MAX_RENDERED + 12, tostring(string.len(armed)))
 check("the armed alias is coloured when postColor is on",
   _G.settings.postColor ~= true or string.find(armed, "<rgb=", 1, true) ~= nil)
 check("colour tags in the armed alias are balanced", (function()
@@ -956,27 +972,80 @@ pb:Rebuild()
 -- The menu opens from the channel button (a plain Control), not the quickslot's right-click.
 check("the channel button takes clicks", pb.channel:IsMouseVisible() == true)
 
--- The death preset is offered only when the selected session actually died.
+-- The death report is its OWN button, and it is only on the header when the fight killed you --
+-- the thing to pin is that it goes away again, since a stale DEATH button on a fight you survived
+-- would arm an alias built from another session's killing blow.
+local db = w.deathButton
+check("the window built a second, death-report button", db ~= nil)
+check("the two buttons post different shapes", pb:Preset() == "summary" and db:Preset() == "death")
+check("only the summary button carries the channel control",
+  pb.channel ~= nil and db.channel == nil)
+check("DEATH sits left of POST", select(1, db:GetPosition()) < select(1, pb:GetPosition()),
+  select(1, db:GetPosition()) .. " < " .. select(1, pb:GetPosition()))
+
 local wasDead = w.selectedSession.died
 w.selectedSession.died = false
-check("death preset unavailable when the fight had no death", pb.onCanDeath() == false)
-w.selectedSession.died = true
-check("death preset available after a death", pb.onCanDeath() == true)
+w:RefreshContent()
+check("no death, no DEATH button", db:IsVisible() == false)
+check("...and its overlay collapses with it, leaving no dead click target",
+  select(1, db.overlay:GetSize()) == 0)
 
+w.selectedSession.died = true
+w:RefreshContent()
+check("a fight that killed you puts the DEATH button back", db:IsVisible() == true)
+check("...armed with the death report, not the summary",
+  db.line ~= nil and string.find(db.line, "Died to", 1, true) ~= nil, tostring(db.line))
+check("...and addressed to the same channel as POST",
+  string.sub(db.shortcut:GetData() or "", 1, 3) == "/f ")
+check("the two buttons do not post the same text", db.line ~= pb.line)
+w.selectedSession.died = wasDead
+w:RefreshContent()
+
+-- The menu is one flat list: where the post goes, then what is in it.
 pb.channel.MouseClick()
 local items = pb.menu:GetItems()
 check("clicking the channel button opens a menu", items:GetCount() > 0)
-check("menu lists every channel plus both presets and a separator",
-  items:GetCount() == table.getn(ChatPost.Channels) + table.getn(ChatPost.Presets) + 1,
+check("menu lists every channel, a separator, then every summary part",
+  items:GetCount() == table.getn(ChatPost.Channels) + table.getn(ChatPost.Parts) + 1,
   tostring(items:GetCount()))
-check("death entry is enabled for a session that died",
-  items:Get(items:GetCount()):IsEnabled() == true)
-w.selectedSession.died = false
-pb.channel.MouseClick()
-items = pb.menu:GetItems()
-check("death entry is disabled for a session that did not",
-  items:Get(items:GetCount()):IsEnabled() == false)
-w.selectedSession.died = wasDead
+check("every part starts checked", (function()
+  for i = 1, table.getn(ChatPost.Parts) do
+    if items:Get(table.getn(ChatPost.Channels) + 1 + i):IsChecked() ~= true then return false end
+  end
+  return true
+end)())
+
+-- Switching a part off has to reach the armed alias, not just the setting -- an alias is a static
+-- string, so a part toggle that does not re-arm posts the piece it just removed.
+local before = pb.line
+local critItem = items:Get(table.getn(ChatPost.Channels) + 1 + 6)
+check("the sixth part entry is crit", critItem:GetText() == "Crit %", critItem:GetText())
+critItem.Click()
+check("switching crit off drops it from the post",
+  pb.line ~= nil and string.find(pb.line, "crit", 1, true) == nil, tostring(pb.line))
+check("...and shortens the line rather than leaving a dangling separator",
+  string.len(pb.line) < string.len(before) and string.find(pb.line, "|  ", 1, true) == nil)
+check("...and it was persisted as an exclusion, never as a false",
+  _G.settings.postOmit.crit == true)
+critItem.Click()
+check("switching it back on restores the post", pb.line == before)
+
+-- Every part off is reachable in eight clicks and must disarm the button, not arm an empty alias.
+for i = 1, table.getn(ChatPost.Parts) do
+  ChatPost.SetPartEnabled(ChatPost.Parts[i].key, false)
+end
+w:RefreshContent()
+check("with every part off the summary button disarms", pb.enabled == false)
+check("...and reports it as such rather than as missing data",
+  ChatPost.AnyPartEnabled() == false)
+check("...while the death report, which has no parts, is unaffected",
+  ChatPost.BuildLine(w.selectedSession, "death", "done", nil, nil, nil) ~= nil
+    or w.selectedSession.died ~= true)
+for i = 1, table.getn(ChatPost.Parts) do
+  ChatPost.SetPartEnabled(ChatPost.Parts[i].key, true)
+end
+w:RefreshContent()
+check("turning them back on re-arms it", pb.enabled == true)
 
 -- Range and filter must reach the post -- the whole point of the feature is that what gets posted
 -- is what the window is showing. `pb.lines` is legitimately nil when the scoped range contains no
@@ -1025,9 +1094,152 @@ check("switching back restores the post", PostText() == fullText)
 
 -- Shutdown must leave nothing clickable behind: the overlay is a top-level Window and outlives
 -- the plugin otherwise.
-pb:Shutdown()
+w:ShutdownPostButtons()
 check("shutdown collapses the overlay", select(1, pb.overlay:GetSize()) == 0)
 check("shutdown hides the overlay", pb.overlay:IsVisible() == false)
+check("shutdown reaches the death button's overlay too",
+  select(1, db.overlay:GetSize()) == 0 and db.overlay:IsVisible() == false)
+
+-- 19. The graph's rotation pass must not run while the window is off screen. A fight ending
+-- redraws the plot through Sessions.OnClosed whether the window is open or not, and a rotation
+-- applied to a control that is not being drawn is the "set before it painted" case the engine
+-- drops -- which revealed those segments flat until the next redraw. Reported in-game as a plot
+-- that was sometimes unrotated and came right the moment the range was moved.
+local function SegmentsShown()
+  local n = 0
+  for slot = 1, 2 do
+    for i = 1, GraphBucketCount() - 1 do
+      if w.graph.seg[slot][i]:IsVisible() then n = n + 1 end
+    end
+  end
+  return n
+end
+
+w:SetVisible(false)
+w:RefreshContent()                     -- the redraw a fight ending would cause
+for _ = 1, 6 do w:Update() end         -- heartbeat ticks while hidden
+check("a hidden window does not run the rotation pass", SegmentsShown() == 0,
+  SegmentsShown() .. " revealed while hidden")
+check("...and the pass is still armed for when it is shown", w.graph.rotateIn ~= nil)
+
+w:SetVisible(true)
+w:Update()
+-- ArmRotation sets the full delay and this same Update then spends one frame of it.
+check("showing the window re-arms the pass", w.graph.rotateIn == 1, tostring(w.graph.rotateIn))
+for _ = 1, 6 do w:Update() end
+check("the pass then runs and reveals the line", SegmentsShown() > 0, tostring(SegmentsShown()))
+check("every revealed segment carries its rotation", (function()
+  for slot = 1, 2 do
+    for i = 1, GraphBucketCount() - 1 do
+      local seg = w.graph.seg[slot][i]
+      if seg:IsVisible() and seg:GetRotation() == nil then return false end
+    end
+  end
+  return true end)())
+
+-- The pass no longer finishes in six frames: it re-applies on the ROTATE_GAPS schedule, and a
+-- redraw that actually re-specified segments spends one extra RECOVERY round first -- re-running
+-- SetSize so that a rotation the engine has already recorded (and dropped) can take at all. It must
+-- still SETTLE, since a schedule that never ends is a per-frame cost on an idle window, so run it
+-- out and check that it does.
+local passFrames = 0
+while w.graph.rotateIn ~= nil and passFrames < 200 do
+  w:Update()
+  passFrames = passFrames + 1
+end
+check("the pass settles rather than running every frame", w.graph.rotateIn == nil,
+  passFrames .. " further frames")
+check("...and the recovery round it spent is not left armed for another",
+  w.graph.recoveryPending == false, tostring(w.graph.recoveryPending))
+check("...leaving every segment on screen and rotated", SegmentsShown() > 0 and (function()
+  for slot = 1, 2 do
+    for i = 1, GraphBucketCount() - 1 do
+      local seg = w.graph.seg[slot][i]
+      if seg:IsVisible() and seg:GetRotation() == nil then return false end
+    end
+  end
+  return true end)(), tostring(SegmentsShown()))
+
+-- A redraw that re-specifies nothing must NOT buy a recovery round. This is the range-slider drag:
+-- it redraws on every bucket it crosses without moving the series, DrawSegment early-returns for
+-- every segment, and paying for a full invalidate-and-redraw on each tick would be the expensive
+-- half of the fix landing on the one path that cannot benefit from it.
+w.graph:Redraw()
+check("a redraw that changes no segment arms no recovery round",
+  w.graph.recoveryPending == false, tostring(w.graph.recoveryPending))
+
+-- The backstop for the reported "the analysis window itself is rotated": while a pass is running,
+-- Update holds this window's own rotation at zero, so a stray angle that lands on the window
+-- rather than on a segment self-corrects instead of persisting until a reload.
+w:RefreshContent()
+w:SetRotation({ x = 0, y = 0, z = 42 })
+for _ = 1, 8 do w:Update() end
+check("a stray rotation on the window itself is scrubbed by the pass",
+  w:GetRotation() ~= nil and w:GetRotation().z == 0,
+  tostring(w:GetRotation() and w:GetRotation().z))
+
+-- 20. Charting an effect must not break the line graph. Reported in-game exactly that way: adding
+-- a buff lane makes the block taller, resizing the graph drops the rotations its segments carry,
+-- and every segment's geometry is unchanged -- so DrawSegment early-returns for all of them, the
+-- pass re-applies angles the engine already has recorded (a no-op, the same rule the recovery
+-- round exists for), and the plot flattens until some later redraw genuinely moves the data.
+--
+-- The stub cannot model a parent resize clearing a child's rotation, so what is pinned here is the
+-- FIX's own signature rather than the symptom: a lane change has to re-specify the segments
+-- (drewSegments) and buy the recovery round, exactly as a data change does.
+w:SetVisible(true)
+while w.graph.rotateIn ~= nil do w:Update() end   -- settle before measuring
+
+local laneVictim = w.charted[#w.charted]
+w:ToggleCharted(laneVictim)                        -- one lane fewer: the block shrinks
+check("un-charting re-specifies every segment", w.graph.drewSegments == true,
+  tostring(w.graph.drewSegments))
+check("...and buys the recovery round that makes the re-apply take",
+  w.graph.recoveryPending == true, tostring(w.graph.recoveryPending))
+check("...with the segments hidden until the pass reveals them", SegmentsShown() == 0,
+  tostring(SegmentsShown()))
+
+local laneFrames = 0
+while w.graph.rotateIn ~= nil and laneFrames < 200 do w:Update(); laneFrames = laneFrames + 1 end
+check("the pass after a lane change settles", w.graph.rotateIn == nil, laneFrames .. " frames")
+check("...leaving the whole line back on screen and rotated", SegmentsShown() > 0 and (function()
+  for slot = 1, 2 do
+    for i = 1, GraphBucketCount() - 1 do
+      local seg = w.graph.seg[slot][i]
+      if seg:IsVisible() and seg:GetRotation() == nil then return false end
+    end
+  end
+  return true end)(), tostring(SegmentsShown()))
+
+w:ToggleCharted(laneVictim)                        -- back to where the section started
+while w.graph.rotateIn ~= nil do w:Update() end
+check("re-charting restores the lane", w.graph.laneCount == #w.charted,
+  w.graph.laneCount .. " vs " .. #w.charted)
+
+-- The other half of the same rule: a refresh that re-states the SAME lanes must cost nothing.
+-- SetLanes runs on every single RefreshContent -- every range drag, every column sort -- and an
+-- unconditional invalidate there would flicker the plot for the whole of a drag.
+w:RefreshContent()
+check("a refresh with the lane set unchanged re-specifies nothing",
+  w.graph.drewSegments == false, tostring(w.graph.drewSegments))
+
+-- The lane draw is the redraw's only stage that touches Icon.Apply, the least-confirmed native
+-- call in the graph -- and it runs BEFORE the redraw arms the rotation pass. A throw there used to
+-- take the arm with it, which leaves every segment hidden: not a missing lane icon but a line
+-- graph that disappears completely. DrawLanesSafely is what stops that.
+while w.graph.rotateIn ~= nil do w:Update() end
+local realDrawLanes = w.graph.DrawLanes
+w.graph.DrawLanes = function() error("lane draw blew up") end
+w.graph:Invalidate()
+local redrewOk = pcall(function() w.graph:Redraw() end)
+w.graph.DrawLanes = realDrawLanes
+check("a throwing lane draw does not escape the redraw", redrewOk == true)
+check("...and the rotation pass is still armed", w.graph.rotateIn ~= nil, tostring(w.graph.rotateIn))
+check("...so the line comes back rather than staying hidden", (function()
+  local frames = 0
+  while w.graph.rotateIn ~= nil and frames < 200 do w:Update(); frames = frames + 1 end
+  return SegmentsShown() > 0 end)(), tostring(SegmentsShown()))
+check("...and the error is kept for diagnosis", w.graph.laneError ~= nil)
 
 print("")
 if fails == 0 then print("ALL ANALYSIS CHECKS PASSED") else print(fails .. " CHECK(S) FAILED"); os.exit(1) end

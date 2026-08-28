@@ -1,4 +1,4 @@
-repo: souruko/Reckoning
+repo: souruko/Basil
 branch: main
 
 ## Last sync

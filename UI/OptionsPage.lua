@@ -54,7 +54,7 @@ function OptionsPage:Grow(by)
 end
 
 -- Adds a refresher, i.e. one control's "re-read the setting you edit". Run by Refresh() after
--- Defaults / /reck reset, which change every value out from under the page.
+-- Defaults / /basil reset, which change every value out from under the page.
 function OptionsPage:OnRefresh(fn)
 	self.refreshers[table.getn(self.refreshers) + 1] = fn
 end
@@ -324,16 +324,9 @@ function OptionsPage:Button(x, y, width, height, text, dangerous, onClick)
 	return button, label
 end
 
--- A right-aligned button occupying a whole row of its own.
-function OptionsPage:ButtonRow(text, width, dangerous, onClick)
-	local button, label = self:Button(RIGHT - width, self.y, width, 26, text, dangerous, onClick)
-	self:Grow(26)
-	return button, label
-end
-
 ---------------------------------------------------------------------------------------------------
 
--- Re-reads every control on this page from _G.settings. Called after Defaults and /reck reset.
+-- Re-reads every control on this page from _G.settings. Called after Defaults and /basil reset.
 function OptionsPage:Refresh()
 	for i = 1, table.getn(self.refreshers) do
 		self.refreshers[i]()

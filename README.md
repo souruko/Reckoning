@@ -1,4 +1,4 @@
-# Reckoning
+# Basil
 
 A Lord of the Rings Online (LotRO) plugin that reads the combat chat log and reports on the
 local player's own combat: a compact always-on live meter, a death post-mortem that appears
@@ -7,12 +7,22 @@ the local player only -- nothing is read off targets or the group.
 
 ## Status
 
-All six phases of `docs/IMPLEMENTATION_PLAN.md` are built: the full data pipeline, all three
-windows (live meter, death cause, post-combat analysis), and the options panel / `/reck`
-commands. **None of it has been loaded in-game yet.** Phases 1-2 were checked offline against
-real combat logs; everything from Phase 2 on (all the `Turbine.UI` code) is syntax-checked only.
-See `CLAUDE.md`'s "Build status" and "Analysis window: what's genuinely unverified" before
-trusting any of it -- load it in-game and work through each phase's "Done when" line next.
+All six phases of `docs/IMPLEMENTATION_PLAN.md` are built and have been loaded and used in-game:
+the full data pipeline, four windows (live meter, death post-mortem, post-combat analysis,
+options), chat posting, and the `/basil` commands. `CLAUDE.md`'s "Build status" section is the
+running record of what a real load has confirmed and what is still only reasoned-about -- read it
+before changing any `Turbine.UI` call, since most of its entries are bugs that only an in-game
+load could have found.
+
+Only English combat chat is parsed (`Parse/en.lua`); German and French drop-ins are documented in
+that file's header but not written.
+
+## Commands
+
+`/basil help` lists them. `/basil options` opens the settings window (the same thing the Plugin
+Manager's **Open options** button does), `/basil post [death]` previews the chat post the analysis
+window currently has armed, and `/basil show|hide|move <live|death|analysis|options>` plus
+`/basil reset` are the window recovery commands.
 
 ## Design source
 
@@ -35,14 +45,18 @@ in-game to see a change:
 
 ```
 /plugins refresh
-/plugins load Reckoning
+/plugins load Basil
 ```
 
 Runtime errors surface in the LotRO chat window; there is no other log.
 
+Run `sh tools/offline/run.sh` before every in-game load. It needs `lua5.1` (the game's own Lua
+version) and runs the real classes and the real `Main.lua` against a `Turbine` stub. It cannot
+tell you whether anything actually draws, but everything it catches is a reload you don't spend.
+
 ## Version bumps
 
-The version appears in **two** files and must be kept in sync: `Reckoning.plugin`
-(`<Version>`) and `Reckoning.plugincompendium` (`<Version>`), plus `Constants.lua`
-(`Reckoning.Version`). `CHANGELOG.md` gets a matching entry, written for players rather than
-developers.
+The version appears in **three** places and must be kept in sync: `Basil.plugin` (`<Version>`),
+`Basil.plugincompendium` (`<Version>`) and `Constants.lua` (`Basil.Version`) --
+`tools/offline/load_test.lua` asserts the last of those, so a half-done bump fails there.
+`CHANGELOG.md` gets a matching entry, written for players rather than developers.

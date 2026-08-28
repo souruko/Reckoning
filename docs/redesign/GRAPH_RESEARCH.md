@@ -95,7 +95,7 @@ seg:SetRotation(seg.rotation)                        -- re-apply, always last
 ```
 
 47 segments per series instead of 94 rects, and a genuine diagonal. Probe checklist, in this
-order (30 minutes with `/reck debug` and one throwaway window):
+order (30 minutes with `/basil debug` and one throwaway window):
 
 1. Does `SetRotation` exist on `Turbine.UI.Control`, or only on `Window`? (Gibberish3 only
    proves `Window`. If it's Window-only, each segment becomes a Window — heavier, and worth
@@ -117,7 +117,7 @@ way, which is why A is worth building first.
 ## 4. Option C — a slope sprite atlas
 
 No rotation needed. Author one white 32×32 `.tga` per slope bucket (say 16 buckets from −75°
-to +75°, plus a flat one), ship them in `Reckoning/RESOURCES/`, then per segment pick the
+to +75°, plus a flat one), ship them in `Basil/RESOURCES/`, then per segment pick the
 nearest bucket and stretch the sprite over the segment's bounding box:
 
 ```lua
@@ -125,7 +125,7 @@ seg:SetSize(w, h)
 seg:SetStretchMode(2)                                  -- scale image to control
 seg:SetBlendMode(Turbine.UI.BlendMode.Overlay)         -- so SetBackColor tints it
 seg:SetBackColor(colour)
-seg:SetBackground("Reckoning/RESOURCES/slope_08.tga")  -- path, not a shared Graphic
+seg:SetBackground("Basil/RESOURCES/slope_08.tga")  -- path, not a shared Graphic
 ```
 
 - Works on documented API only, gives smooth antialiased diagonals, and the Overlay + BackColor
@@ -160,10 +160,10 @@ Two things to hold onto whichever way it goes: the morale background stays plain
 plot), and every control is created once in the constructor and only ever repositioned. The
 current `AnalysisGraph.lua` already pools correctly; none of this changes that contract.
 
-## 7. The probe, as built (`/reck probe`)
+## 7. The probe, as built (deleted for release -- see the end of this section)
 
-§3's checklist is now a window: `UI/RotationProbe.lua`, opened with
-`/reck probe [control|window] [plain|sprite]`. Reading Gibberish3's
+§3's checklist became a window: `UI/RotationProbe.lua`, opened with
+`/basil probe [control|window] [plain|sprite]`. Reading Gibberish3's
 `UI_ELEMENTS/TIMER/CIRCEL/Element.lua` in full added two questions §3 did not ask, and both
 change the shipping code if they come back the wrong way:
 
@@ -284,6 +284,17 @@ change, to a control long since on screen. Nothing here did.
 So, on a `Turbine.UI.Window`: `SetRotation` works, at **arbitrary** angles, provided it is applied
 after the control has painted.
 
+**"Silently dropped" turned out to be the mild version of that failure.** The ported plot rotated
+each segment while it was still `SetVisible(false)` (hide on draw, rotate and reveal together in
+the pass) and was reported in-game as *the whole analysis window* coming up rotated, most often
+right after picking a session off the rail -- the redraw that first brings previously-unused pool
+segments onto the plot. A rotation aimed at a Window that is not being drawn can land on the
+top-level window instead of being discarded. Both shipping line graphs in this install set visible
+**before** rotating and never the reverse (`Thurallor/Common/UI/Line.lua:15-33`,
+`PrimePlugins/Parse/GraphWindow.lua:873/891`, `929/932`); `Graph:FlushRotation` now does the same
+in two stages -- reveal on one frame, rotate on the next few -- and `Analysis:Update` holds the
+window's own rotation at zero for the duration of a pass as a backstop.
+
 Cells A-D showed all four stretch modes tiling -- which was **the probe's fault, not the engine's**.
 Per the plugin's author, scaling needs a specific sequence:
 
@@ -392,9 +403,13 @@ segment.rotation.z = -math.deg(math.atan2(dy, dx))   -- NEGATED
 | Clipping | **Controls clip to their parent, Windows do not** |
 | Stroke width | a fraction of the segment's LENGTH, because the control is sized to it -- so the stroke is a ladder of eight sprites picked by length, not one sprite |
 
-The probe has answered everything it was built for. **Delete `UI/RotationProbe.lua`, its
-`/reck probe` command, `Resources/wedge.tga`, `Resources/line.tga`, `Resources/line_long.tga` and
-the `windows.probe` key it leaves in saved settings** once the line graph is confirmed in-game.
+**The probe is gone.** It answered everything it was built for, so the release cleanup deleted
+`UI/RotationProbe.lua`, its `/basil probe` command, `Resources/wedge.tga`, `Resources/line.tga` and
+`Resources/line_long.tga`. The answer table above is now the only record of what it found, and
+`UI/AnalysisGraph.lua` is written against it -- read this section before changing anything in
+`DrawSegment`, `ArmRotation` or `FlushRotation`. A save written while the probe existed still
+carries a stale `windows.probe` key; nothing reads it and the settings merge never removes keys, so
+it is harmless.
 
 ### The one thing a probe did not catch
 
@@ -426,3 +441,36 @@ on every bucket it crosses *without moving the series at all*, so hiding on ever
 blanked the plot for the whole drag -- trading a brief flat line for a much worse flicker.
 `DrawSegment` therefore memoises size, position, angle, sprite and colour, and returns without
 touching the control when none of them changed.
+
+### The third thing a probe did not catch
+
+"Adding effects to the graph breaks the line graph." Charting a self-buff adds a lane, a lane makes
+the block taller, and `Graph:LayoutRows` resizes the graph -- the **parent** of every segment -- to
+suit. That drops the rotations the segments are carrying, by the same rule `SetSize` clears one on
+the control it is called on.
+
+What makes it stick rather than self-correct is the memoisation above meeting the recovery round's
+own finding. `Analysis:RefreshContent` calls `SetData` (and so `Redraw`) **before** `SetLanes`, so by
+the time the block is taller no segment's own geometry has changed; `DrawSegment` early-returns for
+every one of them, and the pass that follows re-applies angles the engine has already recorded --
+which is a no-op. The plot flattens the moment a buff is charted and stays flat until a redraw that
+genuinely moves the data, which is why the report reads as "charting breaks it" rather than "the
+plot is sometimes flat".
+
+The fix is the recovery round's remedy, one step earlier and on a different trigger: `LayoutRows`
+returns whether it actually changed the control's size, and `SetLanes` responds to that with
+`Invalidate()` + `Redraw()`, so every segment goes back through `SetSize` and a fresh pass rotates
+it. It has to be gated on the size really changing -- `SetLanes` runs on every single
+`RefreshContent`, and an unconditional invalidate would flicker the plot for the whole of a range
+drag, which is the exact trap the memoisation exists to avoid.
+
+**The general rule, which outlives this instance**: a segment's rotation is state the engine holds,
+and *anything* that resizes a segment or an ancestor of one invalidates it. The plot's own draw
+cache only knows about the segment's geometry, so a resize that happens anywhere else has to say so
+explicitly.
+
+One unrelated way to produce the same report was closed at the same time. `DrawLanes` runs inside
+`Redraw`, ahead of `ArmRotation`, and is the only stage that touches `Icon.Apply` -- the least
+confirmed native call in the file. A throw there took the arm with it, and because `DrawSegment`
+hides what it re-specifies and only the pass ever reveals it, the whole line disappeared rather than
+one lane icon. `Graph:DrawLanesSafely` is now the only caller.

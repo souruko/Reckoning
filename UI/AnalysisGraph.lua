@@ -16,18 +16,22 @@
 --   legend           18   series swatches (clickable) + the range's peak/low morale readout
 --
 -- REAL DIAGONALS, and every word of how they are drawn was paid for by six rounds of in-game
--- probing (`/reck probe`, UI/RotationProbe.lua; the answers are in GRAPH_RESEARCH.md section 7).
+-- probing with a throwaway diagnostic window; the answers are in GRAPH_RESEARCH.md section 7,
+-- which is now the only record of them -- the probe window itself was deleted for release.
 -- Turbine has no canvas and no line primitive, so a diagonal can only come from rotating an
--- axis-aligned control, and `SetRotation` here has four properties that together dictate the
+-- axis-aligned control, and `SetRotation` here has five properties that together dictate the
 -- entire shape of this code:
 --
 --   1. It is ABSENT on `Turbine.UI.Control` and present on `Turbine.UI.Window`. Every segment in
 --      the pool is therefore a Window, not a Control. This is not a preference.
---   2. **A rotation set before the control has painted is silently dropped.** One apply on a
---      LATER frame is enough and it sticks -- hence `rotateIn` and `FlushRotation` below, and
---      hence Analysis:Update, which is the only thing that calls it. A segment is therefore drawn
---      HIDDEN and revealed by that pass: between being sized and being rotated it would paint
---      flat, which reads in-game as the whole line snapping to a horizontal bar on every redraw.
+--   2. **A rotation set before the control has painted is silently dropped, and the engine still
+--      records it** -- so a later apply of the SAME angle is a no-op and cannot recover it. An
+--      apply on a later frame sticks, which is why `rotateIn`/`FlushRotation` exist below (driven
+--      by Analysis:Update, the only caller); and when even that lands too early, the only way back
+--      is to run `SetSize` again, which CLEARS the stored rotation and makes the next apply a real
+--      change -- FlushRotation's recovery round. A segment is therefore drawn HIDDEN and revealed
+--      by that pass: between being sized and being rotated it would paint flat, which reads in-game
+--      as the whole line snapping to a horizontal bar on every redraw.
 --   3. **The control's rect never rotates -- the IMAGE is rotated and then FITTED to the rect.**
 --      So a thin 2px control can never be a diagonal at any angle: a rotated white rectangle
 --      refitted into a 2px slot is still a 2px horizontal bar. The segment control is instead a
@@ -39,6 +43,10 @@
 --   4. Positive z turns the OPPOSITE way from screen-space convention, so the angle is NEGATED.
 --      Without that every segment draws mirrored about its own midpoint -- right length, right
 --      centre, both ends on the wrong side, so nothing meets at the joints.
+--   5. The rotation is state the ENGINE holds, so resizing a segment -- or an ANCESTOR of one --
+--      invalidates it, and this file's draw cache only knows about the segment's own geometry.
+--      Anything that resizes the graph therefore has to say so: see Graph:SetLanes, where charting
+--      a buff made the block taller and flattened the whole plot until the next real data change.
 --
 -- Scaling an image also needs an exact call order -- size the control to the IMAGE's own size,
 -- `SetBackground`, `SetStretchMode(1)`, and only THEN size it to the target. With the target size
@@ -83,14 +91,14 @@ local DOT_SIZE    = 5
 local STROKE_NATIVE = 64
 local STROKE_TARGET = 2 -- the stroke width the ladder is chosen to hold, in pixels
 local STROKE_SPRITES = {
-	{ band = 1.0, image = "Reckoning/Resources/stroke_10.tga" },
-	{ band = 1.5, image = "Reckoning/Resources/stroke_15.tga" },
-	{ band = 2.0, image = "Reckoning/Resources/stroke_20.tga" },
-	{ band = 2.5, image = "Reckoning/Resources/stroke_25.tga" },
-	{ band = 3.0, image = "Reckoning/Resources/stroke_30.tga" },
-	{ band = 4.0, image = "Reckoning/Resources/stroke_40.tga" },
-	{ band = 5.0, image = "Reckoning/Resources/stroke_50.tga" },
-	{ band = 6.0, image = "Reckoning/Resources/stroke_60.tga" },
+	{ band = 1.0, image = "Basil/Resources/stroke_10.tga" },
+	{ band = 1.5, image = "Basil/Resources/stroke_15.tga" },
+	{ band = 2.0, image = "Basil/Resources/stroke_20.tga" },
+	{ band = 2.5, image = "Basil/Resources/stroke_25.tga" },
+	{ band = 3.0, image = "Basil/Resources/stroke_30.tga" },
+	{ band = 4.0, image = "Basil/Resources/stroke_40.tga" },
+	{ band = 5.0, image = "Basil/Resources/stroke_50.tga" },
+	{ band = 6.0, image = "Basil/Resources/stroke_60.tga" },
 }
 
 local SEGMENT_MIN = 4 -- a square smaller than this cannot show a band at all
@@ -113,6 +121,21 @@ end
 -- control has painted is silently dropped (probe round 4), and one apply on a later frame sticks
 -- (round 5), so this is a small margin rather than a repeating cost.
 local ROTATE_DELAY = 2
+
+-- How long to wait before each re-apply of the rotation, in frames, counted from the reveal.
+--
+-- This schedule was written to fix "the FIRST plot after the window is opened or a session is
+-- picked off the rail comes up wrong, and any later redraw comes out right", on the theory that
+-- those are the redraws where the client is still laying the whole tree out and three consecutive
+-- frames is too short a margin. **It did not fix it**, and the reason is in this comment's own last
+-- line: re-applying an angle a segment already carries is a no-op, so once the first apply has been
+-- recorded-but-dropped, every later apply here is discarded as "no change" no matter how long the
+-- gap. FlushRotation's recovery round is what actually fixes that case; see it for the mechanism.
+--
+-- The schedule is kept because it is nearly free and it is the cheaper of the two paths whenever an
+-- apply is merely EARLY rather than swallowed. It stops on its own: six applies per redraw over
+-- about half a second, then nothing until the next one.
+local ROTATE_GAPS = { 1, 1, 2, 4, 8, 16 }
 
 local LANE_HEIGHT     = 16
 local LANE_GAP        = 4
@@ -642,10 +665,21 @@ end
 
 -- Positions every row under the plot for the current width and lane count, and resizes the
 -- whole block. Called on construction, on resize, and whenever the charted-buff set changes.
+--
+-- **Returns true when that resize actually changed this control's own size**, which the caller has
+-- to act on: this control is the PARENT of every polyline segment, and resizing it drops the
+-- rotations its children are carrying (SetSize clearing a stored rotation is the one fact the
+-- rotation probing established beyond doubt, and a parent's relayout takes its subtree with it). The
+-- segments themselves have not moved, so nothing downstream would re-specify them on its own --
+-- see Graph:SetLanes, which is the path that hits this.
 function Graph:LayoutRows()
 	local laneStripY, sliderY, timelineY, legendY = self:RowTops()
 
-	self:SetSize(self.plotWidth, GraphHeightFor(self.laneCount))
+	local height = GraphHeightFor(self.laneCount)
+	local currentWidth, currentHeight = self:GetSize()
+	local resized = (currentWidth ~= self.plotWidth or currentHeight ~= height)
+
+	self:SetSize(self.plotWidth, height)
 
 	local railWidth = math.max(1, self.plotWidth - LANE_ICON_SIZE - LANE_RAIL_GAP)
 	self.laneRailWidth = railWidth
@@ -684,6 +718,8 @@ function Graph:LayoutRows()
 	self.legendRow:SetPosition(0, legendY)
 	self.legendRow:SetSize(self.plotWidth, LEGEND_HEIGHT)
 	self.peakLabel:SetPosition(self.plotWidth - 240, 0)
+
+	return resized
 end
 
 -- Re-widths the plot in place. Bucket count stays fixed; only bucketWidth and the x-positions
@@ -710,11 +746,22 @@ end
 -- Series / data
 ---------------------------------------------------------------------------------------------------
 
--- seriesList: { {key=, label=, colorHex=}, ... }, at most MAX_REGULAR_SERIES entries. Rebuilds
--- the legend row; does not touch data (call SetData after).
+-- seriesList: { {key=, label=, colorHex=, hidden=}, ... }, at most MAX_REGULAR_SERIES entries.
+-- Rebuilds the legend row; does not touch data (call SetData after).
+--
+-- `hidden` on an entry is its STARTING state only -- a companion series a view carries for
+-- context but does not lead with (see SERIES_FOR_VIEW in UI/Analysis.lua). It is seeded here
+-- rather than being a permanent property, so a legend click still toggles it like any other; the
+-- state is reset whenever the view changes, which is the only time Analysis re-declares the series.
 function Graph:SetSeries(seriesList)
 	self.seriesList = seriesList
 	self.hidden = {}
+	for i = 1, table.getn(seriesList) do
+		local series = seriesList[i]
+		if series.key ~= nil and series.hidden then
+			self.hidden[series.key] = true
+		end
+	end
 
 	for i = 1, table.getn(self.legendWidgets) do
 		self.legendWidgets[i].swatch:SetVisible(false)
@@ -945,6 +992,20 @@ end
 
 -- Charted self-buffs: { { name=, colorHex=, initials=, icon=, intervals={ {s=,e=}, ... } }, ... },
 -- at most MAX_LANES. Changes the block's height, so the caller re-runs its own layout after.
+--
+-- **Charting or un-charting an effect is the one thing that resizes this control without moving
+-- any segment, and that used to break the whole line graph.** Adding a lane makes the block
+-- taller; a resize drops the rotations the segments are carrying (see LayoutRows); and then
+-- nothing re-specifies them, because Analysis:RefreshContent's SetData ran BEFORE this and
+-- DrawSegment early-returns on every segment whose geometry is unchanged. So the pass that
+-- follows re-applies angles the engine has already recorded, which is a NO-OP by the same rule
+-- FlushRotation's recovery round exists for -- the plot flattens the instant a buff is charted and
+-- stays flat until some later redraw genuinely moves the data (a range drag, a session switch).
+--
+-- The fix is exactly the recovery round's, run one step earlier: drop the draw cache and redraw,
+-- so every segment goes through SetSize (which clears the stale rotation) and a fresh pass reveals
+-- and rotates it. Gated on the size actually changing, so a refresh that merely re-states the same
+-- lanes -- every range drag, every table sort -- pays nothing.
 function Graph:SetLanes(lanes)
 	lanes = lanes or {}
 	local count = table.getn(lanes)
@@ -954,8 +1015,13 @@ function Graph:SetLanes(lanes)
 
 	self.laneData = lanes
 	self.laneCount = count
-	self:LayoutRows()
-	self:DrawLanes()
+	local resized = self:LayoutRows()
+	self:DrawLanesSafely()
+
+	if resized then
+		self:Invalidate()
+		self:Redraw()
+	end
 end
 
 function Graph:SetRange(from, to)
@@ -1014,7 +1080,7 @@ local function DrawSegment(segment, x0, y0, x1, y1, color)
 		and segment.lastSide == side and segment.lastX == x and segment.lastY == y
 		and segment.lastDeg == deg and segment.lastImage == image
 		and segment.lastColor == color then
-		return
+		return false
 	end
 
 	segment:SetSize(STROKE_NATIVE, STROKE_NATIVE)
@@ -1037,9 +1103,18 @@ local function DrawSegment(segment, x0, y0, x1, y1, color)
 	-- every redraw. `shown` is the "this segment has data" flag FlushRotation reveals from.
 	segment.shown = true
 	segment:SetVisible(false)
+
+	-- Returns true when the segment was actually re-specified, i.e. when its stored rotation was
+	-- just cleared by SetSize and the pass that follows has real work to do. Graph:Redraw collects
+	-- this into `self.drewSegments`; FlushRotation's recovery round is gated on it.
+	return true
 end
 
-function Graph:Redraw()
+-- `recovery` is set only by FlushRotation's own second round -- see ArmRotation. Every other caller
+-- passes nothing.
+function Graph:Redraw(recovery)
+	self.drewSegments = false
+
 	local maxValue = 0
 	for slot = 1, table.getn(self.seriesList) do
 		local key = self.seriesList[slot].key
@@ -1056,7 +1131,7 @@ function Graph:Redraw()
 	self:DrawMorale()
 	self:DrawSeries(maxValue)
 	self:DrawRangeOverlay()
-	self:DrawLanes()
+	self:DrawLanesSafely()
 	self:RefreshLegendColors()
 
 	for i = 1, 2 do
@@ -1066,14 +1141,69 @@ function Graph:Redraw()
 
 	-- Every segment was just re-sized, which clears its rotation, and a rotation re-applied in
 	-- this same frame would be silently dropped. Arm the pass instead; Analysis:Update runs it a
-	-- couple of frames from now, once.
+	-- couple of frames from now.
+	self:ArmRotation(recovery)
+end
+
+-- Drops every segment's "already drawn exactly like this" cache, so the next Redraw re-runs the
+-- full specify sequence on all of them instead of early-returning. The point is the SetSize inside
+-- that sequence: it CLEARS the engine's stored rotation, which is the only known way to make a
+-- re-apply of an angle the segment nominally already carries actually take. See FlushRotation.
+function Graph:Invalidate()
+	for slot = 1, MAX_REGULAR_SERIES do
+		local pool = self.seg[slot]
+		for i = 1, MAX_BUCKETS - 1 do
+			local segment = pool[i]
+			if segment ~= nil then
+				segment.lastSide = nil
+				segment.lastX, segment.lastY = nil, nil
+				segment.lastDeg, segment.lastImage, segment.lastColor = nil, nil, nil
+			end
+		end
+	end
+end
+
+-- Arms the rotation pass. Called by Redraw, and by Analysis:Update when the window comes back on
+-- screen: a redraw can happen while the window is closed (a fight ending reaches RefreshContent
+-- through Sessions.OnClosed), and a pass that ran then rotated controls that were not on screen.
+--
+-- `recovery` marks the pass that FlushRotation's own recovery round arms, and its only job is to
+-- stop that round arming another one. Every other caller passes nothing and gets a recovery round
+-- iff the redraw actually re-specified a segment (`drewSegments`) -- so a range-slider drag, which
+-- re-specifies nothing, never pays for one.
+function Graph:ArmRotation(recovery)
 	self.rotateIn = ROTATE_DELAY
+	self.rotateStep = 0
+	self.revealed = false
+	self.recoveryPending = (not recovery) and (self.drewSegments and true or false)
 end
 
 -- Applies the rotation to every visible segment, a couple of frames after the redraw that sized
--- them. This exists because of the single hardest-won fact in `/reck probe`: **a rotation set
--- before the control has painted is silently dropped**, and one apply on a later frame is enough
--- and sticks. Three rounds of a completely flat plot were exactly this.
+-- them. This exists because of the single hardest-won fact the rotation probing turned up: **a
+-- rotation set before the control has painted is silently dropped**, and a later frame's apply sticks.
+-- Three rounds of a completely flat plot were exactly this.
+--
+-- The pass is TWO stages, and the order is the whole point: **reveal first, rotate second, never
+-- the other way round.** It used to rotate and then reveal in the same frame, which meant every
+-- angle in the plot was applied to a control that was hidden at the time -- and that was reported
+-- in-game as the whole ANALYSIS WINDOW coming up rotated, most often right after a session was
+-- picked off the rail (the redraw that brings previously-unused pool segments onto the plot for
+-- the first time). A rotation aimed at a window that is not being drawn does not simply get
+-- dropped the way the probe's cell D did; it can land on the top-level window instead.
+--
+-- Both working line graphs in the installed plugins do it this order too -- `SetVisible(true)`
+-- and then `SetRotation`, never the reverse: `Thurallor/Common/UI/Line.lua:15-33` and
+-- `PrimePlugins/Parse/GraphWindow.lua:873/891` and again at `929/932`. Rotating a hidden Window
+-- was the one thing this file did that neither of them does.
+--
+-- The cost is one frame in which a freshly-drawn segment paints flat, which is what the old order
+-- was buying with the hide. Only segments whose geometry actually CHANGED pay it -- DrawSegment
+-- leaves an unchanged segment visible and already rotated, untouched -- so a range drag still does
+-- not flicker.
+--
+-- The apply is then repeated on the ROTATE_GAPS schedule -- see that constant for why one is not
+-- reliably enough, and Analysis:Update for the other half of the same bug (a pass must not run at
+-- all while the window is off screen, and it scrubs any stray rotation off the window itself).
 --
 -- Returns true while there is still work pending, so the caller can stop asking.
 function Graph:FlushRotation()
@@ -1085,24 +1215,78 @@ function Graph:FlushRotation()
 	if self.rotateIn > 0 then
 		return true
 	end
-	self.rotateIn = nil
 
-	-- Rotate FIRST, reveal second, and walk the whole pool rather than 1..buckets-1: a segment
-	-- left over from a wider bucket count has had `shown` cleared by SetBucketCount, and reading
-	-- the flag rather than the count means no path can leak a stale one back onto the plot.
+	-- Both loops walk the whole pool rather than 1..buckets-1: a segment left over from a wider
+	-- bucket count has had `shown` cleared by SetBucketCount, and reading the flag rather than the
+	-- count means no path can leak a stale one back onto the plot.
+	if not self.revealed then
+		-- Stage 1: reveal only. These segments paint flat for this one frame.
+		for slot = 1, MAX_REGULAR_SERIES do
+			local pool = self.seg[slot]
+			for i = 1, MAX_BUCKETS - 1 do
+				local segment = pool[i]
+				if segment ~= nil and segment.shown then
+					segment:SetVisible(true)
+				end
+			end
+		end
+		self.revealed = true
+		self.rotateStep = 0
+		self.rotateIn = ROTATE_GAPS[1]
+		return true
+	end
+
+	-- Stage 2: rotate what is now on screen and has painted there. The IsVisible guard is the
+	-- invariant this whole function exists to hold, not an optimisation -- nothing hidden is ever
+	-- handed to SetRotation.
 	for slot = 1, MAX_REGULAR_SERIES do
 		local pool = self.seg[slot]
 		for i = 1, MAX_BUCKETS - 1 do
 			local segment = pool[i]
-			if segment ~= nil and segment.shown then
+			if segment ~= nil and segment.shown and segment:IsVisible() then
 				-- pcall'd for the same reason every other undocumented native call here is: a
 				-- throw must cost one segment's angle, never the whole refresh.
 				pcall(segment.SetRotation, segment, segment.rotation)
-				segment:SetVisible(true)
 			end
 		end
 	end
 
+	local step = (self.rotateStep or 0) + 1
+	self.rotateStep = step
+
+	-- ONE recovery round, immediately after the first apply, whenever this redraw actually
+	-- re-specified segments. This is the fix for "the first plot after the window is opened comes
+	-- up at wrong angles with steps missing, and any redraw fixes it" -- reported after the
+	-- ROTATE_GAPS schedule below had already failed to fix the same thing.
+	--
+	-- The gaps schedule cannot fix it, and its own comment says why without drawing the conclusion:
+	-- re-applying an angle a segment already carries is a NO-OP. So when the first apply lands on a
+	-- control the client has not finished laying out -- which is exactly the window-open and
+	-- session-switch case, where the whole tree paints from scratch at once -- the engine records
+	-- the angle, draws it wrong (or not at all), and every later apply in the schedule is discarded
+	-- as "no change". Five more tries at widening gaps are five more no-ops.
+	--
+	-- What DOES work is the one thing a real redraw does and the schedule does not: run SetSize
+	-- again, which clears the stored rotation and makes the next apply a genuine change. So that is
+	-- what this does -- invalidate the draw cache, redraw (same geometry, so nothing moves), and
+	-- let the fresh pass rotate segments that have now been on screen for several frames. The cost
+	-- is one extra redraw per data change, never per frame and never during a drag.
+	if step == 1 and self.recoveryPending then
+		self.recoveryPending = false
+		self.rotateIn = nil
+		self.rotateStep = nil
+		self:Invalidate()
+		self:Redraw(true)
+		return true
+	end
+
+	if ROTATE_GAPS[step + 1] ~= nil then
+		self.rotateIn = ROTATE_GAPS[step + 1]
+		return true
+	end
+
+	self.rotateIn = nil
+	self.rotateStep = nil
 	return false
 end
 
@@ -1198,8 +1382,10 @@ function Graph:DrawSeries(maxValue)
 			for i = 1, self.buckets - 1 do
 				local y0 = self:ValueY(self.slices[i][key] or 0, maxValue)
 				local y1 = self:ValueY(self.slices[i + 1][key] or 0, maxValue)
-				DrawSegment(self.seg[slot][i],
-					self:BucketX(i), y0, self:BucketX(i + 1), y1, color)
+				if DrawSegment(self.seg[slot][i],
+					self:BucketX(i), y0, self:BucketX(i + 1), y1, color) then
+					self.drewSegments = true
+				end
 			end
 
 			-- A dot on every bucket at 48 buckets is noise, so only odd indices carry one
@@ -1279,6 +1465,27 @@ function Graph:RefreshPeakLine()
 	end
 end
 
+-- DrawLanes behind a pcall, and the only way anything in this file is allowed to call it.
+--
+-- Both callers finish by ARMING THE ROTATION PASS, and that pass is the only thing that ever makes
+-- a redrawn segment visible again (DrawSegment deliberately hides what it re-specifies). So a
+-- throw out of DrawLanes does not cost some lane art -- it costs the entire line graph, which
+-- simply disappears and stays gone until the next redraw that manages to complete. Charting an
+-- effect is precisely when this file first touches Icon.Apply (Constants.lua), the one native path
+-- here that eight in-game rounds have still not fully pinned down, so the risk is concentrated at
+-- exactly the moment a lane appears.
+--
+-- The error is kept on `self.laneError` rather than swallowed outright, so a future diagnostic has
+-- something to read: a lane that never draws is otherwise indistinguishable from a buff with no
+-- intervals in range.
+function Graph:DrawLanesSafely()
+	local ok, err = pcall(self.DrawLanes, self)
+	if not ok then
+		self.laneError = err
+	end
+	return ok
+end
+
 function Graph:DrawLanes()
 	local railWidth = self.laneRailWidth or math.max(1, self.plotWidth - LANE_ICON_SIZE - LANE_RAIL_GAP)
 	local duration = self.duration
@@ -1311,15 +1518,28 @@ function Graph:DrawLanes()
 			-- The real client art if GetIcon() gave us an asset id, otherwise the buff's
 			-- initials in the lane colour -- the same stand-in the design mock draws, at the
 			-- same size, so nothing shifts when the art does resolve.
+			-- pcall'd, and falling back to the initials tile: Icon.Apply reads the art's native
+			-- size off a probe Control and is the least-confirmed native call in this file, while
+			-- this loop runs inside the redraw that arms the rotation pass (see DrawLanesSafely).
+			-- One tile's art is an acceptable loss; the rest of the lanes are not.
+			local drewIcon = false
 			if data.icon ~= nil then
 				-- See UI/Analysis.lua's FillBuffRow comment: clears whatever the initials
 				-- fallback left behind.
 				-- lane.iconInset:SetBackColor(Turbine.UI.Color(0, 0, 0, 0))
 				-- No stretch, native size -- see UI/Analysis.lua's FillBuffRow comment.
-				Icon.Apply(lane.iconInset, data.icon)
-				lane.iconInset:SetPosition(1, 1)
-				lane.iconLabel:SetText("")
-			else
+				drewIcon = pcall(Icon.Apply, lane.iconInset, data.icon)
+				if drewIcon then
+					lane.iconInset:SetPosition(1, 1)
+					lane.iconLabel:SetText("")
+				end
+			end
+
+			if not drewIcon then
+				-- Back to the tile's own size first: this lane is pooled, so it may be carrying
+				-- the native art size a previous Icon.Apply left on it (Icon.Apply does not
+				-- stretch -- Constants.lua, round seven).
+				lane.iconInset:SetSize(LANE_ICON_SIZE - 2, LANE_ICON_SIZE - 2)
 				lane.iconInset:SetBackColor(Theme.Color(Theme.Hex.RailFill))
 				lane.iconInset:SetVisible(true)
 				lane.iconLabel:SetText(data.initials or "")

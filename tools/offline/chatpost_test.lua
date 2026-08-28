@@ -12,12 +12,12 @@
 local env = dofile("stub.lua")
 local ROOT = env.ROOT
 
-import "Reckoning.Utils.Type"
-import "Reckoning.Utils.Class"
-import "Reckoning.Constants"
+import "Basil.Utils.Type"
+import "Basil.Utils.Class"
+import "Basil.Constants"
 Trigger = {}
-import "Reckoning.Parse.en"
-import "Reckoning.Settings"
+import "Basil.Parse.en"
+import "Basil.Settings"
 
 _G.lp = {
 	GetName = function() return "Luxtheninth" end,
@@ -32,10 +32,10 @@ LocalPlayer.name = LocalPlayer:GetName()
 
 Settings.Load()
 
-import "Reckoning.Session"
-import "Reckoning.Sessions"
-import "Reckoning.Events"
-import "Reckoning.ChatPost"
+import "Basil.Session"
+import "Basil.Sessions"
+import "Basil.Events"
+import "Basil.ChatPost"
 
 local fails = 0
 local function check(label, got, want)
@@ -56,12 +56,22 @@ local function tags(text, pattern)
 	return n
 end
 
+-- What the reader actually sees. There are two limits now -- MAX_MESSAGE caps this, MAX_RENDERED
+-- caps the string with its markup -- because measuring one 240-character budget against the
+-- rendered form left no room to tint anything.
+local function visible(text)
+	return (string.gsub(string.gsub(text, "<rgb=#%x+>", ""), "</rgb>", ""))
+end
+
 -- Every line this module produces must satisfy all of these, on every path.
 local function checkLine(label, line)
 	ok(label .. ": produced a line", line ~= nil and line ~= "")
 	if line == nil then return end
 	ok(label .. ": is a single line", string.find(line, "\n", 1, true) == nil)
-	ok(label .. ": fits MAX_MESSAGE", string.len(line) <= ChatPost.MAX_MESSAGE)
+	-- The VISIBLE text is what MAX_MESSAGE caps -- markup is measured separately, so a tinted line
+	-- can never deliver more post than a plain one would.
+	ok(label .. ": fits MAX_MESSAGE", string.len(visible(line)) <= ChatPost.MAX_MESSAGE)
+	ok(label .. ": fits MAX_RENDERED", string.len(line) <= ChatPost.MAX_RENDERED)
 	check(label .. ": colour tags balance", tags(line, "<rgb="), tags(line, "</rgb>"))
 	-- Events.lua strips exactly "<rgb=#......>" -- six hex digits. An 8-digit Theme token reaching
 	-- a post would produce markup this client's own inbound path could not undo.
@@ -162,7 +172,12 @@ for closeHex, openHex in string.gmatch(colored, "<rgb=(#%x+)>[^<]*</rgb><rgb=(#%
 	if closeHex == openHex then redundant = redundant + 1 end
 end
 check("no run re-opens the colour it just closed", redundant, 0)
-ok("the coloured line still fits", string.len(colored) <= ChatPost.MAX_MESSAGE)
+ok("the coloured line's visible text still fits",
+	string.len(visible(colored)) <= ChatPost.MAX_MESSAGE)
+ok("the coloured line's markup still fits", string.len(colored) <= ChatPost.MAX_RENDERED)
+-- Colour must never change WHAT is said, only how it looks -- the summary carries no trailing
+-- detail, so the two forms are the same text.
+check("colour costs the summary nothing", visible(colored), full)
 print("")
 
 print("== 6. death preset ==")
@@ -269,7 +284,196 @@ check("a view with nothing recorded builds nothing",
 	ChatPost.BuildLine(empty, "summary", "healIn", nil, nil, nil, PLAIN), nil)
 print("")
 
-print("== 12. Options() ==")
+print("== 12. part selection ==")
+-- Every summary piece can be switched off from the POST button's menu. What has to hold for all
+-- 256 combinations is that the SEPARATORS follow: with the fight off the line must not open " - ",
+-- and with total and rate both off the whole "Damage done:" field has to disappear rather than
+-- leave a dangling colon. Building 256 lines is cheap and is the only way to actually cover that.
+local PARTS = ChatPost.Parts
+_G.settings.postOmit = {}
+ok("every part is on by default", ChatPost.AnyPartEnabled())
+for i = 1, table.getn(PARTS) do
+	ok("part " .. PARTS[i].key .. " reads as enabled", ChatPost.PartEnabled(PARTS[i].key))
+end
+
+-- Each part off on its own: the line must survive, stay legal, and lose that piece's text.
+local MARKERS = {
+	fight = s:DisplayName(), label = "Damage done", hits = " hits", crit = "crit",
+	max = "max ", died = "DIED",
+}
+for i = 1, table.getn(PARTS) do
+	local key = PARTS[i].key
+	_G.settings.postOmit = { [key] = true }
+	local line = ChatPost.BuildLine(s, "summary", "done", nil, nil, nil, PLAIN)
+	checkLine("summary/without " .. key, line)
+	if line ~= nil and MARKERS[key] ~= nil then
+		ok("dropping " .. key .. " removes its text",
+			string.find(line, MARKERS[key], 1, true) == nil)
+	end
+	if line ~= nil then
+		ok("dropping " .. key .. " leaves no doubled or dangling separator",
+			string.find(line, "|  ", 1, true) == nil
+			and string.find(line, "^%s*[-|]") == nil
+			and string.find(line, ": *$") == nil)
+	end
+end
+
+-- All 256 subsets, because separator handling is exactly the kind of thing that is right for the
+-- seven combinations you thought of and wrong for the eighth.
+--
+-- Two subsets are EXPECTED to build nothing, and both disarm the button rather than arming an
+-- alias of "/f " (or of "/f Damage done:"): the empty one, and "the view label on its own" -- the
+-- label introduces the total and the rate, so with both of those off there is nothing for it to
+-- introduce and the whole field is dropped.
+_G.settings.postOmit = {}
+local built, bad, empty = 0, 0, {}
+for mask = 0, 255 do
+	local omit, on = {}, {}
+	for i = 1, 8 do
+		if math.floor(mask / 2 ^ (i - 1)) % 2 == 1 then
+			omit[PARTS[i].key] = true
+		else
+			on[table.getn(on) + 1] = PARTS[i].key
+		end
+	end
+	_G.settings.postOmit = omit
+	local line = ChatPost.BuildLine(s, "summary", "done", nil, nil, nil, COLOR)
+	if line == nil or line == "" then
+		empty[table.getn(empty) + 1] = table.concat(on, "+")
+	elseif string.len(strip(line)) > ChatPost.MAX_MESSAGE
+		or string.len(line) > ChatPost.MAX_RENDERED
+		or string.find(line, "\n", 1, true) ~= nil
+		or tags(line, "<rgb=") ~= tags(line, "</rgb>")
+		or string.find(strip(line), "^[ |%-]") ~= nil
+		or string.find(strip(line), "|  ", 1, true) ~= nil then
+		bad = bad + 1
+	else
+		built = built + 1
+	end
+end
+check("254 part subsets each build a legal, single, in-budget line", built, 254)
+check("...and none of them was malformed", bad, 0)
+-- Collected in mask order, and "every part off" is mask 255 -- the largest -- so the empty subset
+-- is always the LAST entry, never the first.
+check("...and exactly the two expected subsets built nothing",
+	table.concat(empty, " / "), "label / ")
+
+-- The exclusion-set shape is load-bearing: Settings.Load hands a table-valued default a FRESH
+-- EMPTY table without copying sub-keys, so an inclusion map would arrive as "every part off".
+_G.settings.postOmit = {}
+ok("an empty postOmit means every part is on", ChatPost.AnyPartEnabled())
+_G.settings.postOmit = nil
+ok("a missing postOmit means every part is on too", ChatPost.AnyPartEnabled())
+ChatPost.SetPartEnabled("crit", false)
+check("switching a part off stores true, never false", _G.settings.postOmit.crit, true)
+ChatPost.SetPartEnabled("crit", true)
+check("switching it back on removes the key rather than storing false",
+	_G.settings.postOmit.crit, nil)
+
+-- The death report has no parts and must ignore them entirely.
+_G.settings.postOmit = {}
+for i = 1, table.getn(PARTS) do
+	_G.settings.postOmit[PARTS[i].key] = true
+end
+local wasDead2 = s.died
+s.died = true
+ok("the death report ignores the part selection",
+	ChatPost.BuildLine(s, "death", "done", nil, nil, nil, PLAIN) ~= nil)
+s.died = wasDead2
+_G.settings.postOmit = {}
+print("")
+
+print("== 13. the post palette ==")
+-- A post renders on a game chat background nobody here controls, so it does NOT use Theme.Hex --
+-- and every colour switch costs 19 characters of the 240 that decide how many death rows fit.
+-- Both facts are checked here rather than left to review.
+local function hexes(line)
+	local seen, list = {}, {}
+	for hex in string.gmatch(line, "<rgb=(#%x%x%x%x%x%x)>") do
+		if not seen[hex] then seen[hex] = true; list[table.getn(list) + 1] = hex end
+	end
+	return list
+end
+local POST_HEX = { [ChatPost.Hex.Title] = true, [ChatPost.Hex.Value] = true,
+	[ChatPost.Hex.Number] = true, [ChatPost.Hex.Alert] = true }
+local tokens = 0
+for _ in pairs(ChatPost.Hex) do tokens = tokens + 1 end
+check("the palette is four tokens", tokens, 4)
+for _, hex in pairs(ChatPost.Hex) do
+	check("post token " .. hex .. " is exactly 6 hex digits", string.len(hex), 7)
+end
+local sumHexes = hexes(colored)
+ok("the summary uses only post tokens", (function()
+	for i = 1, table.getn(sumHexes) do
+		if not POST_HEX[sumHexes[i]] then return false end
+	end
+	return true
+end)())
+
+-- The number highlight. There is no tag-pair CAP any more -- BuildLine walks a ladder of palettes
+-- (rich -> headline -> flat -> plain) and takes the richest that fits, so how many pairs a line
+-- spends is a result, not an invariant. What has to hold instead:
+--
+-- (1) A normal full-part summary lands on RICH: the fight name in Title, the words around the
+--     numbers in Value AND the numbers highlighted, all three at once. An earlier draft measured
+--     MAX_MESSAGE against the rendered string, which left a 113-character line unable to afford
+--     more than three tag pairs -- so it dropped to a rung that bought the highlight by giving up
+--     the title and body tint, and the post came back missing exactly those two. If this check ever
+--     fails, look at MAX_RENDERED before anything else.
+local function has(line, hex)
+	return string.find(line, "<rgb=" .. hex .. ">", 1, true) ~= nil
+end
+ok("the coloured summary tints the fight name", has(colored, ChatPost.Hex.Title))
+ok("the coloured summary tints the body text", has(colored, ChatPost.Hex.Value))
+ok("the coloured summary highlights its numbers", has(colored, ChatPost.Hex.Number))
+
+-- (2) A highlighted run is a NUMBER, not a number plus the separator that introduced it. Field()
+--     glues " | " to the end of the previous segment for exactly this reason; hung on the front it
+--     would be swept into the following number's tint ("| 26" bright, "hits" not).
+local dirty = 0
+for run in string.gmatch(colored, "<rgb=" .. ChatPost.Hex.Number .. ">([^<]*)</rgb>") do
+	if string.find(run, "|", 1, true) or string.find(run, " - ", 1, true) then dirty = dirty + 1 end
+end
+check("no highlighted run swallows a separator", dirty, 0)
+
+-- (3) Every highlighted run is made of digits and the suffixes Format.Number/Percent produce
+--     (",", ".", "%", "k", "m", "-") -- never a label word.
+local wordy = 0
+for run in string.gmatch(colored, "<rgb=" .. ChatPost.Hex.Number .. ">([^<]*)</rgb>") do
+	if string.find(run, "[^%d%.,%%km%-]") then wordy = wordy + 1 end
+end
+check("every highlighted run is a number, not a word", wordy, 0)
+
+s.died = true
+local deathColored2 = ChatPost.BuildLine(s, "death", "done", nil, nil, nil, COLOR)
+ok("the death report uses only post tokens", (function()
+	local h = hexes(deathColored2)
+	for i = 1, table.getn(h) do
+		if not POST_HEX[h[i]] then return false end
+	end
+	return true
+end)())
+
+-- (4) THE HIGHLIGHT NEVER COSTS A DEATH ROW, and the death report still gets one. The rows are
+--     packed against the VISIBLE budget so markup cannot take one away, but a rung whose markup
+--     crosses MAX_RENDERED would still have to drop rows to fit -- which is why the ladder carries
+--     a "headline" rung that highlights the killing blow's amount and leaves the twelve row amounts
+--     alone. Measured by pointing Hex.Number at Hex.Value: every rung then renders identically to
+--     flat (Render coalesces same-colour neighbours), which is exactly the reference BuildLine
+--     compares against internally. This also pins that the palette is resolved PER CALL rather than
+--     built once at load -- with a module-level table this check could not move the colour at all.
+ok("the coloured death report highlights the killing blow",
+	has(deathColored2, ChatPost.Hex.Number))
+local savedNumber = ChatPost.Hex.Number
+ChatPost.Hex.Number = ChatPost.Hex.Value
+local deathFlat = ChatPost.BuildLine(s, "death", "done", nil, nil, nil, COLOR)
+ChatPost.Hex.Number = savedNumber
+check("highlighting numbers costs no death row",
+	tags(strip(deathColored2), " | "), tags(strip(deathFlat), " | "))
+s.died = wasDead2
+print("")
+
+print("== 14. Options() ==")
 _G.settings.postColor = false
 check("Options reads postColor", ChatPost.Options().color, false)
 _G.settings.postColor = nil

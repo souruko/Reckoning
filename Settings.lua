@@ -21,16 +21,25 @@ DEFAULTS = {
 	-- Analysis window's SELF BUFFS section. Strings only, never a Turbine.UI.Color: chartedBuffs
 	-- is an ordered list of at most 3 buff NAMES (the lane colour is derived from its position
 	-- in that list at render time, so no colour is ever serialised), and buffIgnore is a
-	-- [name] = true set extended by `/reck buffs ignore <name>`.
+	-- [name] = true set edited from the options window's Self buffs page.
 	chartedBuffs      = {},
 	buffIgnore        = {},
-	-- Chat posting (ChatPost.lua, UI/PostButton.lua). All four are scalars, so none of them needs
-	-- the fresh-{}-on-merge treatment the two tables above do.
-	postChannel       = "say",     -- a ChatPost.Channels key; /reck post is the local preview
-	postPreset        = "summary", -- "summary" | "death"
+	-- Chat posting (ChatPost.lua, UI/PostButton.lua).
+	postChannel       = "say",     -- a ChatPost.Channels key; /basil post is the local preview
 	-- No postRows: the summary posts the largest hit rather than a skill list, so there is
 	-- nothing left to size. postColor governs the real post, budgeted against MAX_MESSAGE.
 	postColor         = true,
+	-- Which pieces of the summary line the POST button's menu has switched OFF, as a
+	-- [ChatPost.Parts key] = true set. An exclusion set, not an inclusion map, and the reason is
+	-- the merge loop below: a table-valued default arrives as a fresh EMPTY table on every save
+	-- that predates the key, so an inclusion map would read as "every piece off" -- i.e. a plugin
+	-- that silently stopped posting -- where an exclusion set reads as "nothing excluded". Same
+	-- shape and same reasoning as buffIgnore. Third table-valued default, so third one needing the
+	-- fresh-{} treatment.
+	postOmit          = {},
+	-- postPreset is GONE: the summary and the death report are two separate buttons in the
+	-- analysis window's header now, not one button with a mode. A legacy save's leftover key is
+	-- harmless -- nothing reads it, and the merge never removes keys.
 
 	-- ---------------------------------------------------------------------------------------
 	-- Options window (design_handoff_options_panel/SETTINGS_KEYS.md). Every key below is edited
@@ -38,7 +47,7 @@ DEFAULTS = {
 	-- ---------------------------------------------------------------------------------------
 
 	-- appearance
-	palettePreset      = "Reckoning", -- a KEY into Theme.Presets; a name, never a colour
+	palettePreset      = "Basil", -- a KEY into Theme.Presets; a name, never a colour
 	opacityCombat      = 100,  -- 40-100
 	opacityIdle        = 55,   -- 20-100
 	idleFadeEnabled    = true,
@@ -184,8 +193,20 @@ function Settings.FixColors()
 	end
 end
 
+-- The plugin was called Reckoning up to and including v0.6.0, and PluginData is keyed by that
+-- name. A save written under the old key is read once here and then written back under the new one
+-- by the first Settings.Save(), so a rename does not silently reset ~30 settings and four window
+-- positions. Harmless to keep: on a character that never ran Reckoning the extra Load simply
+-- returns nil. Safe to delete once every character has opened the plugin at least once under the
+-- new name.
+local LEGACY_DATA_KEY = "Reckoning"
+
 function Settings.Load()
-	local saved = Turbine.PluginData.Load(Turbine.DataScope.Character, "Reckoning")
+	local saved = Turbine.PluginData.Load(Turbine.DataScope.Character, "Basil")
+
+	if type(saved) ~= "table" then
+		saved = Turbine.PluginData.Load(Turbine.DataScope.Character, LEGACY_DATA_KEY)
+	end
 
 	if type(saved) == "table" then
 		_G.settings = saved
@@ -194,7 +215,9 @@ function Settings.Load()
 	end
 
 	-- Read unknown keys defensively: merge in anything the save predates. Table-valued defaults
-	-- (currently just `windows`) get a *fresh* empty table, never DEFAULTS' own table object --
+	-- (`windows`, `chartedBuffs`, `buffIgnore`, `postOmit`) get a *fresh* empty table, never
+	-- DEFAULTS' own table object -- and note that a fresh EMPTY table is all they get, sub-keys are
+	-- never copied, which is why every one of them is shaped so that empty is the right default --
 	-- aliasing it would mean every mutation of _G.settings.windows (every drag, every resize)
 	-- silently corrupts DEFAULTS.windows too, which Options.ResetToDefaults() then reads.
 	for key, value in pairs(DEFAULTS) do
@@ -214,7 +237,7 @@ function Settings.Load()
 end
 
 -- Resets every setting to DEFAULTS (see the table-copy note above -- table-valued defaults get
--- a fresh table, not DEFAULTS' own). Used by /reck reset.
+-- a fresh table, not DEFAULTS' own). Used by /basil reset.
 function Settings.ResetToDefaults()
 	_G.settings = {}
 	for key, value in pairs(DEFAULTS) do
@@ -230,7 +253,7 @@ function Settings.ResetToDefaults()
 end
 
 function Settings.Save()
-	Turbine.PluginData.Save(Turbine.DataScope.Character, "Reckoning", _G.settings)
+	Turbine.PluginData.Save(Turbine.DataScope.Character, "Basil", _G.settings)
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -238,7 +261,7 @@ end
 ---------------------------------------------------------------------------------------------------
 
 -- Which root-level global owns each _G.settings.windows key. Lives here rather than in Main.lua
--- because both callers of the reset below are elsewhere: /reck move <name> and the options
+-- because both callers of the reset below are elsewhere: /basil move <name> and the options
 -- window's per-window Reset buttons.
 local WINDOW_GLOBALS = {
 	liveMeter = "liveMeter", deathCause = "deathCause",
@@ -252,7 +275,7 @@ end
 
 -- Puts one window back at (200, 200) and clears whatever size and splitter position it had saved.
 -- There must be exactly one definition of what "Reset" does to a window, because two surfaces
--- offer it (/reck move, and a button per row on the options window's Windows page).
+-- offer it (/basil move, and a button per row on the options window's Windows page).
 --
 -- Returns false for an unknown key or a window that does not exist yet, so a caller can tell a
 -- typo apart from a successful reset.

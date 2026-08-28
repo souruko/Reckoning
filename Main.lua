@@ -6,10 +6,10 @@ import "Turbine.Gameplay"
 import "Turbine.UI"
 import "Turbine.UI.Lotro"
 
-import "Reckoning.Utils.Type"
-import "Reckoning.Utils.Class"
+import "Basil.Utils.Type"
+import "Basil.Utils.Class"
 
-import "Reckoning.Constants"
+import "Basil.Constants"
 
 -- Trigger.ParseCombatChat (Parse/en.lua) is `function Trigger.ParseCombatChat(...)` --
 -- it attaches to an existing table rather than declaring its own global, so Trigger must
@@ -17,9 +17,9 @@ import "Reckoning.Constants"
 -- is declared before UTILS/COMBATCHATPARSE/en.lua.
 Trigger = {}
 
-import "Reckoning.Parse.en"
+import "Basil.Parse.en"
 
-import "Reckoning.Settings"
+import "Basil.Settings"
 
 ---------------------------------------------------------------------
 --== Globals ===--
@@ -49,15 +49,15 @@ Settings.Load()
 -- Session (the class) before Sessions (the manager, which instantiates it) before Events
 -- (which dispatches into the manager and needs Sessions/LocalPlayer/Trigger already defined).
 
-import "Reckoning.Session"
-import "Reckoning.Sessions"
-import "Reckoning.Buffs"
-import "Reckoning.Events"
+import "Basil.Session"
+import "Basil.Sessions"
+import "Basil.Buffs"
+import "Basil.Events"
 
--- Root level, not UI/: both Main.lua (for /reck post) and UI/PostButton.lua need it, and only a
+-- Root level, not UI/: both Main.lua (for /basil post) and UI/PostButton.lua need it, and only a
 -- root-package global is visible from both (see CLAUDE.md's package-scope note). Pure string
 -- building -- it imports nothing and touches no Turbine.UI.
-import "Reckoning.ChatPost"
+import "Basil.ChatPost"
 
 -- Close every still-open buff interval the moment a session closes. Registered here, before any
 -- window is constructed, so it runs ahead of the windows' own OnClosed callbacks and none of
@@ -70,7 +70,7 @@ Sessions.OnClosed(function(s) Buffs.CloseSession(s) end)
 -- Frame/Bar/Row (chrome primitives) first, then each window module as it's built. Reads
 -- Theme/Font (Constants.lua) and _G.settings.windows (Settings.lua), both already loaded above.
 
-import "Reckoning.UI"
+import "Basil.UI"
 
 liveMeter = UI.LiveMeter()
 deathCause = UI.DeathCause()
@@ -81,7 +81,7 @@ analysis = UI.Analysis()
 optionsWindow = UI.OptionsWindow()
 
 -- The Plugin Manager still calls GetOptionsPanel and still wants a ListBox. UI/Options.lua is a
--- one-line stub pointing at /reck options now -- every real setting lives in optionsWindow.
+-- one-line stub pointing at /basil options now -- every real setting lives in optionsWindow.
 optionsPanel = UI.Options()
 
 plugin.GetOptionsPanel = function(self)
@@ -98,8 +98,8 @@ Sessions.OnClosed(function(s)
 	if _G.settings.analysisAutoOpen == true and not analysis:IsVisible() then
 		analysis:SetVisible(true)
 		analysis:Activate()
-		-- Activating the window puts it above the post button's overlay; put the overlay back.
-		analysis.postButton:Raise()
+		-- Activating the window puts it above the post buttons' overlays; put them back.
+		analysis:RaisePostButtons()
 	end
 end)
 
@@ -122,60 +122,13 @@ end)
 --== Shell command ===--
 ---------------------------------------------------------------------
 
--- Prints one aggregate category's rows to chat, most-total-first. Verification tool for
--- Phase 1: feed reference/*.txt through Trigger.ParseCombatChat by hand and compare against
--- this output. Not meant to survive into the analysis window UI (Phase 5 reads Session.agg
--- directly instead of formatting chat text).
-local function DumpCategory(label, agg)
-	local rows = {}
-	for _, row in pairs(agg) do
-		table.insert(rows, row)
-	end
-	table.sort(rows, function(a, b) return a.total > b.total end)
-
-	if table.getn(rows) == 0 then
-		return
-	end
-
-	Turbine.Shell.WriteLine("-- " .. label .. " --")
-	for i = 1, table.getn(rows) do
-		local row = rows[i]
-		local who = row.who or "?"
-		local crit = (row.crits or 0) .. "c/" .. (row.devs or 0) .. "d"
-		Turbine.Shell.WriteLine(
-			string.format("  %s -> %s: %d hits, %s, max %d, total %d",
-				row.skill, who, row.hits or 0, crit, row.max or 0, row.total or 0))
-	end
-end
-
-local function DumpSession(s)
-	-- Memory readout first, session data or not -- lets a lag report be checked against real
-	-- numbers ("does Lua-side memory climb fight over fight?") instead of just going by feel.
-	-- collectgarbage("count") returns KB and is cheap enough to call from a shell command.
-	Turbine.Shell.WriteLine(string.format("Reckoning: Lua memory in use: %.0f KB", collectgarbage("count")))
-
-	if s == nil then
-		Turbine.Shell.WriteLine("Reckoning: no session data yet.")
-		return
-	end
-
-	Turbine.Shell.WriteLine(string.format(
-		"Reckoning session: %s, %.0fs (%ds active)%s",
-		s.startClock, s:Duration(), s:ActiveSeconds(), s.died and ", died" or ""))
-
-	DumpCategory("Damage done", s.agg.done)
-	DumpCategory("Damage taken", s.agg.taken)
-	DumpCategory("Healing done", s.agg.healOut)
-	DumpCategory("Healing taken", s.agg.healIn)
-end
-
 -- "live"/"death" don't accept a forced show: both are driven entirely by combat events
 -- (Sessions.current, Sessions.OnSelfDefeat) and would just re-hide themselves on the next
 -- throttled Update() if shown with no active data. show/hide for those two only flips the
 -- enable flag (same effect as the options panel checkboxes) -- "analysis" is the one window
 -- that's genuinely opened/closed by hand.
 local function UnknownWindow(name)
-	Turbine.Shell.WriteLine("Reckoning: unknown window '" .. name .. "'. Use live | death | analysis | options.")
+	Turbine.Shell.WriteLine("Basil: unknown window '" .. name .. "'. Use live | death | analysis | options.")
 end
 
 local function ShowWindow(name)
@@ -185,20 +138,20 @@ local function ShowWindow(name)
 	elseif name == "" or name == "analysis" then
 		analysis:SetVisible(true)
 		analysis:Activate()
-		-- Activating the window puts it above the post button's overlay; put the overlay back.
-		analysis.postButton:Raise()
+		-- Activating the window puts it above the post buttons' overlays; put them back.
+		analysis:RaisePostButtons()
 	elseif name == "live" then
 		_G.settings.liveMeterEnabled = true
 		Settings.Save()
 		-- Same path the options window's own checkbox takes, so the meter reappears now rather
 		-- than on its next throttled Update().
 		liveMeter:ApplySettings()
-		Turbine.Shell.WriteLine("Reckoning: live meter enabled.")
+		Turbine.Shell.WriteLine("Basil: live meter enabled.")
 	elseif name == "death" then
 		_G.settings.deathCauseEnabled = true
 		Settings.Save()
 		deathCause:ApplySettings()
-		Turbine.Shell.WriteLine("Reckoning: death cause window enabled.")
+		Turbine.Shell.WriteLine("Basil: death cause window enabled.")
 	else
 		UnknownWindow(name)
 	end
@@ -238,97 +191,6 @@ local function MoveWindow(name)
 	Settings.Window(key):SetVisible(true)
 end
 
--- Debug helper: pops the death window directly, bypassing Sessions.OnSelfDefeat entirely --
--- lets you tell "the window itself is broken" apart from "a real death was never actually
--- detected" (e.g. because nothing you've fought so far can actually kill you) without needing to
--- die for real. Synthesizes two lastTaken rows if the session has none to show.
-local function TestDeath()
-	local session = Sessions.current or Sessions.list[1]
-	if session == nil then
-		session = Session(Turbine.Engine.GetGameTime(), "test")
-	end
-
-	if table.getn(session.lastTaken) == 0 then
-		local now = Turbine.Engine.GetGameTime()
-		session:PushLastTaken({
-			time = now - 2, kind = "damage", skill = "Test Strike", dmgType = DamageType.Shadow,
-			amount = 12345, initiator = "Test Dummy", moralePct = 0.4,
-		})
-		session:PushLastTaken({
-			time = now, kind = "damage", skill = "Test Strike", dmgType = DamageType.Shadow,
-			amount = 54321, initiator = "Test Dummy", moralePct = 0,
-		})
-	end
-	session.died = true
-	session.endTime = Turbine.Engine.GetGameTime()
-
-	deathCause:Show(session)
-	Turbine.Shell.WriteLine("Reckoning: triggered a test death popup.")
-end
-
--- `/reck buffs` -- what self-effect tracking is currently seeing, and the ignore list that shapes
--- it. The default Buffs.Ignore entries are a best guess at the client's own effect names and are
--- not verified against a running game, so this command (not that table) is the real mechanism for
--- keeping mounts and travel skills out of the uptime table.
-local function BuffsCommand(action, name)
-	if action == "" or action == "list" then
-		local session = Sessions.current or Sessions.list[1]
-		local rows = Buffs.Stats(session, nil, nil)
-
-		if table.getn(rows) == 0 then
-			Turbine.Shell.WriteLine("Reckoning: no self-effects tracked yet (nothing fought, or every effect is ignored).")
-		else
-			Turbine.Shell.WriteLine("Reckoning: self-effects in the most recent fight --")
-			for i = 1, table.getn(rows) do
-				local row = rows[i]
-				Turbine.Shell.WriteLine(string.format("  %s [%s]: %s uptime (%s), %d applied, longest gap %ds, icon=%s(%s)",
-					row.name, tostring(row.kind), Format.Percent(row.uptimePct), Format.Clock(row.uptime),
-					row.apps, math.floor(row.longestGap + 0.5),
-					tostring(row.icon), type(row.icon)))
-			end
-		end
-
-		-- Both lists go through Buffs.IsIgnored rather than being concatenated raw: a default
-		-- the player un-ignored is stored as an explicit `false` in settings, so it must not be
-		-- listed from either table.
-		local ignored, seen = {}, {}
-		for key in pairs(Buffs.Ignore) do
-			if Buffs.IsIgnored(key) then
-				seen[key] = true
-				table.insert(ignored, key)
-			end
-		end
-		if _G.settings.buffIgnore ~= nil then
-			for key in pairs(_G.settings.buffIgnore) do
-				if not seen[key] and Buffs.IsIgnored(key) then
-					seen[key] = true
-					table.insert(ignored, key)
-				end
-			end
-		end
-		table.sort(ignored)
-		if table.getn(ignored) > 0 then
-			Turbine.Shell.WriteLine("  ignored: " .. table.concat(ignored, ", "))
-		end
-		return
-	end
-
-	if name == "" then
-		Turbine.Shell.WriteLine("Reckoning: /reck buffs ignore <name> | unignore <name> | list")
-		return
-	end
-
-	if action == "ignore" then
-		Buffs.AddIgnore(name)
-		Turbine.Shell.WriteLine("Reckoning: ignoring self-effect '" .. name .. "'.")
-	elseif action == "unignore" then
-		Buffs.RemoveIgnore(name)
-		Turbine.Shell.WriteLine("Reckoning: no longer ignoring '" .. name .. "'.")
-	else
-		Turbine.Shell.WriteLine("Reckoning: /reck buffs ignore <name> | unignore <name> | list")
-	end
-end
-
 local function ResetAll()
 	Settings.ResetToDefaults()
 
@@ -343,7 +205,7 @@ local function ResetAll()
 	optionsWindow:RefreshPages()
 	OptionsWindow.ApplyAll()
 
-	Turbine.Shell.WriteLine("Reckoning: settings reset to defaults.")
+	Turbine.Shell.WriteLine("Basil: settings reset to defaults.")
 end
 
 -- Prints the post the analysis window currently has armed, to YOUR chat window only.
@@ -353,15 +215,19 @@ end
 -- established). So this is a preview -- the way to check the wording and the row count before
 -- clicking POST for real -- and it also still works if the quickslot mechanism turns out to
 -- misbehave in-game.
-local function PostPreview()
+--
+-- `/basil post` previews the summary; `/basil post death` previews the death report -- the two
+-- shapes are two separate buttons in the window (see UI/PostButton.lua), so the command names them
+-- the same way rather than reading a mode setting that no longer exists.
+local function PostPreview(which)
 	local session = analysis and analysis.selectedSession or (Sessions.current or Sessions.list[1])
 	if session == nil then
-		Turbine.Shell.WriteLine("Reckoning: no session data yet.")
+		Turbine.Shell.WriteLine("Basil: no session data yet.")
 		return
 	end
 
 	-- Read the window's live scoping if it exists, so the preview matches what POST would send.
-	local preset = _G.settings.postPreset or "summary"
+	local preset = (which == "death") and "death" or "summary"
 	local view, who, fromSec, toSec = "done", nil, nil, nil
 	if analysis ~= nil then
 		view = analysis.viewTab or view
@@ -371,8 +237,16 @@ local function PostPreview()
 
 	local line = ChatPost.BuildLine(session, preset, view, who, fromSec, toSec)
 	if line == nil then
-		Turbine.Shell.WriteLine("Reckoning: nothing to post for the current view"
-			.. (preset == "death" and " (this fight had no death)." or "."))
+		-- Two reasons a summary can come back nil now: the view genuinely has no data, or every
+		-- part was switched off in the POST button's menu. Say which, or the second one reads as
+		-- the plugin being broken.
+		local why = "."
+		if preset == "death" then
+			why = " (this fight had no death)."
+		elseif not ChatPost.AnyPartEnabled() then
+			why = " (every part is switched off -- see the channel button's menu)."
+		end
+		Turbine.Shell.WriteLine("Basil: nothing to post for the current view" .. why)
 		return
 	end
 
@@ -381,26 +255,10 @@ local function PostPreview()
 	-- immediately. The character count stays because it is what diagnosed the "prohibited because
 	-- of a content, size, or mixed-alphabet restriction" refusal in the first place.
 	Turbine.Shell.WriteLine(string.format(
-		"Reckoning: %s -> %s, %d chars (limit %d):",
+		"Basil: %s -> %s, %d chars (limit %d):",
 		ChatPost.PresetLabel(preset), ChatPost.ChannelLabel(_G.settings.postChannel),
 		string.len(line), ChatPost.MAX_MESSAGE))
 	Turbine.Shell.WriteLine(line)
-end
-
--- /reck probe -- the SetRotation diagnostic window.
---
--- Turbine has no line primitive, so the analysis window's plot can only become a real line graph
--- if a control can be ROTATED. Gibberish3's circular timer proves SetRotation exists and works,
--- but only on a Turbine.UI.Window, only on an image-backed control, and only at 0/90/180/270 --
--- see UI/RotationProbe.lua's header for what three rounds of probing have and have not settled.
--- Built lazily and once: it is a diagnostic, not part of the plugin's UI.
-local function Probe()
-	if rotationProbe == nil then
-		rotationProbe = UI.RotationProbe()
-	end
-
-	rotationProbe:SetVisible(true)
-	rotationProbe:Activate()
 end
 
 command = Turbine.ShellCommand()
@@ -411,24 +269,12 @@ function command:Execute(_, str)
 	cmd = cmd or ""
 	arg = arg or ""
 
-	-- Buff names are case-sensitive and contain spaces ("Writ of Health"), so `buffs` re-reads
-	-- its arguments from the RAW string rather than the lower-cased, single-token parse above.
-	if cmd == "buffs" then
-		local action, name = string.match(str, "^%s*%S+%s*(%S*)%s*(.-)%s*$")
-		BuffsCommand(string.lower(action or ""), name or "")
-		return
-	end
-
 	if cmd == "" or cmd == "help" then
-		Turbine.Shell.WriteLine("Reckoning v" .. Reckoning.Version .. ": /reck help | options | dump | post | buffs [list|ignore <name>|unignore <name>] | testdeath | show [live|death|analysis|options] | hide [live|death|analysis|options] | move <live|death|analysis|options> | reset | probe")
+		Turbine.Shell.WriteLine("Basil v" .. Basil.Version .. ": /basil help | options | post [death] | show [live|death|analysis|options] | hide [live|death|analysis|options] | move <live|death|analysis|options> | reset")
 	elseif cmd == "options" or cmd == "config" then
 		optionsWindow:Toggle()
-	elseif cmd == "dump" then
-		DumpSession(Sessions.current or Sessions.list[1])
 	elseif cmd == "post" then
-		PostPreview()
-	elseif cmd == "testdeath" then
-		TestDeath()
+		PostPreview(arg)
 	elseif cmd == "show" then
 		ShowWindow(arg)
 	elseif cmd == "hide" then
@@ -437,14 +283,12 @@ function command:Execute(_, str)
 		MoveWindow(arg)
 	elseif cmd == "reset" then
 		ResetAll()
-	elseif cmd == "probe" then
-		Probe()
 	else
-		Turbine.Shell.WriteLine("Reckoning: unknown command '" .. cmd .. "'. Try /reck help.")
+		Turbine.Shell.WriteLine("Basil: unknown command '" .. cmd .. "'. Try /basil help.")
 	end
 end
 
-Turbine.Shell.AddCommand("reck", command)
+Turbine.Shell.AddCommand("basil", command)
 
 ---------------------------------------------------------------------
 --== Lifecycle ===--
@@ -456,10 +300,10 @@ plugin.Unload = function(self)
 	Events.Shutdown()
 	Session.ShutdownMorale()
 	UI.LiveMeter.ShutdownTarget()
-	-- The post button's quickslot overlay is its OWN top-level Window, not a child of the analysis
-	-- window, so nothing else tears it down -- without this it would survive a /plugins refresh as
-	-- an invisible click target parked over the screen.
-	if analysis ~= nil and analysis.postButton ~= nil then
-		analysis.postButton:Shutdown()
+	-- Each post button's quickslot overlay is its OWN top-level Window, not a child of the analysis
+	-- window, so nothing else tears them down -- without this they would survive a /plugins refresh
+	-- as invisible click targets parked over the screen.
+	if analysis ~= nil and analysis.ShutdownPostButtons ~= nil then
+		analysis:ShutdownPostButtons()
 	end
 end
